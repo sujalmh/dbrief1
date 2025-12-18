@@ -65,14 +65,14 @@ export function PlanningGrid({ steps }: PlanningGridProps) {
                                 <div
                                     key={index}
                                     className={cn(
-                                        "flex items-center justify-between rounded px-2 py-1.5 text-xs font-mono transition-colors",
+                                        "flex items-start justify-between rounded px-2 py-2 text-xs font-mono transition-colors",
                                         step.status === 'running' && "bg-muted/50",
                                         step.status === 'failed' && "bg-[var(--f1-red)]/10 text-[var(--f1-red)]"
                                     )}
                                 >
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-start gap-2 flex-1">
                                         <div className={cn(
-                                            "flex h-4 w-4 items-center justify-center rounded-xs text-[9px] font-bold",
+                                            "flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[9px] font-bold mt-0.5",
                                             step.status === 'pending' && "bg-muted text-muted-foreground",
                                             step.status === 'running' && "bg-[var(--f1-yellow)] text-black",
                                             step.status === 'success' && "bg-[var(--f1-green)] text-black",
@@ -81,7 +81,7 @@ export function PlanningGrid({ steps }: PlanningGridProps) {
                                             {index + 1}
                                         </div>
                                         <span className={cn(
-                                            "truncate max-w-[150px]",
+                                            "flex-1 break-words pb-0.5",
                                             step.status === 'pending' && "text-muted-foreground",
                                             step.status === 'success' && "text-[var(--f1-green)] brightness-75",
                                             step.status === 'failed' && "text-[var(--f1-red)]"
@@ -90,7 +90,7 @@ export function PlanningGrid({ steps }: PlanningGridProps) {
                                         </span>
                                     </div>
 
-                                    <div className="ml-2 shrink-0">
+                                    <div className="ml-2 shrink-0 mt-1">
                                         {step.status === 'pending' && <span className="text-[10px] text-muted-foreground/50">WAIT</span>}
                                         {step.status === 'running' && <Loader2 className="h-3 w-3 animate-spin text-[var(--f1-yellow)]" />}
                                         {step.status === 'success' && <Check className="h-3 w-3 text-[var(--f1-green)]" />}

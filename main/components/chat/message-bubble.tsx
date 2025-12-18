@@ -3,7 +3,7 @@
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { BrainCircuit, AlertTriangle } from "lucide-react"
-import { Message } from "@/lib/store"
+import { Message, useChatStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PlanningGrid } from "@/components/chat/planning-grid"
@@ -101,6 +101,19 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                     <div className="mt-2 flex items-center gap-2 text-xs font-bold uppercase">
                         <AlertTriangle className="h-3 w-3" />
                         <span>Transmission Error</span>
+                    </div>
+                )}
+
+                {/* Visualization Action */}
+                {message.visualizationData && (
+                    <div className="mt-3 pt-3 border-t border-border/50">
+                        <button
+                            onClick={() => useChatStore.getState().setVisualizationData(message.visualizationData)}
+                            className="flex items-center gap-2 text-xs font-medium text-[var(--f1-red)] hover:text-[var(--f1-red)]/80 transition-colors"
+                        >
+                            <BrainCircuit className="h-3.5 w-3.5" />
+                            Show Chart
+                        </button>
                     </div>
                 )}
             </div>

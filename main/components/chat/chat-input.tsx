@@ -122,8 +122,8 @@ export function ChatInput() {
                                 switch (event) {
                                     case "plan":
                                         currentSteps = data.steps.map((s: any) => ({
-                                            description: s.description,
-                                            tool: s.tool_name || "",
+                                            description: s.description || `Execute ${s.tool || "tool"}`,
+                                            tool: s.tool || "",
                                             status: "pending" as const
                                         }))
                                         useChatStore.getState().updateMessageSteps(assistantMsgId, currentSteps)
@@ -149,8 +149,9 @@ export function ChatInput() {
                                         break
 
                                     case "visualization":
-                                        // Send data to visualization panel
+                                        // Send data to visualization panel AND save to message
                                         useChatStore.getState().setVisualizationData(data.data)
+                                        useChatStore.getState().updateMessageVisualization(assistantMsgId, data.data)
                                         break
 
                                     case "error":

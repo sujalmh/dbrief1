@@ -17,6 +17,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
  * Schema for a single execution step
  */
 export const StepSchema = z.object({
+    description: z.string().describe("Human-readable description of what this step does"),
     tool: z.string().describe("Name of the tool to execute"),
     args: z.record(z.string(), z.unknown()).describe("Arguments for the tool"),
 });
@@ -80,8 +81,8 @@ Rules:
 Example 1: "Compare VER and HAM lap times in Monaco 2024 Qualifying"
 {
   "steps": [
-    { "tool": "get_laps", "args": { "year": 2024, "gp": "Monaco", "session": "Q", "driver": "VER" } },
-    { "tool": "get_laps", "args": { "year": 2024, "gp": "Monaco", "session": "Q", "driver": "HAM" } }
+    { "description": "Fetch lap times for Verstappen", "tool": "get_laps", "args": { "year": 2024, "gp": "Monaco", "session": "Q", "driver": "VER" } },
+    { "description": "Fetch lap times for Hamilton", "tool": "get_laps", "args": { "year": 2024, "gp": "Monaco", "session": "Q", "driver": "HAM" } }
   ],
   "reasoning": "Fetch lap data separately for VER and HAM to enable comparison visualization."
 }
@@ -89,8 +90,8 @@ Example 1: "Compare VER and HAM lap times in Monaco 2024 Qualifying"
 Example 2: "Compare telemetry between Lando and Oscar in Abu Dhabi 2023 race"
 {
   "steps": [
-    { "tool": "get_telemetry", "args": { "year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "NOR", "lap": "fastest" } },
-    { "tool": "get_telemetry", "args": { "year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "PIA", "lap": "fastest" } }
+    { "description": "Get fastest lap telemetry for Norris", "tool": "get_telemetry", "args": { "year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "NOR", "lap": "fastest" } },
+    { "description": "Get fastest lap telemetry for Piastri", "tool": "get_telemetry", "args": { "year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "PIA", "lap": "fastest" } }
   ],
   "reasoning": "Fetch telemetry for both McLaren drivers (NOR and PIA) for comparison."
 }`;
@@ -224,7 +225,7 @@ export function createFallbackPlan(message: string): Plan {
     if (lowerMessage.includes("qualifying") || lowerMessage.includes("q1") || lowerMessage.includes("q2") || lowerMessage.includes("q3")) {
         if (gp) {
             return {
-                steps: [{ tool: "get_qualifying", args: { year, gp } }],
+                steps: [{ description: `Get qualifying results for ${gp} ${year}`, tool: "get_qualifying", args: { year, gp } }],
                 reasoning: "Fallback: detected qualifying query",
             };
         }
@@ -233,7 +234,7 @@ export function createFallbackPlan(message: string): Plan {
     if (lowerMessage.includes("race") || lowerMessage.includes("winner") || lowerMessage.includes("podium")) {
         if (gp) {
             return {
-                steps: [{ tool: "get_race", args: { year, gp } }],
+                steps: [{ description: `Get race results for ${gp} ${year}`, tool: "get_race", args: { year, gp } }],
                 reasoning: "Fallback: detected race query",
             };
         }
@@ -242,7 +243,7 @@ export function createFallbackPlan(message: string): Plan {
     if (lowerMessage.includes("weather")) {
         if (gp) {
             return {
-                steps: [{ tool: "get_weather", args: { year, gp, session: "R" } }],
+                steps: [{ description: `Get weather for ${gp} ${year}`, tool: "get_weather", args: { year, gp, session: "R" } }],
                 reasoning: "Fallback: detected weather query",
             };
         }
@@ -250,14 +251,14 @@ export function createFallbackPlan(message: string): Plan {
 
     if (lowerMessage.includes("season") || lowerMessage.includes("calendar") || lowerMessage.includes("events")) {
         return {
-            steps: [{ tool: "get_events", args: { year } }],
+            steps: [{ description: `Get event list for ${year}`, tool: "get_events", args: { year } }],
             reasoning: "Fallback: detected season/calendar query",
         };
     }
 
     // Default: return events for the detected year
     return {
-        steps: [{ tool: "get_events", args: { year } }],
+        steps: [{ description: `Get event list for ${year}`, tool: "get_events", args: { year } }],
         reasoning: "Fallback: could not determine specific intent, returning season events",
     };
 }

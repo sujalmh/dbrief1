@@ -54,11 +54,12 @@ const REASONING_MODELS: Record<Provider, string> = {
 function createGeminiModel(
     model: string,
     temperature: number = 0.7,
-    maxTokens: number = 4096
+    maxTokens: number = 4096,
+    userApiKey?: string
 ): BaseChatModel {
-    const apiKey = process.env.GOOGLE_AI_API_KEY;
+    const apiKey = userApiKey || process.env.GOOGLE_AI_API_KEY;
     if (!apiKey) {
-        throw new Error("GOOGLE_AI_API_KEY environment variable is required");
+        throw new Error("API key is required. Please provide it in Settings.");
     }
 
     return new ChatGoogleGenerativeAI({
@@ -76,11 +77,12 @@ function createGeminiModel(
 async function createOpenRouterModel(
     model: string,
     temperature: number = 0.7,
-    maxTokens: number = 4096
+    maxTokens: number = 4096,
+    userApiKey?: string
 ): Promise<BaseChatModel> {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = userApiKey || process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
-        throw new Error("OPENROUTER_API_KEY environment variable is required");
+        throw new Error("API key is required. Please provide it in Settings.");
     }
 
     // Dynamic import to avoid bundling issues
@@ -103,11 +105,12 @@ async function createOpenRouterModel(
 async function createHuggingFaceModel(
     model: string,
     temperature: number = 0.7,
-    maxTokens: number = 4096
+    maxTokens: number = 4096,
+    userApiKey?: string
 ): Promise<BaseChatModel> {
-    const apiKey = process.env.HUGGINGFACE_API_KEY;
+    const apiKey = userApiKey || process.env.HUGGINGFACE_API_KEY;
     if (!apiKey) {
-        throw new Error("HUGGINGFACE_API_KEY environment variable is required");
+        throw new Error("API key is required. Please provide it in Settings.");
     }
 
     // HuggingFace inference uses OpenAI-compatible API
@@ -133,20 +136,21 @@ async function createHuggingFaceModel(
  * Get a chat model based on provider and configuration
  *
  * @param config - Model configuration
+ * @param apiKey - Optional API key from user settings (takes precedence over env vars)
  * @returns LangChain chat model instance
  */
-export async function getChatModel(config: ModelConfig): Promise<BaseChatModel> {
+export async function getChatModel(config: ModelConfig, apiKey?: string): Promise<BaseChatModel> {
     const { provider, model, temperature = 0.7, maxTokens = 4096 } = config;
 
     switch (provider) {
         case "gemini":
-            return createGeminiModel(model, temperature, maxTokens);
+            return createGeminiModel(model, temperature, maxTokens, apiKey);
 
         case "openrouter":
-            return await createOpenRouterModel(model, temperature, maxTokens);
+            return await createOpenRouterModel(model, temperature, maxTokens, apiKey);
 
         case "huggingface":
-            return await createHuggingFaceModel(model, temperature, maxTokens);
+            return await createHuggingFaceModel(model, temperature, maxTokens, apiKey);
 
         default:
             throw new Error(`Unsupported provider: ${provider}`);
@@ -158,9 +162,10 @@ export async function getChatModel(config: ModelConfig): Promise<BaseChatModel> 
  * Uses a fixed cheap model regardless of user selection
  *
  * @param provider - The user's selected provider
+ * @param apiKey - Optional API key from user settings
  * @returns LangChain chat model for planning
  */
-export async function getPlannerModel(provider: Provider): Promise<BaseChatModel> {
+export async function getPlannerModel(provider: Provider, apiKey?: string): Promise<BaseChatModel> {
     const model = PLANNER_MODELS[provider];
 
     return getChatModel({
@@ -168,7 +173,7 @@ export async function getPlannerModel(provider: Provider): Promise<BaseChatModel
         model,
         temperature: 0, // Deterministic for planning
         maxTokens: 2048,
-    });
+    }, apiKey);
 }
 
 /**
@@ -177,12 +182,14 @@ export async function getPlannerModel(provider: Provider): Promise<BaseChatModel
  * @param provider - The user's selected provider
  * @param model - The user's selected model (used if not reasoning)
  * @param reasoning - Whether to use a reasoning-capable model
+ * @param apiKey - Optional API key from user settings
  * @returns LangChain chat model for response generation
  */
 export async function getResponderModel(
     provider: Provider,
     model: string,
-    reasoning: boolean
+    reasoning: boolean,
+    apiKey?: string
 ): Promise<BaseChatModel> {
     // If reasoning is enabled, use the reasoning model for this provider
     const selectedModel = reasoning ? REASONING_MODELS[provider] : model;
@@ -193,7 +200,7 @@ export async function getResponderModel(
         reasoning,
         temperature: reasoning ? 0.3 : 0.7, // Lower temp for reasoning
         maxTokens: 8192, // Higher limit for detailed responses
-    });
+    }, apiKey);
 }
 
 /**

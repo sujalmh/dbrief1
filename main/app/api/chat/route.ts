@@ -36,6 +36,7 @@ const ChatRequestSchema = z.object({
     message: z.string().min(1, "Message is required"),
     provider: z.enum(["gemini", "openrouter", "huggingface"]).default("gemini"),
     model: z.string().default("gemini-2.0-flash"),
+    apiKey: z.string().optional(),
     reasoning: z.boolean().default(false),
     web_search: z.boolean().default(false),
     images: z.array(z.string()).default([]),
@@ -139,7 +140,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { message, provider, model, reasoning, web_search } = validationResult.data as ChatRequest;
+        const { message, provider, model, apiKey, reasoning, web_search } = validationResult.data as ChatRequest;
         const encoder = new TextEncoder();
 
         const stream = new ReadableStream({
@@ -152,10 +153,12 @@ export async function POST(request: NextRequest) {
                     // 1. Initialize Models
                     let plannerModel, responderModel;
                     try {
-                        plannerModel = await getPlannerModel(provider as Provider);
-                        responderModel = await getResponderModel(provider as Provider, model, reasoning);
+                        plannerModel = await getPlannerModel(provider as Provider, apiKey);
+                        responderModel = await getResponderModel(provider as Provider, model, reasoning, apiKey);
                     } catch (error) {
-                        sendEvent("error", { message: "Failed to initialize models" });
+                        const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
+                        console.error("[API] Model initialization error:", errorMessage);
+                        sendEvent("error", { message: errorMessage });
                         controller.close();
                         return;
                     }

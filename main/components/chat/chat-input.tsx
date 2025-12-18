@@ -71,6 +71,7 @@ export function ChatInput() {
                     message: userMessage,
                     provider: settings.provider,
                     model: settings.model,
+                    apiKey: settings.apiKey,
                     reasoning: settings.reasoningEnabled,
                     web_search: settings.webSearchEnabled
                 })

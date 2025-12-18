@@ -70,6 +70,15 @@ from utils import (
 )
 
 # =============================================================================
+# Cost Protection Configuration
+# =============================================================================
+
+from datetime import datetime
+
+CURRENT_YEAR = datetime.now().year
+MAX_TELEMETRY_POINTS = 5000  # Hard cap on telemetry data points
+
+# =============================================================================
 # App Configuration
 # =============================================================================
 
@@ -115,6 +124,7 @@ def _load_session_sync(year: int, gp: str, session_type: str) -> fastf1.core.Ses
 async def get_session(year: int, gp: str, session_type: str) -> fastf1.core.Session:
     """
     Get a loaded session with mutex protection.
+    Blocks live sessions to prevent cost spikes.
     """
     async with session_load_lock:
         # Run the blocking load in a thread pool
@@ -122,6 +132,21 @@ async def get_session(year: int, gp: str, session_type: str) -> fastf1.core.Sess
         session = await loop.run_in_executor(
             None, _load_session_sync, year, gp, session_type
         )
+        
+        # COST PROTECTION: Block live sessions
+        if session.date and session.date.year == CURRENT_YEAR:
+            # Check if session is live or upcoming (within 7 days)
+            session_datetime = pd.Timestamp(session.date)
+            now = pd.Timestamp.now(tz=session_datetime.tz)
+            days_diff = (session_datetime - now).total_seconds() / 86400
+            
+            # Block if session is in the future or within last 24 hours
+            if days_diff > -1:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Live/recent sessions are disabled for cost protection. Session date: {session.date.isoformat()}"
+                )
+        
         return session
 
 
@@ -551,6 +576,12 @@ async def get_telemetry(request: TelemetryRequest):
         
         # Downsample
         telemetry, original_count = downsample_telemetry(telemetry, request.downsample)
+        
+        # COST PROTECTION: Enforce hard cap on telemetry points
+        if len(telemetry) > MAX_TELEMETRY_POINTS:
+            # Further downsample to meet hard cap
+            reduction_factor = int(np.ceil(len(telemetry) / MAX_TELEMETRY_POINTS))
+            telemetry = telemetry.iloc[::reduction_factor].copy()
         
         # Convert to JSON
         data = df_to_json(telemetry)

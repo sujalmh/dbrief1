@@ -201,7 +201,6 @@ export function LapTimesChart({ data, title }: LapTimesChartProps) {
                     <Tooltip content={<CustomTooltip type="lap" />} />
                     <Legend
                         wrapperStyle={{ paddingTop: 10 }}
-                        formatter={(value) => <span className="text-xs font-medium">{value}</span>}
                     />
                     <Line
                         type="monotone"
@@ -303,7 +302,6 @@ export function ComparisonChart({ data, title }: ComparisonChartProps) {
                     />
                     <Legend
                         wrapperStyle={{ paddingTop: 10 }}
-                        formatter={() => <span className="text-xs font-medium">Time</span>}
                     />
                     <Bar
                         dataKey="value"
@@ -421,7 +419,6 @@ export function TelemetryChart({ data, title, circuit }: TelemetryChartProps) {
                         <Tooltip content={<CustomTooltip type="telemetry" />} />
                         <Legend
                             wrapperStyle={{ paddingTop: 15 }}
-                            formatter={(value) => <span className="text-xs font-medium">{value}</span>}
                         />
 
                         {/* Speed lines for each driver */}
@@ -517,7 +514,6 @@ export function TelemetryChart({ data, title, circuit }: TelemetryChartProps) {
                     <Tooltip content={<CustomTooltip type="telemetry" />} />
                     <Legend
                         wrapperStyle={{ paddingTop: 15 }}
-                        formatter={(value) => <span className="text-xs font-medium">{value}</span>}
                     />
 
                     {hasSpeed && (

@@ -10,11 +10,10 @@ export interface Message {
     // For UI states
     isError?: boolean
     steps?: {
-        id: number
+        description: string
         tool: string
-        args: unknown
         status: 'pending' | 'running' | 'success' | 'failed'
-        error?: string
+        result?: string
     }[]
 }
 

@@ -89,6 +89,16 @@ export function ChatInput() {
             const decoder = new TextDecoder()
             let assistantContent = ""
             let currentSteps: NonNullable<import("@/lib/store").Message['steps']> = []
+            let updateFrameId: number | null = null
+
+            // Throttle UI updates using requestAnimationFrame
+            const scheduleUpdate = () => {
+                if (updateFrameId) return
+                updateFrameId = requestAnimationFrame(() => {
+                    useChatStore.getState().updateMessage(assistantMsgId, assistantContent)
+                    updateFrameId = null
+                })
+            }
 
             while (true) {
                 const { done, value } = await reader.read()
@@ -99,40 +109,43 @@ export function ChatInput() {
 
                 for (const line of lines) {
                     if (line.startsWith("data: ")) {
-                        const dataStr = line.replace("data: ", "").trim()
-                        if (dataStr === "[DONE]") break
+                        const content = line.slice(6)
+                        if (content === "[DONE]") break
 
                         try {
-                            const parsed = JSON.parse(dataStr)
-                            // New format: { event: string, data: any }
-                            if (parsed.event) {
+                            const parsed = JSON.parse(content)
+
+                            // New SSE format with event types
+                            if (parsed.event && parsed.data) {
                                 const { event, data } = parsed
 
                                 switch (event) {
                                     case "plan":
-                                        // Initialize steps
-                                        currentSteps = data.steps.map((s: any, i: number) => ({
-                                            id: i + 1,
-                                            tool: s.tool,
-                                            args: s.args,
-                                            status: 'pending'
+                                        currentSteps = data.steps.map((s: any) => ({
+                                            description: s.description,
+                                            tool: s.tool_name || "",
+                                            status: "pending" as const
                                         }))
                                         useChatStore.getState().updateMessageSteps(assistantMsgId, currentSteps)
                                         break
 
                                     case "step_update":
-                                        // Update specific step status
-                                        const { step, status, additional } = data
-                                        currentSteps = currentSteps.map(s =>
-                                            s.id === step ? { ...s, status, error: additional } : s
-                                        )
-                                        useChatStore.getState().updateMessageSteps(assistantMsgId, currentSteps)
+                                        // data.step is the step number (1-based), convert to 0-based index
+                                        const stepIndex = (typeof data.step === 'number' ? data.step : parseInt(data.step)) - 1
+                                        if (stepIndex >= 0 && stepIndex < currentSteps.length) {
+                                            currentSteps[stepIndex] = {
+                                                ...currentSteps[stepIndex],
+                                                status: data.status,
+                                                result: data.additional
+                                            }
+                                            useChatStore.getState().updateMessageSteps(assistantMsgId, [...currentSteps])
+                                        }
                                         break
 
                                     case "token":
-                                        // Append content
+                                        // Append content and schedule throttled update
                                         assistantContent += data.content
-                                        useChatStore.getState().updateMessage(assistantMsgId, assistantContent)
+                                        scheduleUpdate()
                                         break
 
                                     case "visualization":
@@ -147,7 +160,7 @@ export function ChatInput() {
                             // Fallback for old/other formats if any
                             else if (parsed.content) {
                                 assistantContent += parsed.content
-                                useChatStore.getState().updateMessage(assistantMsgId, assistantContent)
+                                scheduleUpdate()
                             }
                         } catch (e) {
                             console.error("Error parsing stream chunk", e)
@@ -155,6 +168,10 @@ export function ChatInput() {
                     }
                 }
             }
+
+            // Final update to ensure all content is displayed
+            if (updateFrameId) cancelAnimationFrame(updateFrameId)
+            useChatStore.getState().updateMessage(assistantMsgId, assistantContent)
 
         } catch (error) {
             console.error(error)

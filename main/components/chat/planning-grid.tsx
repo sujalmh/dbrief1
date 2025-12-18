@@ -5,10 +5,10 @@ import { Check, X, Loader2 } from "lucide-react"
 
 interface PlanningGridProps {
     steps: {
-        id: number
+        description: string
         tool: string
         status: 'pending' | 'running' | 'success' | 'failed'
-        error?: string
+        result?: string
     }[]
 }
 
@@ -26,9 +26,9 @@ export function PlanningGrid({ steps }: PlanningGridProps) {
 
                 {/* 1. Progress Lines Container */}
                 <div className="flex h-1.5 w-full gap-1 overflow-hidden rounded-full bg-muted/20">
-                    {steps.map((step) => (
+                    {steps.map((step, index) => (
                         <div
-                            key={step.id}
+                            key={index}
                             className={cn(
                                 "relative flex-1 transition-colors duration-300",
                                 // Background base
@@ -61,9 +61,9 @@ export function PlanningGrid({ steps }: PlanningGridProps) {
                         </div>
 
                         <div className="space-y-1">
-                            {steps.map((step) => (
+                            {steps.map((step, index) => (
                                 <div
-                                    key={step.id}
+                                    key={index}
                                     className={cn(
                                         "flex items-center justify-between rounded px-2 py-1.5 text-xs font-mono transition-colors",
                                         step.status === 'running' && "bg-muted/50",
@@ -78,7 +78,7 @@ export function PlanningGrid({ steps }: PlanningGridProps) {
                                             step.status === 'success' && "bg-[var(--f1-green)] text-black",
                                             step.status === 'failed' && "bg-[var(--f1-red)] text-white"
                                         )}>
-                                            {step.id}
+                                            {index + 1}
                                         </div>
                                         <span className={cn(
                                             "truncate max-w-[150px]",
@@ -86,7 +86,7 @@ export function PlanningGrid({ steps }: PlanningGridProps) {
                                             step.status === 'success' && "text-[var(--f1-green)] brightness-75",
                                             step.status === 'failed' && "text-[var(--f1-red)]"
                                         )}>
-                                            {step.tool}
+                                            {step.description}
                                         </span>
                                     </div>
 

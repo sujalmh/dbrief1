@@ -81,7 +81,34 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                                 thead: ({ node, ...props }) => <thead className="bg-muted/50 text-left font-medium" {...props} />,
                                 th: ({ node, ...props }) => <th className="px-4 py-3 font-medium border-b" {...props} />,
                                 td: ({ node, ...props }) => <td className="px-4 py-3 border-b last:border-0" {...props} />,
-                                hr: ({ node, ...props }) => <hr className="my-8 border-muted" {...props} />
+                                hr: ({ node, ...props }) => <hr className="my-8 border-muted" {...props} />,
+                                // Highlight driver names/codes
+                                strong: ({ node, children, ...props }) => {
+                                    const text = String(children);
+                                    // lazy import color getter to avoid hydration mismatch if possible, or just strict check
+                                    const { getDriverColor } = require("@/lib/f1-colors");
+                                    const color = getDriverColor(text);
+                                    const isDefault = color === "#FFFFFF";
+
+                                    return (
+                                        <strong
+                                            style={!isDefault ? { color: color } : {}}
+                                            className={!isDefault ? "brightness-110 drop-shadow-sm font-bold" : ""}
+                                            {...props}
+                                        >
+                                            {children}
+                                        </strong>
+                                    )
+                                },
+                                h1: ({ node, ...props }) => (
+                                    <h1 className="mt-6 mb-4 text-2xl font-black uppercase italic tracking-widest text-foreground border-b border-[var(--f1-red)] pb-2" {...props} />
+                                ),
+                                h2: ({ node, ...props }) => (
+                                    <h2 className="mt-5 mb-3 text-lg font-bold uppercase italic tracking-wider text-foreground" {...props} />
+                                ),
+                                h3: ({ node, ...props }) => (
+                                    <h3 className="mt-4 mb-2 text-base font-bold uppercase italic tracking-wide text-muted-foreground" {...props} />
+                                )
                             }}
                         >
                             {message.content}

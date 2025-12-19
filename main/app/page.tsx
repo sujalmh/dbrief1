@@ -17,24 +17,26 @@ export default function Home() {
     <div className="flex h-screen flex-col bg-background font-sans antialiased text-foreground overflow-hidden">
       <Header />
 
-      <main className="w-full max-w-screen-2xl mx-auto flex flex-1 flex-col overflow-hidden relative">
+      <main className="relative flex h-full w-full overflow-hidden bg-carbon">
+        {/* Full width message area */}
         <div
-          className="flex-1 w-full relative min-h-0 transition-[padding] duration-300"
+          className="flex-1 overflow-y-auto w-full transition-[padding] duration-300 relative z-10"
           style={{ paddingRight: prValue }}
         >
           <MessageList />
         </div>
 
+        {/* Floating Input Layer */}
         <div
-          className="w-full px-4 py-4 z-20 transition-[padding] duration-300"
+          className="absolute bottom-6 left-0 w-full z-20 transition-[padding] duration-300 pointer-events-none"
           style={{ paddingRight: prValue }}
         >
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto max-w-3xl px-4 pointer-events-auto">
             <ChatInput />
           </div>
         </div>
 
-        {/* Visualization Panel */}
+        {/* Visualization Panel (Fixed Right) */}
         <VisualizationPanel />
       </main>
 

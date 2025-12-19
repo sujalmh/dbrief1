@@ -50,11 +50,12 @@
 :root {
   --radius: 0.5rem;
   --background: #ffffff;
-  --foreground: #1a1a1a;
+  --foreground: #09090b;
+  /* Zinc 950 - Higher Contrast */
   --card: #ffffff;
-  --card-foreground: #1a1a1a;
+  --card-foreground: #09090b;
   --popover: #ffffff;
-  --popover-foreground: #1a1a1a;
+  --popover-foreground: #09090b;
   --primary: #E10600;
   /* F1 Red */
   --primary-foreground: #ffffff;
@@ -62,12 +63,14 @@
   /* Fastest Lap Green */
   --secondary-foreground: #ffffff;
   --muted: #f4f4f5;
-  --muted-foreground: #71717a;
+  --muted-foreground: #52525b;
+  /* Zinc 600 - Darker Gray */
   --accent: #FFD700;
   /* Sector Yellow */
   --accent-foreground: #1a1a1a;
   --destructive: #ef4444;
-  --border: #e4e4e7;
+  --border: #d4d4d8;
+  /* Zinc 300 - Visible Border */
   --input: #e4e4e7;
   --ring: #E10600;
   --chart-1: #E10600;
@@ -92,37 +95,37 @@
 }
 
 .dark {
-  --background: #101012;
-  /* Asphalt/Dark Gray */
+  --background: #0c0c0c;
+  /* Deep Charcoal/Black */
   --foreground: #ffffff;
-  --card: #18181b;
+  --card: #151515;
   --card-foreground: #ffffff;
-  --popover: #18181b;
+  --popover: #151515;
   --popover-foreground: #ffffff;
   --primary: #E10600;
   --primary-foreground: #ffffff;
   --secondary: #00D26A;
   --secondary-foreground: #ffffff;
-  --muted: #27272a;
+  --muted: #1e1e1e;
   --muted-foreground: #a1a1aa;
   --accent: #FFD700;
   --accent-foreground: #1a1a1a;
   --destructive: #7f1d1d;
-  --border: #27272a;
-  --input: #27272a;
+  --border: #222222;
+  --input: #222222;
   --ring: #E10600;
   --chart-1: #E10600;
   --chart-2: #00D26A;
   --chart-3: #FFD700;
   --chart-4: #A855F7;
   --chart-5: #3b82f6;
-  --sidebar: #18181b;
+  --sidebar: #151515;
   --sidebar-foreground: #ffffff;
   --sidebar-primary: #E10600;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #27272a;
+  --sidebar-accent: #222222;
   --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: #27272a;
+  --sidebar-border: #222222;
   --sidebar-ring: #E10600;
 }
 
@@ -130,6 +133,130 @@
   .text-balance {
     text-wrap: balance;
   }
+}
+
+/* Textured Backgrounds */
+.bg-carbon {
+  /* Light Mode: Machined Composite */
+  background-color: #e4e4e7;
+  /* Warm Graphite Base */
+  background-image:
+    /* Top-left lighting highlight */
+    radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.8) 0%, transparent 50%),
+    /* Subtle diagonal micro-grain (Composite look) */
+    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.02) 0px, rgba(0, 0, 0, 0.02) 1px, transparent 1px, transparent 4px),
+    /* Vignette for depth */
+    radial-gradient(circle at 50% 50%, transparent 80%, rgba(0, 0, 0, 0.05) 100%);
+  background-size: 100% 100%, 8px 8px, 100% 100%;
+  background-attachment: fixed;
+}
+
+.dark .bg-carbon {
+  /* Dark Mode: Carbon Fiber Weave */
+  background-color: #0c0c0c;
+  background-image:
+    linear-gradient(45deg, #111 25%, transparent 25%, transparent 75%, #111 75%, #111),
+    linear-gradient(45deg, #111 25%, transparent 25%, transparent 75%, #111 75%, #111);
+  background-size: 8px 8px;
+  /* Smaller pattern for subtlety */
+  background-position: 0 0, 4px 4px;
+  background-attachment: scroll;
+}
+
+/* Steering Wheel Button Physics */
+.btn-wheel {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  /* Fully rounded */
+  border: none;
+
+  /* Base Hardware Look (Neutral/rubber) */
+  background: linear-gradient(145deg, #2a2a2a, #222);
+  color: #888;
+  font-weight: 700;
+
+  /* Physical Elevation (Inactive State) */
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.1) inset,
+    /* Top Bevel Highlight */
+    0 -1px 0 rgba(0, 0, 0, 0.2) inset,
+    /* Bottom Bevel Shadow */
+    0 4px 8px rgba(0, 0, 0, 0.5),
+    /* Deep Drop Shadow for Elevation */
+    0 2px 4px rgba(0, 0, 0, 0.4);
+  /* Ambient Shadow */
+
+  /* Snappy Mechanical Transition */
+  transition: all 100ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform: translateY(0);
+}
+
+.btn-wheel:hover {
+  filter: brightness(1.1);
+  transform: translateY(-0.5px);
+  /* Subtle lift on hover */
+}
+
+.btn-wheel:active,
+.btn-wheel[data-active="true"] {
+  /* Pressed State */
+  transform: translateY(2px) scale(0.98);
+  /* Physical depression */
+  box-shadow:
+    0 0 0 rgba(0, 0, 0, 0),
+    /* Remove Drop Shadow */
+    0 1px 2px rgba(0, 0, 0, 0.4) inset,
+    /* Deep Inset Shadow */
+    0 2px 4px rgba(0, 0, 0, 0.2) inset;
+  /* Soft Inset Shadow */
+  filter: saturate(1.2) brightness(0.9);
+  /* Saturation & Pressure darkening */
+}
+
+/* Color Variants - Colored BY DEFAULT */
+.btn-wheel-cyan {
+  background: linear-gradient(145deg, #06b6d4, #0891b2);
+  /* Cyan-500 to 600 */
+  color: #000;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.btn-wheel-red {
+  background: linear-gradient(145deg, #E10600, #b90500);
+  /* F1 Red */
+  color: #fff;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.btn-wheel-purple {
+  background: linear-gradient(145deg, #A855F7, #9333ea);
+  /* Purple */
+  color: #fff;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.btn-wheel-green {
+  background: linear-gradient(145deg, #00D26A, #00a653);
+  /* F1 Green */
+  color: #000;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.btn-wheel-yellow {
+  background: linear-gradient(145deg, #FFD700, #e6c200);
+  /* F1 Yellow */
+  color: #000;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.btn-wheel-orange {
+  background: linear-gradient(145deg, #FF8700, #cc6c00);
+  /* Orange */
+  color: #000;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 @keyframes wave {

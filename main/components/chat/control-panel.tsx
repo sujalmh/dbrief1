@@ -33,12 +33,8 @@ export function ControlPanel() {
                     variant="ghost"
                     size="icon"
                     onClick={() => updateSettings({ reasoningEnabled: !settings.reasoningEnabled })}
-                    className={cn(
-                        "h-8 w-8 rounded-full transition-all duration-300",
-                        settings.reasoningEnabled
-                            ? "text-[var(--f1-purple)] bg-[var(--f1-purple)]/10 hover:bg-[var(--f1-purple)]/20"
-                            : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                    )}
+                    className="btn-wheel btn-wheel-purple h-8 w-8"
+                    data-active={settings.reasoningEnabled}
                     title="Toggle Reasoning"
                 >
                     <Brain className="h-4 w-4" />
@@ -49,12 +45,8 @@ export function ControlPanel() {
                     variant="ghost"
                     size="icon"
                     onClick={() => updateSettings({ webSearchEnabled: !settings.webSearchEnabled })}
-                    className={cn(
-                        "h-8 w-8 rounded-full transition-all duration-300",
-                        settings.webSearchEnabled
-                            ? "text-[var(--f1-green)] bg-[var(--f1-green)]/10 hover:bg-[var(--f1-green)]/20"
-                            : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                    )}
+                    className="btn-wheel btn-wheel-green h-8 w-8"
+                    data-active={settings.webSearchEnabled}
                     title="Toggle Web Search"
                 >
                     <Globe className="h-4 w-4" />
@@ -65,12 +57,8 @@ export function ControlPanel() {
                     variant="ghost"
                     size="icon"
                     onClick={() => updateSettings({ visualizeEnabled: !settings.visualizeEnabled })}
-                    className={cn(
-                        "h-8 w-8 rounded-full transition-all duration-300",
-                        settings.visualizeEnabled
-                            ? "text-[var(--f1-yellow)] bg-[var(--f1-yellow)]/10 hover:bg-[var(--f1-yellow)]/20"
-                            : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                    )}
+                    className="btn-wheel btn-wheel-yellow h-8 w-8"
+                    data-active={settings.visualizeEnabled}
                     title="Toggle Visualization"
                 >
                     <BarChart3 className="h-4 w-4" />
@@ -83,10 +71,10 @@ export function ControlPanel() {
                     <Button
                         variant="ghost"
                         size="sm"
-                        className="h-8 gap-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-full px-3"
+                        className="btn-wheel btn-wheel-orange h-8 gap-2 text-xs px-3"
                     >
                         <ProviderIcon className="h-3.5 w-3.5" />
-                        <span className="max-w-[80px] truncate hidden sm:inline-block">
+                        <span className="max-w-[80px] truncate hidden sm:inline-block font-bold">
                             {settings.model.split('/').pop()?.split(':')[0] || settings.model}
                         </span>
                     </Button>

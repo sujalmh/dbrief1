@@ -189,7 +189,7 @@ export function VisualizationPanel() {
     return (
         <div
             className={cn(
-                "fixed right-0 top-14 h-[calc(100vh-3.5rem)] z-30 bg-background border-l border-border flex flex-col shadow-2xl transition-[width]",
+                "fixed right-0 top-14 h-[calc(100vh-3.5rem)] z-30 bg-background/95 border-l border-white/10 flex flex-col shadow-[inset_10px_0_20px_-10px_rgba(0,0,0,0.5)] transition-[width]",
                 isResizing ? "duration-0 select-none" : "duration-300"
             )}
             style={{ width: `${localWidth}px` }}

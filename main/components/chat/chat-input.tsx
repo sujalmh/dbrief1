@@ -183,14 +183,17 @@ export function ChatInput() {
     }
 
     return (
-        <div className="relative rounded-3xl border border-[var(--f1-red)]/20 bg-muted/20 shadow-2xl backdrop-blur-md transition-all focus-within:ring-1 focus-within:ring-[var(--f1-red)]/50 focus-within:bg-muted/30 hover:bg-muted/30 hover:shadow-[0_0_40px_-10px_rgba(225,6,0,0.15)]">
+        <div className="relative rounded-[2rem] border transition-all duration-300 backdrop-blur-xl 
+            bg-white/80 border-black/5 shadow-[0_8px_32px_rgba(0,0,0,0.1)] hover:bg-white/90 
+            dark:bg-black/40 dark:border-white/10 dark:shadow-[0_8px_32px_rgba(0,0,0,0.5)] dark:hover:bg-black/50 
+            focus-within:ring-1 focus-within:ring-black/5 dark:focus-within:ring-white/10">
 
             {/* Top Section: Input Area */}
             <div className="flex gap-2 p-3 pb-0">
                 <Button
                     variant="ghost"
                     size="icon"
-                    className="mt-1 h-8 w-8 shrink-0 text-muted-foreground hover:text-[var(--f1-red)] rounded-full"
+                    className="btn-wheel btn-wheel-cyan mt-1 h-8 w-8 shrink-0 rounded-full"
                 >
                     <ImageIcon className="h-5 w-5" />
                     <span className="sr-only">Upload Image</span>
@@ -202,7 +205,7 @@ export function ChatInput() {
                     onChange={handleInput}
                     onKeyDown={handleKeyDown}
                     placeholder="Ask about race strategy..."
-                    className="min-h-[50px] w-full resize-none border-none bg-transparent p-1 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-base custom-scrollbar max-h-[200px] placeholder:text-muted-foreground/50 font-medium"
+                    className="min-h-[50px] w-full resize-none border-none bg-transparent p-1 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-base custom-scrollbar max-h-[200px] placeholder:text-muted-foreground font-medium"
                     rows={1}
                 />
 
@@ -211,10 +214,10 @@ export function ChatInput() {
                     disabled={!input.trim() || isLoading}
                     size="icon"
                     className={cn(
-                        "h-8 w-8 shrink-0 rounded-full transition-all mt-1",
+                        "mt-1 h-8 w-8 shrink-0 rounded-full transition-all",
                         input.trim()
-                            ? "bg-[var(--f1-red)] text-white hover:bg-[var(--f1-red)]/90 shadow-lg shadow-[var(--f1-red)]/20"
-                            : "bg-muted text-muted-foreground hover:bg-muted/80"
+                            ? "btn-wheel btn-wheel-red"
+                            : "btn-wheel cursor-not-allowed opacity-50"
                     )}
                 >
                     <Send className="h-4 w-4" />

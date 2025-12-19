@@ -46,6 +46,9 @@ interface ChatStore {
     visualizationData: any | null
     graphHistory: GraphHistoryItem[]
 
+    activeMessageId: string | null
+    setActiveMessageId: (id: string | null) => void
+
     isSettingsOpen: boolean
     setSettingsOpen: (isOpen: boolean) => void
     visualizationWidth: number
@@ -92,11 +95,13 @@ export const useChatStore = create<ChatStore>()(
             visualizationWidth: 500,
             isVisualizationCollapsed: false,
             graphHistory: [],
+            activeMessageId: null,
 
             setSettingsOpen: (isOpen) => set({ isSettingsOpen: isOpen }),
             updateVisualizationWidth: (width) => set({ visualizationWidth: width }),
             toggleVisualizationCollapse: (collapsed) =>
                 set((state) => ({ isVisualizationCollapsed: collapsed ?? !state.isVisualizationCollapsed })),
+            setActiveMessageId: (id) => set({ activeMessageId: id }),
             setInput: (input) => set({ input }),
             addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
             setMessages: (messages) => set({ messages }),
@@ -131,7 +136,7 @@ export const useChatStore = create<ChatStore>()(
             removeGraphFromHistory: (id) => set((state) => ({
                 graphHistory: state.graphHistory.filter(item => item.id !== id)
             })),
-            clearMessages: () => set({ messages: [], visualizationData: null, graphHistory: [] }),
+            clearMessages: () => set({ messages: [], visualizationData: null, graphHistory: [], activeMessageId: null }),
         }),
         {
             name: 'f1-chat-storage',

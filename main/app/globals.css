@@ -163,6 +163,25 @@
   background-attachment: scroll;
 }
 
+.bg-carbon-header {
+  background-color: #080808;
+  background-image:
+    linear-gradient(45deg, #151515 25%, transparent 25%, transparent 75%, #151515 75%, #151515),
+    linear-gradient(45deg, #151515 25%, transparent 25%, transparent 75%, #151515 75%, #151515);
+  background-size: 6px 6px;
+  background-position: 0 0, 3px 3px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.light .bg-carbon-header {
+  background-color: #f0f0f0;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.03) 0px, rgba(0, 0, 0, 0.03) 1px, transparent 1px, transparent 4px);
+  background-size: 8px 8px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
 /* Steering Wheel Button Physics */
 .btn-wheel {
   position: relative;
@@ -245,8 +264,22 @@
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
+.btn-wheel-blue {
+  background: linear-gradient(145deg, #3b82f6, #2563eb);
+  /* Blue */
+  color: #fff;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
 .btn-wheel-yellow {
   background: linear-gradient(145deg, #FFD700, #e6c200);
+  /* F1 Yellow */
+  color: #000;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.btn-wheel-amber {
+  background: linear-gradient(145deg, #FFC000, #dea700);
   /* F1 Yellow */
   color: #000;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);

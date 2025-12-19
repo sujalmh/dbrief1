@@ -8,6 +8,9 @@ import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PlanningGrid } from "@/components/chat/planning-grid"
 import { RadioWave } from "@/components/chat/radio-wave"
+import { useEffect, useRef } from "react"
+// Import driver color utility safely
+import { getDriverColor } from "@/lib/f1-colors"
 
 interface MessageBubbleProps {
     message: Message
@@ -16,9 +19,35 @@ interface MessageBubbleProps {
 export function MessageBubble({ message }: MessageBubbleProps) {
     const isUser = message.role === "user"
     const isError = message.isError
+    const { setActiveMessageId } = useChatStore()
+    const containerRef = useRef<HTMLDivElement>(null)
+
+    // ScrollSpy Logic: Update active message when this bubble is roughly in the center
+    useEffect(() => {
+        if (isUser) return; // Only track assistant messages for context
+
+        const observer = new IntersectionObserver(
+            ([entry]) => {
+                if (entry.isIntersecting) {
+                    setActiveMessageId(message.id)
+                }
+            },
+            {
+                rootMargin: '-40% 0px -40% 0px', // Trigger when element is in the vertical center band
+                threshold: 0
+            }
+        )
+
+        if (containerRef.current) {
+            observer.observe(containerRef.current)
+        }
+
+        return () => observer.disconnect()
+    }, [message.id, setActiveMessageId, isUser])
 
     return (
         <div
+            ref={containerRef}
             className={cn(
                 "flex w-full gap-3 p-4",
                 isUser ? "flex-row-reverse" : "flex-row"
@@ -85,8 +114,6 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                                 // Highlight driver names/codes
                                 strong: ({ node, children, ...props }) => {
                                     const text = String(children);
-                                    // lazy import color getter to avoid hydration mismatch if possible, or just strict check
-                                    const { getDriverColor } = require("@/lib/f1-colors");
                                     const color = getDriverColor(text);
                                     const isDefault = color === "#FFFFFF";
 

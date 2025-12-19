@@ -1,5 +1,6 @@
 "use client"
 
+import { memo } from "react"
 import { cn } from "@/lib/utils"
 import { Check, X, Loader2 } from "lucide-react"
 
@@ -12,7 +13,7 @@ interface PlanningGridProps {
     }[]
 }
 
-export function PlanningGrid({ steps }: PlanningGridProps) {
+function PlanningGridComponent({ steps }: PlanningGridProps) {
     if (!steps || steps.length === 0) return null
 
     // Determine overall state for container styling
@@ -113,3 +114,6 @@ export function PlanningGrid({ steps }: PlanningGridProps) {
         </div>
     )
 }
+
+// Export memoized component
+export const PlanningGrid = memo(PlanningGridComponent);

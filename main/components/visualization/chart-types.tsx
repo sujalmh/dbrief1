@@ -32,19 +32,19 @@ const F1_COLORS = {
 
 // Color palette for multi-entity comparison
 const COMPARISON_COLORS = [
-    '#E10600', // Red (Ferrari)
-    '#00D2BE', // Teal (Mercedes)
-    '#FF8700', // Orange (McLaren)
-    '#0600EF', // Blue (Red Bull)
-    '#006F62', // Green (Aston Martin)
-    '#2B4562', // Dark Blue (Alpha Tauri)
-    '#900000', // Dark Red (Alfa Romeo)
-    '#005AFF', // Alpine Blue
-    '#B6BABD', // Williams Silver
-    '#52E252', // Haas Lime
+    '#F2059F', // Pink (High contrast)
+    '#00D2BE', // Cyan/Teal
+    '#FFEA00', // Yellow
+    '#52E252', // Lime
+    '#FF8700', // Orange
+    '#A855F7', // Purple
+    '#E10600', // Red
+    '#0600EF', // Blue
+    '#B6BABD', // Grey
+    '#006F62', // Dark Green
 ]
 
-// Corner markers for common circuits (distance in meters)
+
 const CIRCUIT_CORNERS: Record<string, { distance: number; corner: number; name?: string }[]> = {
     default: [
         { distance: 200, corner: 1 },
@@ -430,7 +430,14 @@ export function TelemetryChart({ data, title, circuit, corners: apiCorners }: Te
             if (point.driver) {
                 if (point.speed !== undefined) group[`${point.driver}_speed`] = point.speed
                 if (point.throttle !== undefined) group[`${point.driver}_throttle`] = point.throttle
-                if (point.brake !== undefined) group[`${point.driver}_brake`] = point.brake
+                if (point.gear !== undefined) group[`${point.driver}_gear`] = point.gear
+                if (point.brake !== undefined) {
+                    group[`${point.driver}_brake`] = point.brake
+                    // Log first few detections of non-zero brake to confirm data presence
+                    if (point.brake > 0 && Math.random() < 0.01) {
+                         console.log("[VizDebug] Found brake data:", point.driver, point.brake, roundedDist)
+                    }
+                }
             }
         })
 
@@ -440,26 +447,10 @@ export function TelemetryChart({ data, title, circuit, corners: apiCorners }: Te
             <div className="space-y-2">
                 {title && <h3 className="text-sm font-semibold text-muted-foreground">{title}</h3>}
                 <ResponsiveContainer width="100%" height={400}>
-                    <LineChart data={chartData} margin={{ top: 20, right: 60, left: 20, bottom: 25 }}>
+                    <LineChart data={chartData} margin={{ top: 20, right: 15, left: 20, bottom: 25 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
 
-                        {/* Turn markers */}
-                        {corners.map(c => (
-                            <ReferenceLine
-                                key={c.corner}
-                                x={c.distance}
-                                stroke="white"
-                                strokeDasharray="3 3"
-                                strokeOpacity={0.2}
-                                label={{
-                                    value: `T${c.corner}`,
-                                    position: 'insideTop',
-                                    fill: 'rgba(255, 255, 255, 0.7)',
-                                    fontSize: 10,
-                                    fontWeight: 500
-                                }}
-                            />
-                        ))}
+
 
                         <XAxis
                             type="number"
@@ -490,6 +481,15 @@ export function TelemetryChart({ data, title, circuit, corners: apiCorners }: Te
                             label={{ value: 'Throttle/Brake (%)', angle: 90, position: 'insideRight', fontSize: 11, fill: F1_COLORS.green }}
                         />
 
+                        {/* Hidden Y-axis for Gear (1-8) */}
+                        <YAxis
+                            yAxisId="gear"
+                            orientation="right"
+                            domain={[0, 9]}
+                            hide
+                            width={0}
+                        />
+
                         <Tooltip content={<CustomTooltip type="telemetry" />} />
                         <Legend
                             wrapperStyle={{ paddingTop: 15 }}
@@ -503,7 +503,7 @@ export function TelemetryChart({ data, title, circuit, corners: apiCorners }: Te
                                 type="monotone"
                                 dataKey={`${driver}_speed`}
                                 name={`${driver} Speed`}
-                                stroke={COMPARISON_COLORS[i % COMPARISON_COLORS.length]}
+                                stroke={COMPARISON_COLORS[(i * 4 + 0) % COMPARISON_COLORS.length]}
                                 strokeWidth={2}
                                 dot={false}
                                 connectNulls
@@ -518,12 +518,65 @@ export function TelemetryChart({ data, title, circuit, corners: apiCorners }: Te
                                 type="monotone"
                                 dataKey={`${driver}_throttle`}
                                 name={`${driver} Throttle`}
-                                stroke={COMPARISON_COLORS[i % COMPARISON_COLORS.length]}
+                                stroke={COMPARISON_COLORS[(i * 4 + 1) % COMPARISON_COLORS.length]}
                                 strokeWidth={1.5}
                                 strokeDasharray="5 3"
                                 dot={false}
                                 connectNulls
-                                opacity={0.7}
+                                opacity={0.9}
+                            />
+                        ))}
+
+                        {/* Brake lines (dotted) for each driver */}
+                        {hasBrake && drivers.map((driver, i) => (
+                            <Line
+                                key={`${driver}-brake`}
+                                yAxisId="right"
+                                type="monotone"
+                                dataKey={`${driver}_brake`}
+                                name={`${driver} Brake`}
+                                stroke={COMPARISON_COLORS[(i * 4 + 2) % COMPARISON_COLORS.length]}
+                                strokeWidth={1.5}
+                                strokeDasharray="1 1"
+                                dot={false}
+                                connectNulls
+                                opacity={1}
+                            />
+                        ))}
+
+                        {/* Gear lines (step) for each driver */}
+                        {hasGear && drivers.map((driver, i) => (
+                            <Line
+                                key={`${driver}-gear`}
+                                yAxisId="gear"
+                                type="stepAfter"
+                                dataKey={`${driver}_gear`}
+                                name={`${driver} Gear`}
+                                stroke={COMPARISON_COLORS[(i * 4 + 3) % COMPARISON_COLORS.length]}
+                                strokeWidth={2}
+                                strokeDasharray="5 2"
+                                dot={false}
+                                connectNulls
+                                opacity={1}
+                            />
+                        ))}
+
+                        {/* Turn markers - Rendered LAST to be ON TOP */}
+                        {corners.map(c => (
+                            <ReferenceLine
+                                key={c.corner}
+                                x={c.distance}
+                                yAxisId="left"
+                                stroke="white"
+                                strokeDasharray="3 3"
+                                strokeOpacity={0.5}
+                                label={{
+                                    value: `T${c.corner}`,
+                                    position: 'insideTop',
+                                    fill: 'white',
+                                    fontSize: 10,
+                                    fontWeight: 'bold'
+                                }}
                             />
                         ))}
                     </LineChart>
@@ -537,7 +590,7 @@ export function TelemetryChart({ data, title, circuit, corners: apiCorners }: Te
         <div className="space-y-2">
             {title && <h3 className="text-sm font-semibold text-muted-foreground">{title}</h3>}
             <ResponsiveContainer width="100%" height={400}>
-                <LineChart data={data} margin={{ top: 20, right: 60, left: 20, bottom: 25 }}>
+                <LineChart data={data} margin={{ top: 20, right: 15, left: 20, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
 
                     <XAxis

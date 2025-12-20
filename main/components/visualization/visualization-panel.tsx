@@ -61,7 +61,13 @@ export function VisualizationPanel() {
     // Process visualization data from store - MEMOIZED to prevent infinite loops
     const hasData = visualizationData && visualizationData.length > 0
     // IMPORTANT: All hooks must be called before any conditional returns
+    // IMPORTANT: All hooks must be called before any conditional returns
     const { lapData, telemetryData, comparisonData } = useMemo(() => {
+        // Use Maps for deduplication
+        const lapMap = new Map<string, LapDataPoint>()
+        const telemetryMap = new Map<string, TelemetryDataPoint>()
+        const comparisonMap = new Map<string, ComparisonDataPoint>()
+        
         const laps: LapDataPoint[] = []
         const telemetry: TelemetryDataPoint[] = []
         const comparison: ComparisonDataPoint[] = []
@@ -70,30 +76,39 @@ export function VisualizationPanel() {
             return { lapData: laps, telemetryData: telemetry, comparisonData: comparison }
         }
 
+        console.log("[VizPanel] Raw Visualization Data:", visualizationData)
+
         for (const result of visualizationData) {
             if (!result.success || !result.data) continue
 
             // Handle laps data
             if (result.tool === 'get_laps' && result.data.laps) {
+                // ... (existing lap logic)
                 for (const lap of result.data.laps) {
                     const lapNumber = parseInt(lap.lap_number || lap.LapNumber || '0')
                     const lapTime = parseLapTime(lap.lap_time || lap.LapTime || '0')
+                    const driver = lap.driver || lap.Driver || result.data.driver
 
                     // Only add if valid numbers
                     if (!isNaN(lapNumber) && !isNaN(lapTime) && lapTime > 0) {
-                        laps.push({
-                            lap: lapNumber,
-                            time: lapTime,
-                            driver: lap.driver || lap.Driver || result.data.driver,
-                            compound: lap.compound || lap.Compound
-                        })
+                         // Key: Driver + Lap (e.g. "VER-1")
+                        const key = `${driver}-${lapNumber}`
+                        if (!lapMap.has(key)) {
+                            lapMap.set(key, {
+                                lap: lapNumber,
+                                time: lapTime,
+                                driver,
+                                compound: lap.compound || lap.Compound
+                            })
+                        }
                     }
                 }
             }
 
             // Handle telemetry data
             if (result.tool === 'get_telemetry' && result.data.data) {
-                const driverCode = result.data.driver || 'Unknown'
+                // ... (existing telemetry logic)
+                 const driverCode = result.data.driver || 'Unknown'
                 for (const point of result.data.data) {
                     // Start of fix: Helper for case-insensitive lookup
                     const getVal = (k1: string, k2: string) => point[k1] !== undefined ? point[k1] : point[k2];
@@ -101,37 +116,86 @@ export function VisualizationPanel() {
                     const distance = parseFloat(getVal('Distance', 'distance') || '0')
 
                     if (!isNaN(distance)) {
-                        telemetry.push({
-                            distance,
-                            speed: getVal('Speed', 'speed') !== undefined ? parseFloat(getVal('Speed', 'speed')) : undefined,
-                            throttle: getVal('Throttle', 'throttle') !== undefined ? parseFloat(getVal('Throttle', 'throttle')) : undefined,
-                            brake: getVal('Brake', 'brake') !== undefined ? parseFloat(getVal('Brake', 'brake')) : undefined,
-                            gear: getVal('nGear', 'gear') !== undefined ? parseInt(getVal('nGear', 'gear')) : undefined,
-                            driver: driverCode
-                        })
+                        // Key: Driver + Distance (e.g. "VER-100.5")
+                        const key = `${driverCode}-${distance.toFixed(1)}`
+                        if (!telemetryMap.has(key)) {
+                            // Helper for safe parsing
+                            const parseTelemetryValue = (val: any) => {
+                                if (val === true) return 100
+                                if (val === false) return 0
+                                if (val === null || val === undefined) return 0
+                                return parseFloat(val) || 0
+                            }
+
+                            telemetryMap.set(key, {
+                                distance,
+                                speed: parseTelemetryValue(getVal('Speed', 'speed')),
+                                throttle: parseTelemetryValue(getVal('Throttle', 'throttle')),
+                                brake: parseTelemetryValue(getVal('Brake', 'brake')),
+                                gear: parseInt(getVal('nGear', 'gear') || '0') || 0,
+                                driver: driverCode
+                            })
+                        }
                     }
                 }
             }
 
             // Handle comparison data (qualifying/race results)
             if ((result.tool === 'get_qualifying' || result.tool === 'get_race') && result.data.results) {
+                // Priority 1: Use explicit 'year' argument from tool call (most robust)
+                // Priority 2: Extract from session name
+                let season = result.args?.year?.toString()
+                
+                if (!season) {
+                    const sessionName = result.data.session_name || ''
+                    const yearMatch = sessionName.match(/\b(20\d{2})\b/)
+                    season = yearMatch ? yearMatch[1] : undefined
+                }
+                
+                // Determine session type for clearer labeling
+                let sessionType = 'Race'
+                if (result.tool === 'get_qualifying') sessionType = 'Qualifying'
+                else if (result.args?.session === 'Q' || result.args?.session === 'Qualifying') sessionType = 'Qualifying'
+                
+                // Construct a unique season label (e.g. "2024 (Race)", "2024 (Qualifying)")
+                // This ensures that if we have both race and quali data, they don't overwrite each other in the chart
+                const seasonLabel = season ? `${season} (${sessionType})` : sessionType
+
+                console.log(`[VizPanel] Processing results for: ${seasonLabel}`, { 
+                    args: result.args, 
+                    sessionName: result.data.session_name 
+                })
+
                 for (const r of result.data.results) {
                     const driver = r.driver || r.Driver || r.Abbreviation || 'Unknown'
                     const timeOrPos = r.time || r.Time || r.q3 || r.q2 || r.q1 || '0'
                     const value = r.position || r.Position ? parseInt(r.position || r.Position) : parseLapTime(timeOrPos)
+                    const label = r.team || r.TeamName || ''
 
                     if (!isNaN(value)) {
-                        comparison.push({
-                            driver,
-                            value,
-                            label: r.team || r.TeamName
-                        })
+                         // Key: Driver + SeasonLabel + Value
+                         // This allows same driver to appear for multiple seasons AND multiple session types
+                        const key = `${driver}-${seasonLabel}-${value}`
+                        if (!comparisonMap.has(key)) {
+                            comparisonMap.set(key, {
+                                driver,
+                                value,
+                                label,
+                                season: seasonLabel
+                            })
+                        }
                     }
                 }
             }
         }
 
-        return { lapData: laps, telemetryData: telemetry, comparisonData: comparison }
+        const stats = { 
+            lapData: Array.from(lapMap.values()), 
+            telemetryData: Array.from(telemetryMap.values()), 
+            comparisonData: Array.from(comparisonMap.values()) 
+        }
+        console.log("[VizPanel] Processed Data:", stats)
+        return stats
     }, [visualizationData, hasData])
 
     // NOW we can do conditional returns - after all hooks are called
@@ -246,7 +310,7 @@ export function VisualizationPanel() {
                         <div>
                             {lapData.length > 0 && `${lapData.length} laps`}
                             {telemetryData.length > 0 && ` • ${telemetryData.length} telemetry points`}
-                            {comparisonData.length > 0 && ` • ${comparisonData.length} drivers`}
+                            {comparisonData.length > 0 && ` • ${new Set(comparisonData.map(d => d.driver)).size} drivers`}
                         </div>
                         <div className="text-[10px] opacity-40">
                             {Math.round(localWidth)}px

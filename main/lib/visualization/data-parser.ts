@@ -27,6 +27,7 @@ export interface ComparisonDataPoint {
     driver: string
     value: number
     label?: string
+    season?: string | number
 }
 
 export type ChartDataType = 'lap_times' | 'telemetry' | 'comparison' | 'weather' | 'unknown'

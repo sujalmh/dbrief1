@@ -242,20 +242,78 @@ interface ComparisonChartProps {
 }
 
 export function ComparisonChart({ data, title }: ComparisonChartProps) {
-    // Calculate delta to leader for tooltips
-    const sortedData = [...data].sort((a, b) => a.value - b.value)
-    const leaderValue = sortedData[0]?.value || 0
+    // 1. Identify distinct seasons (if any)
+    const seasons = Array.from(new Set(data.map(d => d.season).filter(Boolean))).sort()
+    const hasMultipleSeasons = seasons.length > 1
 
-    const chartData = data.map((d, i) => ({
-        ...d,
-        delta: d.value - leaderValue,
-        color: COMPARISON_COLORS[i % COMPARISON_COLORS.length]
-    }))
+    // 2. Prepare Chart Data
+    let chartData: any[] = []
+    let bars: React.ReactNode[] = []
+
+    if (hasMultipleSeasons) {
+        // GROUPED BAR CHART LOGIC
+        // Transform: [{driver: VER, season: 2022, value: 1}, {driver: VER, season: 2023, value: 1}]
+        // To: [{driver: VER, 2022: 1, 2023: 1}]
+        
+        const grouped = new Map<string, any>()
+        
+        data.forEach(d => {
+            if (!grouped.has(d.driver)) {
+                grouped.set(d.driver, { driver: d.driver, label: d.label })
+            }
+            const entry = grouped.get(d.driver)
+            if (d.season) {
+                entry[d.season] = d.value
+            } else {
+                entry['value'] = d.value // Fallback
+            }
+        })
+        
+        chartData = Array.from(grouped.values())
+
+        // Create a Bar for each season
+        bars = seasons.map((season, i) => (
+            <Bar
+                key={season}
+                dataKey={String(season)}
+                name={String(season)}
+                fill={COMPARISON_COLORS[i % COMPARISON_COLORS.length]}
+                radius={[0, 4, 4, 0]}
+            >
+                {/* No individual Cell colors in grouped mode, use series color */}
+            </Bar>
+        ))
+
+    } else {
+        // STANDARD FLAT CHART LOGIC (Single Season / No Season)
+        // Calculate delta to leader for tooltips
+        const sortedData = [...data].sort((a, b) => a.value - b.value)
+        const leaderValue = sortedData[0]?.value || 0
+
+        chartData = data.map((d, i) => ({
+            ...d,
+            delta: d.value - leaderValue,
+            color: COMPARISON_COLORS[i % COMPARISON_COLORS.length]
+        }))
+
+        bars = [
+            <Bar
+                key="value"
+                dataKey="value"
+                name="Value"
+                radius={[0, 4, 4, 0]}
+            >
+                {chartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                ))}
+            </Bar>
+        ]
+    }
 
     return (
         <div className="space-y-2">
             {title && <h3 className="text-sm font-semibold text-muted-foreground">{title}</h3>}
-            <ResponsiveContainer width="100%" height={Math.max(300, data.length * 35)}>
+            <ResponsiveContainer width="100%" height={Math.max(300, chartData.length * (hasMultipleSeasons ? 50 : 35))}>
                 <BarChart
                     data={chartData}
                     layout="vertical"
@@ -267,7 +325,7 @@ export function ComparisonChart({ data, title }: ComparisonChartProps) {
                         stroke="var(--muted-foreground)"
                         tick={{ fontSize: 11 }}
                         tickFormatter={(value) => formatLapTime(value)}
-                        label={{ value: 'Time', position: 'insideBottom', offset: -5, fontSize: 12, fill: 'var(--muted-foreground)' }}
+                        label={{ value: 'Time / Position', position: 'insideBottom', offset: -5, fontSize: 12, fill: 'var(--muted-foreground)' }}
                     />
                     <YAxis
                         type="category"
@@ -279,39 +337,32 @@ export function ComparisonChart({ data, title }: ComparisonChartProps) {
                     <Tooltip
                         content={({ active, payload }) => {
                             if (!active || !payload || !payload.length) return null
-                            const d = payload[0].payload
+                            // In grouped mode, payload has multiple items
+                            const d = payload[0].payload // The row data {driver: VER, 2022: 1, 2023: 1}
+                            
                             return (
                                 <div className="rounded-lg border border-border bg-background/95 p-3 shadow-lg backdrop-blur">
                                     <p className="font-bold text-sm mb-1">{d.driver}</p>
                                     {d.label && <p className="text-xs text-muted-foreground mb-2">{d.label}</p>}
                                     <div className="space-y-1 text-xs">
-                                        <div className="flex justify-between gap-4">
-                                            <span className="text-muted-foreground">Time:</span>
-                                            <span className="font-medium">{formatLapTime(d.value)}</span>
-                                        </div>
-                                        {d.delta > 0 && (
-                                            <div className="flex justify-between gap-4">
-                                                <span className="text-muted-foreground">Gap:</span>
-                                                <span className="font-medium text-red-500">+{d.delta.toFixed(3)}s</span>
+                                        {payload.map((p: any) => (
+                                             <div key={p.name} className="flex justify-between gap-4 items-center">
+                                                <span className="flex items-center gap-1">
+                                                    <div className="w-2 h-2 rounded-full" style={{backgroundColor: p.color}}></div>
+                                                    <span className="text-muted-foreground">{p.name}:</span>
+                                                </span>
+                                                <span className="font-medium">
+                                                    {p.name === 'Value' || !isNaN(Number(p.name)) ? formatLapTime(p.value) : p.value}
+                                                </span>
                                             </div>
-                                        )}
+                                        ))}
                                     </div>
                                 </div>
                             )
                         }}
                     />
-                    <Legend
-                        wrapperStyle={{ paddingTop: 10 }}
-                    />
-                    <Bar
-                        dataKey="value"
-                        name="Time"
-                        radius={[0, 4, 4, 0]}
-                    >
-                        {chartData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                    </Bar>
+                    <Legend wrapperStyle={{ paddingTop: 10 }} />
+                    {bars}
                 </BarChart>
             </ResponsiveContainer>
         </div>

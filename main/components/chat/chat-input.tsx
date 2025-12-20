@@ -78,8 +78,14 @@ export function ChatInput() {
             })
 
             if (!response.ok) {
-                const errorData = await response.json()
-                throw new Error(errorData.error || "Failed to send message")
+                let errorMessage
+                try {
+                    const errorData = await response.json()
+                    errorMessage = errorData.error || errorData.message || "Failed to send message"
+                } catch {
+                    errorMessage = `Server Error: ${response.status} ${response.statusText}`
+                }
+                throw new Error(errorMessage)
             }
 
             if (!response.body) throw new Error("No response body")
@@ -90,6 +96,7 @@ export function ChatInput() {
             let assistantContent = ""
             let currentSteps: NonNullable<import("@/lib/store").Message['steps']> = []
             let updateFrameId: number | null = null
+            let buffer = "" // Buffer for split chunks
 
             // Throttle UI updates using requestAnimationFrame
             const scheduleUpdate = () => {
@@ -104,12 +111,18 @@ export function ChatInput() {
                 const { done, value } = await reader.read()
                 if (done) break
 
-                const chunk = decoder.decode(value)
-                const lines = chunk.split("\n\n")
+                const chunk = decoder.decode(value, { stream: true })
+                buffer += chunk
+                
+                const lines = buffer.split("\n\n")
+                buffer = lines.pop() || ""
 
                 for (const line of lines) {
-                    if (line.startsWith("data: ")) {
-                        const content = line.slice(6)
+                    const trimmedLine = line.trim()
+                    if (!trimmedLine) continue
+
+                    if (trimmedLine.startsWith("data: ")) {
+                        const content = trimmedLine.slice(6)
                         if (content === "[DONE]") break
 
                         try {
@@ -130,7 +143,6 @@ export function ChatInput() {
                                         break
 
                                     case "step_update":
-                                        // data.step is the step number (1-based), convert to 0-based index
                                         const stepIndex = (typeof data.step === 'number' ? data.step : parseInt(data.step)) - 1
                                         if (stepIndex >= 0 && stepIndex < currentSteps.length) {
                                             currentSteps[stepIndex] = {
@@ -143,19 +155,20 @@ export function ChatInput() {
                                         break
 
                                     case "token":
-                                        // Append content and schedule throttled update
                                         assistantContent += data.content
                                         scheduleUpdate()
                                         break
 
                                     case "visualization":
-                                        // Send data to visualization panel AND save to message
                                         useChatStore.getState().setVisualizationData(data.data)
                                         useChatStore.getState().updateMessageVisualization(assistantMsgId, data.data)
                                         break
 
                                     case "error":
-                                        throw new Error(data.message)
+                                        console.error("Stream reported error:", data.message)
+                                        useChatStore.getState().setError(data.message)
+                                        useChatStore.getState().updateMessage(assistantMsgId, "", true)
+                                        return // Stop processing immediately on error
                                 }
                             }
                             // Fallback for old/other formats if any
@@ -164,7 +177,7 @@ export function ChatInput() {
                                 scheduleUpdate()
                             }
                         } catch (e) {
-                            console.error("Error parsing stream chunk", e)
+                            console.warn("Skipping malformed JSON chunk:", content.slice(0, 50) + "...")
                         }
                     }
                 }
@@ -176,7 +189,13 @@ export function ChatInput() {
 
         } catch (error) {
             console.error(error)
-            useChatStore.getState().updateMessage(assistantMsgId, "Error: " + (error as Error).message, true)
+            // 1. Show Global Error Modal
+            const message = error instanceof Error ? error.message : "An unexpected error occurred"
+            useChatStore.getState().setError(message)
+            
+            // 2. Update message to remove "AWAITING DATA" state
+            useChatStore.getState().updateMessage(assistantMsgId, "", true)
+            
         } finally {
             setLoading(false)
         }

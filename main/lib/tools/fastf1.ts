@@ -230,7 +230,7 @@ export const getTelemetryTool = tool(
             gp,
             session,
             driver,
-            lap: lap || "fastest",
+            lap: lap ? String(lap) : "fastest",
         });
     },
     {
@@ -241,7 +241,7 @@ export const getTelemetryTool = tool(
             gp: GpSchema,
             session: SessionSchema,
             driver: DriverSchema,
-            lap: z.string().optional().describe("Lap identifier: 'fastest' or lap number"),
+            lap: z.union([z.string(), z.number()]).optional().describe("Lap identifier: 'fastest' or lap number"),
         }),
     }
 );

@@ -17,6 +17,7 @@ from functools import lru_cache
 from typing import Optional
 
 import fastf1
+from fastf1.ergast import Ergast
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
@@ -26,8 +27,11 @@ from fastapi.responses import JSONResponse
 from schemas import (
     CarDataRequest,
     CarDataResponse,
+    CarDataResponse,
     DriverLapsRequest,
     DriversResponse,
+    DriverStandingsRequest,
+    DriverStandingsResponse,
     ErrorResponse,
     EventsResponse,
     EventInfo,
@@ -156,6 +160,48 @@ def get_event_schedule(year: int) -> pd.DataFrame:
 
 
 # =============================================================================
+# K. Standings Endpoint
+# =============================================================================
+
+
+@app.post("/f1/standings/drivers", response_model=DriverStandingsResponse)
+async def get_driver_standings(request: DriverStandingsRequest):
+    """
+    Get driver standings for a specific year.
+    Returns the final standings for the season.
+    """
+    try:
+        ergast = Ergast()
+        # Get standings for the specified season
+        # round=None implies the latest standings for that season (final if past season)
+        standings = ergast.get_driver_standings(season=request.year)
+        
+        data = []
+        if standings and standings.content:
+            # content is a list of StandingsLists
+            # We usually want the first one (should be only one for a season query)
+            table = standings.content[0]
+            
+            for row in table.iterrows():
+                # row is (index, Series)
+                entry = row[1]
+                data.append({
+                    "position": int(entry.get("position", 0)),
+                    "driver": str(entry.get("driverId", "")),
+                    "points": float(entry.get("points", 0.0)),
+                    "wins": int(entry.get("wins", 0)),
+                    "team": str(entry.get("constructorId", ""))
+                })
+        
+        return {
+            "year": request.year,
+            "standings": data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# =============================================================================
 # Error Handlers
 # =============================================================================
 
@@ -201,13 +247,14 @@ async def get_seasons():
     Get list of available seasons.
     Fast-F1 supports seasons from 2018 onwards with full telemetry.
     """
-    # Fast-F1 supports 2018+ for telemetry data
-    seasons = list(range(2018, 2026))
+    # Ergast API supports 1950-2017 (standings/results only)
+    # Fast-F1 supports 2018-2025 for full telemetry data
+    seasons = list(range(1950, 2026))
     return {"seasons": seasons}
 
 
 @app.get("/f1/events", response_model=EventsResponse)
-async def get_events(year: int = Query(..., ge=2018, le=2025)):
+async def get_events(year: int = Query(..., ge=1950, le=2025)):
     """
     Get all events (Grand Prix) for a specific year.
     """
@@ -241,7 +288,7 @@ async def get_events(year: int = Query(..., ge=2018, le=2025)):
 
 @app.get("/f1/sessions", response_model=SessionsResponse)
 async def get_sessions(
-    year: int = Query(..., ge=2018, le=2025),
+    year: int = Query(..., ge=1950, le=2025),
     gp: str = Query(..., description="Grand Prix name or round number")
 ):
     """
@@ -883,13 +930,47 @@ async def get_stints(request: StintsRequest):
 
 @app.get("/f1/drivers", response_model=DriversResponse)
 async def get_drivers(
-    year: int = Query(..., ge=2018, le=2025),
+    year: int = Query(..., ge=1950, le=2025),
     gp: Optional[str] = Query(None, description="Grand Prix name (optional, defaults to first race)")
 ):
     """
     Get list of drivers for a season/event.
+    For pre-2018 years, uses Ergast API.
     """
     try:
+        # For pre-2018, use Ergast API
+        if year < 2018:
+            ergast = Ergast()
+            
+            # Get drivers for the season
+            try:
+                drivers_data = ergast.get_driver_info(season=year)
+                
+                drivers = []
+                if drivers_data is not None and hasattr(drivers_data, 'content'):
+                    for _, driver_row in drivers_data.content[0].iterrows():
+                        driver_info = {
+                            "driver_number": None,  # Not available in Ergast
+                            "broadcast_name": f"{driver_row.get('givenName', '')} {driver_row.get('familyName', '')}",
+                            "abbreviation": driver_row.get('code', driver_row.get('driverId', '')[:3].upper()),
+                            "team_name": None,  # Would need race results to get team
+                            "team_color": None,
+                            "first_name": driver_row.get('givenName', ''),
+                            "last_name": driver_row.get('familyName', ''),
+                            "full_name": f"{driver_row.get('givenName', '')} {driver_row.get('familyName', '')}",
+                            "country_code": driver_row.get('nationality', '')[:3].upper() if pd.notna(driver_row.get('nationality')) else None,
+                        }
+                        drivers.append(driver_info)
+                
+                return {
+                    "year": year,
+                    "gp": gp,
+                    "drivers": drivers
+                }
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to fetch drivers for {year}: {str(e)}")
+        
+        # For 2018+, use FastF1 (original logic)
         # Get the first event if no GP specified
         if gp is None:
             schedule = get_event_schedule(year)
@@ -927,7 +1008,7 @@ async def get_drivers(
 
 @app.get("/f1/teams", response_model=TeamsResponse)
 async def get_teams(
-    year: int = Query(..., ge=2018, le=2025),
+    year: int = Query(..., ge=1950, le=2025),
     gp: Optional[str] = Query(None, description="Grand Prix name (optional, defaults to first race)")
 ):
     """

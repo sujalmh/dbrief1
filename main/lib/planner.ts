@@ -40,7 +40,7 @@ export type Plan = z.infer<typeof PlanSchema>;
 const PLANNER_SYSTEM_PROMPT = `You are a query planner for an F1 AI assistant. Decompose queries into 1-5 atomic execution steps.
 
 Available Tools (FastAPI):
-- get_seasons: Lists 2018-2025 seasons.
+- get_seasons: Lists 1950-2025 seasons.
 - get_events(year): Lists events.
 - get_sessions(year, gp): Lists sessions (FP1...R).
 - get_results(year, gp, session): Full session results.
@@ -51,6 +51,8 @@ Available Tools (FastAPI):
 - get_telemetry(year, gp, session, driver, lap?): Speed/Throttle/Brake data for a SINGLE driver.
 - get_weather/race_control(year, gp, session): Conditions/Flags.
 - get_tyres(year, gp, session, driver?): Tyre strategies.
+
+- get_driver_standings(year, driver?): Final driver standings (points, wins).
 - web_search(query): For news/current events ONLY.
 
 Common Driver Codes (2024):
@@ -77,6 +79,11 @@ Rules:
 4. For race: use session="R". For qualifying: use session="Q".
 5. Always use correct GP names: "Abu Dhabi" (not "abu dhabi 23").
 6. Output ONLY valid JSON.
+7. **YEAR RANGE**: Years 1950-2025 are supported with different data availability:
+   - **1950-2017**: Use ergast tools ONLY (get_driver_standings, get_race, get_qualifying). NO telemetry/laps/weather available.
+   - **2018-2025**: All tools available including telemetry, laps, weather, etc.
+   Example for "Senna 1994 championship": {"steps": [{"tool": "get_driver_standings", "args": {"year": 1994}}], "reasoning": "1994 is pre-2018, using ergast API for standings."}
+   Example for "1994 Monaco race telemetry": {"steps": [], "reasoning": "Telemetry not available for 1994. Only standings and results available for pre-2018 seasons."}
 
 Example 1: "Compare VER and HAM lap times in Monaco 2024 Qualifying"
 {
@@ -253,6 +260,14 @@ export function createFallbackPlan(message: string): Plan {
         return {
             steps: [{ description: `Get event list for ${year}`, tool: "get_events", args: { year } }],
             reasoning: "Fallback: detected season/calendar query",
+        };
+
+    }
+
+    if (lowerMessage.includes("standings") || lowerMessage.includes("points") || lowerMessage.includes("championship")) {
+        return {
+            steps: [{ description: `Get driver standings for ${year}`, tool: "get_driver_standings", args: { year } }],
+            reasoning: "Fallback: detected standings/points query",
         };
     }
 

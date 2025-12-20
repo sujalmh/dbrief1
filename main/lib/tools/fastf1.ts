@@ -60,7 +60,7 @@ async function f1Post(endpoint: string, body: unknown): Promise<unknown> {
 // Zod Schemas for Tool Inputs
 // =============================================================================
 
-const YearSchema = z.number().int().min(2018).max(2025).describe("F1 season year (2018-2025)");
+const YearSchema = z.number().int().min(1950).max(2025).describe("F1 season year (1950-2025)");
 const GpSchema = z.string().describe("Grand Prix name (e.g., 'Monaco', 'Silverstone')");
 const SessionSchema = z.string().describe("Session type: FP1, FP2, FP3, Q, R");
 const DriverSchema = z.string().describe("Driver code (e.g., 'VER', 'HAM', 'LEC')");
@@ -78,7 +78,7 @@ export const getSeasonsTool = tool(
     },
     {
         name: "get_seasons",
-        description: "Get the list of available F1 seasons (2018-2025)",
+        description: "Get the list of available F1 seasons (1950-2025)",
         schema: z.object({}),
     }
 );
@@ -304,6 +304,27 @@ export const getTyresTool = tool(
             driver: z.string().optional().describe("Filter by driver code"),
         }),
     }
+
+);
+
+/**
+ * Get driver standings
+ */
+export const getDriverStandingsTool = tool(
+    async ({ year, driver }) => {
+        return await f1Post("/f1/standings/drivers", {
+            year,
+            driver: driver || undefined,
+        });
+    },
+    {
+        name: "get_driver_standings",
+        description: "Get final driver standings (points, wins, position) for a specific season",
+        schema: z.object({
+            year: YearSchema,
+            driver: z.string().optional().describe("Filter by driver code"),
+        }),
+    }
 );
 
 // =============================================================================
@@ -325,7 +346,9 @@ export const f1Tools: Record<string, StructuredTool> = {
     get_telemetry: getTelemetryTool,
     get_weather: getWeatherTool,
     get_race_control: getRaceControlTool,
+
     get_tyres: getTyresTool,
+    get_driver_standings: getDriverStandingsTool,
 };
 
 /**

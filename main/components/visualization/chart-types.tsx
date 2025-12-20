@@ -377,9 +377,10 @@ interface TelemetryChartProps {
     data: TelemetryDataPoint[]
     title?: string
     circuit?: string
+    corners?: any[]
 }
 
-export function TelemetryChart({ data, title, circuit }: TelemetryChartProps) {
+export function TelemetryChart({ data, title, circuit, corners: apiCorners }: TelemetryChartProps) {
     // Determine which channels are available
     const hasSpeed = data.some(d => d.speed !== undefined)
     const hasThrottle = data.some(d => d.throttle !== undefined)
@@ -390,10 +391,30 @@ export function TelemetryChart({ data, title, circuit }: TelemetryChartProps) {
     const drivers = [...new Set(data.map(d => d.driver).filter(Boolean))] as string[]
     const hasMultipleDrivers = drivers.length > 1
 
-    // Get corner markers (use circuit-specific or default)
+    // Get corner markers (use API data if available, else fallback)
     const maxDistance = Math.max(...data.map(d => d.distance))
-    const corners = (CIRCUIT_CORNERS[circuit || ''] || CIRCUIT_CORNERS.default)
+    
+    let corners = (CIRCUIT_CORNERS[circuit || ''] || CIRCUIT_CORNERS.default)
         .filter(c => c.distance <= maxDistance)
+
+    if (apiCorners && apiCorners.length > 0) {
+        // Map API format (Number, Distance) to internal format (corner, distance)
+        corners = apiCorners
+            .filter(c => c.Distance !== undefined && c.Distance <= maxDistance)
+            .map(c => ({
+                corner: c.Number,
+                distance: c.Distance,
+                name: c.Letter
+            }))
+    }
+
+    console.log("[TelemetryChart] Debug:", {
+        hasApiCorners: !!(apiCorners && apiCorners.length),
+        apiCornersCount: apiCorners?.length,
+        finalCornersCount: corners.length,
+        maxDistance,
+        firstCorner: corners[0]
+    })
 
     // For multi-driver, restructure data
     if (hasMultipleDrivers) {
@@ -427,20 +448,22 @@ export function TelemetryChart({ data, title, circuit }: TelemetryChartProps) {
                             <ReferenceLine
                                 key={c.corner}
                                 x={c.distance}
-                                stroke="var(--muted-foreground)"
-                                strokeDasharray="2 4"
-                                strokeOpacity={0.6}
+                                stroke="white"
+                                strokeDasharray="3 3"
+                                strokeOpacity={0.2}
                                 label={{
                                     value: `T${c.corner}`,
-                                    position: 'top',
-                                    fill: 'var(--muted-foreground)',
-                                    fontSize: 9,
+                                    position: 'insideTop',
+                                    fill: 'rgba(255, 255, 255, 0.7)',
+                                    fontSize: 10,
                                     fontWeight: 500
                                 }}
                             />
                         ))}
 
                         <XAxis
+                            type="number"
+                            domain={['dataMin', 'dataMax']}
                             dataKey="distance"
                             stroke="var(--muted-foreground)"
                             tick={{ fontSize: 10 }}
@@ -517,33 +540,16 @@ export function TelemetryChart({ data, title, circuit }: TelemetryChartProps) {
                 <LineChart data={data} margin={{ top: 20, right: 60, left: 20, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.5} />
 
-                    {/* Turn markers */}
-                    {corners.map(c => (
-                        <ReferenceLine
-                            key={c.corner}
-                            x={c.distance}
-                            stroke="var(--muted-foreground)"
-                            strokeDasharray="2 4"
-                            strokeOpacity={0.6}
-                            label={{
-                                value: `T${c.corner}`,
-                                position: 'top',
-                                fill: 'var(--muted-foreground)',
-                                fontSize: 9,
-                                fontWeight: 500
-                            }}
-                        />
-                    ))}
-
                     <XAxis
+                        type="number" 
+                        domain={['dataMin', 'dataMax']}
                         dataKey="distance"
                         stroke="var(--muted-foreground)"
                         tick={{ fontSize: 10 }}
                         tickFormatter={(v) => `${(v / 1000).toFixed(1)}km`}
                         label={{ value: 'Distance (km)', position: 'insideBottom', offset: -15, fontSize: 11, fill: 'var(--muted-foreground)' }}
                     />
-
-                    {/* Left Y-axis for Speed */}
+                    
                     <YAxis
                         yAxisId="left"
                         stroke={F1_COLORS.red}
@@ -552,7 +558,6 @@ export function TelemetryChart({ data, title, circuit }: TelemetryChartProps) {
                         label={{ value: 'Speed (km/h)', angle: -90, position: 'insideLeft', fontSize: 11, fill: F1_COLORS.red }}
                     />
 
-                    {/* Right Y-axis for Throttle/Brake % */}
                     <YAxis
                         yAxisId="right"
                         orientation="right"
@@ -563,10 +568,9 @@ export function TelemetryChart({ data, title, circuit }: TelemetryChartProps) {
                     />
 
                     <Tooltip content={<CustomTooltip type="telemetry" />} />
-                    <Legend
-                        wrapperStyle={{ paddingTop: 15 }}
-                    />
+                    <Legend wrapperStyle={{ paddingTop: 15 }} />
 
+                    {/* Data Lines */}
                     {hasSpeed && (
                         <Line
                             yAxisId="left"
@@ -615,6 +619,25 @@ export function TelemetryChart({ data, title, circuit }: TelemetryChartProps) {
                             dot={false}
                         />
                     )}
+
+                    {/* Turn markers - Rendered LAST to be ON TOP */}
+                    {corners.map(c => (
+                        <ReferenceLine
+                            key={c.corner}
+                            x={c.distance}
+                            yAxisId="left"
+                            stroke="white"
+                            strokeDasharray="3 3"
+                            strokeOpacity={0.5}
+                            label={{
+                                value: `T${c.corner}`,
+                                position: 'insideTop',
+                                fill: 'white',
+                                fontSize: 10,
+                                fontWeight: 'bold'
+                            }}
+                        />
+                    ))}
                 </LineChart>
             </ResponsiveContainer>
         </div>

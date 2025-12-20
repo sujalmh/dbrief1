@@ -62,7 +62,7 @@ export function VisualizationPanel() {
     const hasData = visualizationData && visualizationData.length > 0
     // IMPORTANT: All hooks must be called before any conditional returns
     // IMPORTANT: All hooks must be called before any conditional returns
-    const { lapData, telemetryData, comparisonData } = useMemo(() => {
+    const { lapData, telemetryData, comparisonData, corners } = useMemo(() => {
         // Use Maps for deduplication
         const lapMap = new Map<string, LapDataPoint>()
         const telemetryMap = new Map<string, TelemetryDataPoint>()
@@ -73,7 +73,7 @@ export function VisualizationPanel() {
         const comparison: ComparisonDataPoint[] = []
 
         if (!hasData) {
-            return { lapData: laps, telemetryData: telemetry, comparisonData: comparison }
+            return { lapData: laps, telemetryData: telemetry, comparisonData: comparison, corners: [] }
         }
 
         console.log("[VizPanel] Raw Visualization Data:", visualizationData)
@@ -192,8 +192,19 @@ export function VisualizationPanel() {
         const stats = { 
             lapData: Array.from(lapMap.values()), 
             telemetryData: Array.from(telemetryMap.values()), 
-            comparisonData: Array.from(comparisonMap.values()) 
+            comparisonData: Array.from(comparisonMap.values()),
+            corners: [] as any[] // Start with empty array
         }
+
+        // Second pass: Find first valid corners data from telemetry results
+        // We do this after the loop or inside, but doing it here ensures we just grab one valid set
+        for (const result of visualizationData) {
+            if (result.tool === 'get_telemetry' && result.data?.corners && result.data.corners.length > 0) {
+                stats.corners = result.data.corners
+                break // Only need one set of corners for the track
+            }
+        }
+
         console.log("[VizPanel] Processed Data:", stats)
         return stats
     }, [visualizationData, hasData])
@@ -224,7 +235,7 @@ export function VisualizationPanel() {
         }
 
         if (telemetryData.length > 0) {
-            return <TelemetryChart data={telemetryData} />
+            return <TelemetryChart data={telemetryData} corners={corners} />
         }
 
         if (comparisonData.length > 0) {

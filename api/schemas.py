@@ -199,12 +199,20 @@ class SectorsResponse(BaseModel):
     sectors: List[dict]
 
 
+class CornerData(BaseModel):
+    """Single corner information."""
+    Number: int
+    Distance: float
+    Letter: str
+    Angle: float
+
 class TelemetryResponse(BaseModel):
     """Response for telemetry data."""
     driver: str
     lap_number: int
     lap_time: Optional[str]
     data: List[dict]
+    corners: Optional[List[dict]] = None
     total_points: int
     downsampled_from: int
 

@@ -84,8 +84,8 @@ export function VisualizationPanel() {
                         laps.push({
                             lap: lapNumber,
                             time: lapTime,
-                            driver: lap.driver || result.data.driver,
-                            compound: lap.compound
+                            driver: lap.driver || lap.Driver || result.data.driver,
+                            compound: lap.compound || lap.Compound
                         })
                     }
                 }
@@ -95,15 +95,18 @@ export function VisualizationPanel() {
             if (result.tool === 'get_telemetry' && result.data.data) {
                 const driverCode = result.data.driver || 'Unknown'
                 for (const point of result.data.data) {
-                    const distance = parseFloat(point.Distance || '0')
+                    // Start of fix: Helper for case-insensitive lookup
+                    const getVal = (k1: string, k2: string) => point[k1] !== undefined ? point[k1] : point[k2];
+                    
+                    const distance = parseFloat(getVal('Distance', 'distance') || '0')
 
                     if (!isNaN(distance)) {
                         telemetry.push({
                             distance,
-                            speed: point.Speed !== undefined ? parseFloat(point.Speed) : undefined,
-                            throttle: point.Throttle !== undefined ? parseFloat(point.Throttle) : undefined,
-                            brake: point.Brake !== undefined ? parseFloat(point.Brake) : undefined,
-                            gear: point.nGear !== undefined ? parseInt(point.nGear) : undefined,
+                            speed: getVal('Speed', 'speed') !== undefined ? parseFloat(getVal('Speed', 'speed')) : undefined,
+                            throttle: getVal('Throttle', 'throttle') !== undefined ? parseFloat(getVal('Throttle', 'throttle')) : undefined,
+                            brake: getVal('Brake', 'brake') !== undefined ? parseFloat(getVal('Brake', 'brake')) : undefined,
+                            gear: getVal('nGear', 'gear') !== undefined ? parseInt(getVal('nGear', 'gear')) : undefined,
                             driver: driverCode
                         })
                     }
@@ -113,13 +116,15 @@ export function VisualizationPanel() {
             // Handle comparison data (qualifying/race results)
             if ((result.tool === 'get_qualifying' || result.tool === 'get_race') && result.data.results) {
                 for (const r of result.data.results) {
-                    const value = r.position ? parseInt(r.position) : parseLapTime(r.time || r.q3 || r.q2 || r.q1 || '0')
+                    const driver = r.driver || r.Driver || r.Abbreviation || 'Unknown'
+                    const timeOrPos = r.time || r.Time || r.q3 || r.q2 || r.q1 || '0'
+                    const value = r.position || r.Position ? parseInt(r.position || r.Position) : parseLapTime(timeOrPos)
 
                     if (!isNaN(value)) {
                         comparison.push({
-                            driver: r.driver || r.Abbreviation || 'Unknown',
+                            driver,
                             value,
-                            label: r.team
+                            label: r.team || r.TeamName
                         })
                     }
                 }

@@ -99,7 +99,7 @@ function extractJsonBlocks(content: string): any[] {
                     const parsed = JSON.parse(jsonStr)
                     // Only add if it looks like F1 data
                     if (parsed.laps || parsed.data || parsed.results ||
-                        Array.isArray(parsed) || parsed.lap_number || parsed.driver) {
+                        Array.isArray(parsed) || parsed.lap_number || parsed.driver || parsed.Driver) {
                         jsonBlocks.push(parsed)
                     }
                 } catch {
@@ -123,12 +123,15 @@ export function extractLapTimes(content: string): LapDataPoint[] {
         // Handle array of laps
         if (Array.isArray(block)) {
             for (const item of block) {
-                if (item.lap_number !== undefined && item.lap_time !== undefined) {
+                const lapNumber = item.lap_number !== undefined ? item.lap_number : item.LapNumber;
+                const lapTime = item.lap_time !== undefined ? item.lap_time : item.LapTime;
+
+                if (lapNumber !== undefined && lapTime !== undefined) {
                     lapData.push({
-                        lap: parseInt(item.lap_number),
-                        time: parseLapTime(item.lap_time),
-                        driver: item.driver || undefined,
-                        compound: item.compound || undefined
+                        lap: parseInt(lapNumber),
+                        time: parseLapTime(lapTime),
+                        driver: item.driver || item.Driver || undefined,
+                        compound: item.compound || item.Compound || undefined
                     })
                 }
             }
@@ -137,12 +140,15 @@ export function extractLapTimes(content: string): LapDataPoint[] {
         // Handle laps object
         if (block.laps && Array.isArray(block.laps)) {
             for (const lap of block.laps) {
-                if (lap.lap_number !== undefined && lap.lap_time !== undefined) {
+                const lapNumber = lap.lap_number !== undefined ? lap.lap_number : lap.LapNumber;
+                const lapTime = lap.lap_time !== undefined ? lap.lap_time : lap.LapTime;
+
+                if (lapNumber !== undefined && lapTime !== undefined) {
                     lapData.push({
-                        lap: parseInt(lap.lap_number),
-                        time: parseLapTime(lap.lap_time),
-                        driver: lap.driver || undefined,
-                        compound: lap.compound || undefined
+                        lap: parseInt(lapNumber),
+                        time: parseLapTime(lapTime),
+                        driver: lap.driver || lap.Driver || undefined,
+                        compound: lap.compound || lap.Compound || undefined
                     })
                 }
             }
@@ -163,14 +169,19 @@ export function extractTelemetry(content: string): TelemetryDataPoint[] {
         // Handle telemetry data array
         if (block.data && Array.isArray(block.data)) {
             for (const point of block.data) {
+                // Support both snake_case and PascalCase
+                const getVal = (key1: string, key2: string) =>
+                    point[key1] !== undefined ? point[key1] : point[key2];
+
                 telemetryData.push({
-                    distance: parseFloat(point.Distance || point.distance || 0),
-                    speed: point.Speed !== undefined ? parseFloat(point.Speed) : undefined,
-                    throttle: point.Throttle !== undefined ? parseFloat(point.Throttle) : undefined,
-                    brake: point.Brake !== undefined ? parseFloat(point.Brake) : undefined,
-                    gear: point.nGear || point.gear !== undefined ? parseInt(point.nGear || point.gear) : undefined,
-                    rpm: point.RPM || point.rpm !== undefined ? parseInt(point.RPM || point.rpm) : undefined,
-                    drs: point.DRS || point.drs !== undefined ? parseInt(point.DRS || point.drs) : undefined
+                    distance: parseFloat(getVal('Distance', 'distance') || 0),
+                    speed: getVal('Speed', 'speed') !== undefined ? parseFloat(getVal('Speed', 'speed')) : undefined,
+                    throttle: getVal('Throttle', 'throttle') !== undefined ? parseFloat(getVal('Throttle', 'throttle')) : undefined,
+                    brake: getVal('Brake', 'brake') !== undefined ? parseFloat(getVal('Brake', 'brake')) : undefined,
+                    gear: getVal('nGear', 'gear') !== undefined ? parseInt(getVal('nGear', 'gear')) : undefined,
+                    rpm: getVal('RPM', 'rpm') !== undefined ? parseInt(getVal('RPM', 'rpm')) : undefined,
+                    drs: getVal('DRS', 'drs') !== undefined ? parseInt(getVal('DRS', 'drs')) : undefined,
+                    driver: point.driver || point.Driver || undefined
                 })
             }
         }
@@ -196,10 +207,14 @@ export function extractComparison(content: string): ComparisonDataPoint[] {
         // Handle results array
         if (block.results && Array.isArray(block.results)) {
             for (const result of block.results) {
-                if (result.driver && (result.time || result.position)) {
+                const driver = result.driver || result.Driver;
+                const time = result.time || result.Time;
+                const position = result.position || result.Position;
+
+                if (driver && (time || position)) {
                     comparisonData.push({
-                        driver: result.driver,
-                        value: result.time ? parseLapTime(result.time) : parseInt(result.position),
+                        driver: driver,
+                        value: time ? parseLapTime(time) : parseInt(position),
                         label: result.q3 || result.q2 || result.q1 || undefined
                     })
                 }
@@ -207,15 +222,17 @@ export function extractComparison(content: string): ComparisonDataPoint[] {
         }
 
         // Handle direct array of driver data
-        if (Array.isArray(block) && block.length > 0 && block[0].driver) {
+        if (Array.isArray(block) && block.length > 0 && (block[0].driver || block[0].Driver)) {
             for (const item of block) {
-                if (item.driver && (item.time || item.lap_time || item.position)) {
+                const driver = item.driver || item.Driver;
+                const time = item.time || item.lap_time || item.Time;
+                const position = item.position || item.Position;
+
+                if (driver && (time || position)) {
                     comparisonData.push({
-                        driver: item.driver,
-                        value: item.time ? parseLapTime(item.time) :
-                            item.lap_time ? parseLapTime(item.lap_time) :
-                                parseInt(item.position),
-                        label: item.compound || undefined
+                        driver: driver,
+                        value: time ? parseLapTime(time) : parseInt(position),
+                        label: item.compound || item.Compound || undefined
                     })
                 }
             }
@@ -230,9 +247,10 @@ export function extractComparison(content: string): ComparisonDataPoint[] {
  */
 function parseLapTime(timeStr: string | number): number {
     if (typeof timeStr === 'number') return timeStr
+    if (!timeStr) return 0
 
     // Format: "1:23.456" or "83.456"
-    if (timeStr.includes(':')) {
+    if (typeof timeStr === 'string' && timeStr.includes(':')) {
         const [min, sec] = timeStr.split(':')
         return parseInt(min) * 60 + parseFloat(sec)
     }

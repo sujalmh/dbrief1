@@ -37,7 +37,7 @@ class TyreCompound(str, Enum):
 
 class SessionRequest(BaseModel):
     """Base request for session-related endpoints."""
-    year: int = Field(..., ge=2018, le=2025, description="Season year")
+    year: int = Field(..., ge=1950, le=2025, description="Season year (1950-2017: ergast data, 2018+: full telemetry)")
     gp: str = Field(..., description="Grand Prix name or round number")
     session: str = Field(..., description="Session identifier (FP1, FP2, FP3, Q, SQ, S, R)")
 
@@ -109,6 +109,12 @@ class TyresRequest(SessionRequest):
 class StintsRequest(SessionRequest):
     """Request for stint data."""
     driver: Optional[str] = Field(None, description="Driver code filter")
+
+
+class DriverStandingsRequest(BaseModel):
+    """Request for driver standings."""
+    year: int = Field(..., ge=1950, le=2025, description="Season year")
+    driver: Optional[str] = Field(None, description="Filter by specific driver")
 
 
 # =============================================================================
@@ -308,3 +314,18 @@ class TeamsResponse(BaseModel):
     year: int
     gp: Optional[str]
     teams: List[dict]
+
+
+class StandingsEntry(BaseModel):
+    """Single driver standing entry."""
+    position: int
+    driver: str
+    points: float
+    wins: int
+    team: str
+
+
+class DriverStandingsResponse(BaseModel):
+    """Response for driver standings."""
+    year: int
+    standings: List[dict]

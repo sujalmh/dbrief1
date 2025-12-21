@@ -193,6 +193,7 @@ export async function POST(request: NextRequest) {
                     if (executionContext.results.length > 0) {
                         const visualizationPayload = executionContext.results.map((result) => ({
                             tool: result.tool,
+                            args: result.args,
                             success: result.success,
                             data: result.data || null,
                             error: result.error || null

@@ -69,12 +69,16 @@ interface ChatStore {
     addGraphToHistory: (name: string, type: GraphHistoryItem['type'], data: any) => void
     removeGraphFromHistory: (id: string) => void
     clearMessages: () => void
+
+    // Global Error State
+    error: string | null
+    setError: (error: string | null) => void
 }
 
 const defaultSettings: Settings = {
     apiKey: '',
-    provider: 'gemini',
-    model: 'gemini-2.0-flash',
+    provider: 'openrouter',
+    model: 'qwen/qwen3-coder:free',
     temperature: 0.7,
     maxTokens: 1000,
     reasoningEnabled: false,
@@ -96,6 +100,7 @@ export const useChatStore = create<ChatStore>()(
             isVisualizationCollapsed: false,
             graphHistory: [],
             activeMessageId: null,
+            error: null,
 
             setSettingsOpen: (isOpen) => set({ isSettingsOpen: isOpen }),
             updateVisualizationWidth: (width) => set({ visualizationWidth: width }),
@@ -106,6 +111,7 @@ export const useChatStore = create<ChatStore>()(
             addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
             setMessages: (messages) => set({ messages }),
             setLoading: (isLoading) => set({ isLoading }),
+            setError: (error) => set({ error }),
             updateSettings: (newSettings) =>
                 set((state) => ({ settings: { ...state.settings, ...newSettings } })),
             updateMessage: (id, content, isError) =>

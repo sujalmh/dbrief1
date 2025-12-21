@@ -15,17 +15,11 @@ import { Step } from "./planner";
 export interface ExecutionResult {
     step: number;
     tool: string;
+    args: any; // Input arguments used for the tool
     success: boolean;
     data?: unknown;
     error?: string;
     durationMs: number;
-}
-
-export interface ExecutionContext {
-    results: ExecutionResult[];
-    successCount: number;
-    failureCount: number;
-    totalDurationMs: number;
 }
 
 // =============================================================================
@@ -35,13 +29,13 @@ export interface ExecutionContext {
 const MAX_STEPS = 5;
 const STEP_TIMEOUT_MS = 60000;
 
-// =============================================================================
-// Executor Functions
-// =============================================================================
+export interface ExecutionContext {
+    results: ExecutionResult[];
+    successCount: number;
+    failureCount: number;
+    totalDurationMs: number;
+}
 
-/**
- * Execute a single step with timeout handling
- */
 async function executeStep(
     step: Step,
     stepIndex: number,
@@ -55,6 +49,7 @@ async function executeStep(
         return {
             step: stepIndex,
             tool: step.tool,
+            args: step.args,
             success: false,
             error: `Unknown tool: ${step.tool}`,
             durationMs: Date.now() - startTime,
@@ -73,6 +68,7 @@ async function executeStep(
         return {
             step: stepIndex,
             tool: step.tool,
+            args: step.args,
             success: true,
             data: typeof result === "string" ? JSON.parse(result) : result,
             durationMs: Date.now() - startTime,
@@ -81,6 +77,7 @@ async function executeStep(
         return {
             step: stepIndex,
             tool: step.tool,
+            args: step.args,
             success: false,
             error: error instanceof Error ? error.message : "Tool execution failed",
             durationMs: Date.now() - startTime,

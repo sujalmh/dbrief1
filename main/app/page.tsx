@@ -4,6 +4,7 @@ import { Header } from "@/components/layout/header"
 import { MessageList } from "@/components/chat/message-list"
 import { ChatInput } from "@/components/chat/chat-input"
 import { SettingsModal } from "@/components/chat/settings-modal"
+import { ErrorModal } from "@/components/ui/error-modal"
 import { VisualizationPanel } from "@/components/visualization/visualization-panel"
 import { useChatStore } from "@/lib/store"
 
@@ -41,6 +42,7 @@ export default function Home() {
       </main>
 
       <SettingsModal />
+      <ErrorModal />
     </div>
   );
 }

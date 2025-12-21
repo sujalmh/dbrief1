@@ -617,6 +617,20 @@ async def get_telemetry(request: TelemetryRequest):
         
         if telemetry is None or telemetry.empty:
             raise HTTPException(status_code=404, detail="No telemetry data available for this lap")
+
+        # Get Circuit Info (Corners)
+        corners_data = []
+        try:
+            circuit_info = session.get_circuit_info()
+            if circuit_info is not None and hasattr(circuit_info, 'corners'):
+                corners_df = circuit_info.corners
+                if corners_df is not None and not corners_df.empty:
+                    # Select relevant columns
+                    corners_df = corners_df[['Number', 'Distance', 'Letter', 'Angle']]
+                    corners_data = df_to_json(corners_df)
+        except Exception as e:
+            print(f"Warning: Failed to fetch circuit info: {e}")
+            # Non-critical, continue without corners
         
         # Filter channels
         telemetry = filter_telemetry_channels(telemetry, request.channels)
@@ -638,6 +652,7 @@ async def get_telemetry(request: TelemetryRequest):
             lap_number=int(lap.get("LapNumber", 0)) if hasattr(lap, 'get') else int(lap["LapNumber"]),
             lap_time=format_timedelta(lap.get("LapTime") if hasattr(lap, 'get') else lap["LapTime"]),
             data=data,
+            corners=corners_data,
             total_points=len(data),
             downsampled_from=original_count
         )

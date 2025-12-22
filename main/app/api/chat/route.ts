@@ -24,9 +24,9 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { getPlannerModel, getResponderModel, Provider } from "@/lib/llm";
 import { planQuery, createFallbackPlan, Plan } from "@/lib/planner";
 import { executeSteps, aggregateContext, simplifyContext } from "@/lib/executor";
-import { f1Tools } from "@/lib/tools/fastf1";
+import { openF1Tools } from "@/lib/tools/openf1";
 import { getSearchTools } from "@/lib/tools/search";
-import { getVisualizationTools } from "@/lib/tools/visualization";
+import { visualizationTools } from "@/lib/tools/visualization";
 
 // =============================================================================
 // Request Validation
@@ -177,7 +177,8 @@ export async function POST(request: NextRequest) {
 
                     // 3. Execute Plan
                     const tools = {
-                        ...f1Tools,
+                        ...openF1Tools,
+                        ...visualizationTools,
                         ...(web_search ? getSearchTools() : {}),
                     };
 

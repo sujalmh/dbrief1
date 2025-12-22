@@ -33,8 +33,8 @@ export const createVisualizationTool = tool(
 );
 
 /**
- * Get visualization tools as an array
+ * Visualization tools as a record
  */
-export function getVisualizationTools(): StructuredTool[] {
-    return [createVisualizationTool];
-}
+export const visualizationTools: Record<string, StructuredTool> = {
+    create_visualization: createVisualizationTool,
+};

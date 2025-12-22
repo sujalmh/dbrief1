@@ -135,8 +135,8 @@ describe('Step Executor', () => {
         it('should aggregate successful results', () => {
             const context: ExecutionContext = {
                 results: [
-                    { step: 1, tool: 'get_laps', success: true, data: { laps: [1, 2] }, durationMs: 100 },
-                    { step: 2, tool: 'get_tyres', success: true, data: { tyres: ['SOFT'] }, durationMs: 50 }
+                    { step: 1, tool: 'get_laps', args: {}, success: true, data: { laps: [1, 2] }, durationMs: 100 },
+                    { step: 2, tool: 'get_tyres', args: {}, success: true, data: { tyres: ['SOFT'] }, durationMs: 50 }
                 ],
                 successCount: 2,
                 failureCount: 0,
@@ -153,8 +153,8 @@ describe('Step Executor', () => {
         it('should include failed steps in aggregation', () => {
             const context: ExecutionContext = {
                 results: [
-                    { step: 1, tool: 'get_laps', success: true, data: { laps: [] }, durationMs: 100 },
-                    { step: 2, tool: 'get_tyres', success: false, error: 'API error', durationMs: 50 }
+                    { step: 1, tool: 'get_laps', args: {}, success: true, data: { laps: [] }, durationMs: 100 },
+                    { step: 2, tool: 'get_tyres', args: {}, success: false, error: 'API error', durationMs: 50 }
                 ],
                 successCount: 1,
                 failureCount: 1,
@@ -171,8 +171,8 @@ describe('Step Executor', () => {
         it('should simplify context correctly', () => {
             const context: ExecutionContext = {
                 results: [
-                    { step: 1, tool: 'get_laps', success: true, data: { driver: 'VER' }, durationMs: 100 },
-                    { step: 2, tool: 'get_laps', success: true, data: { driver: 'HAM' }, durationMs: 50 }
+                    { step: 1, tool: 'get_laps', args: {}, success: true, data: { driver: 'VER' }, durationMs: 100 },
+                    { step: 2, tool: 'get_laps', args: {}, success: true, data: { driver: 'HAM' }, durationMs: 50 }
                 ],
                 successCount: 2,
                 failureCount: 0,

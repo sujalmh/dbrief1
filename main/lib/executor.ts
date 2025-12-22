@@ -36,6 +36,65 @@ export interface ExecutionContext {
     totalDurationMs: number;
 }
 
+/**
+ * Resolve dependencies in step arguments
+ * Replaces placeholders like "USE_FROM_STEP_1" with actual values from previous results
+ */
+function resolveDependencies(
+    step: Step,
+    previousResults: ExecutionResult[]
+): Step {
+    const resolvedArgs = { ...step.args };
+
+    // Check each argument for dependency placeholders
+    for (const [key, value] of Object.entries(resolvedArgs)) {
+        if (typeof value === 'string' && value.startsWith('USE_FROM_STEP_')) {
+            // Extract step number from placeholder (e.g., "USE_FROM_STEP_1" -> 1)
+            const stepMatch = value.match(/USE_FROM_STEP_(\d+)/);
+            if (stepMatch) {
+                const stepNum = parseInt(stepMatch[1]);
+                const previousResult = previousResults.find(r => r.step === stepNum);
+
+                if (previousResult && previousResult.success && previousResult.data) {
+                    // Extract session_key from the previous result
+                    const data = previousResult.data as any;
+
+                    // Handle different response formats from OpenF1 API
+                    // Format 1: {sessions: [{session_key: 123, ...}]} - Most common from get_sessions
+                    if (data.sessions && Array.isArray(data.sessions) && data.sessions.length > 0 && data.sessions[0].session_key) {
+                        resolvedArgs[key] = data.sessions[0].session_key;
+                    }
+                    // Format 2: [{session_key: 123, ...}]
+                    else if (Array.isArray(data) && data.length > 0 && data[0].session_key) {
+                        resolvedArgs[key] = data[0].session_key;
+                    }
+                    // Format 3: {session_key: 123, ...}
+                    else if (data.session_key) {
+                        resolvedArgs[key] = data.session_key;
+                    }
+                    // Format 4: {data: {sessions: [...]}}
+                    else if (data.data && data.data.sessions && Array.isArray(data.data.sessions) && data.data.sessions.length > 0) {
+                        resolvedArgs[key] = data.data.sessions[0].session_key;
+                    }
+                    // Format 5: {data: [{session_key: 123, ...}]}
+                    else if (data.data && Array.isArray(data.data) && data.data.length > 0 && data.data[0].session_key) {
+                        resolvedArgs[key] = data.data[0].session_key;
+                    }
+                    else {
+                        console.warn(`[Executor] Could not extract session_key from step ${stepNum} result`);
+                        console.warn(`[Executor] Data structure:`, JSON.stringify(data, null, 2));
+                    }
+                }
+            }
+        }
+    }
+
+    return {
+        ...step,
+        args: resolvedArgs
+    };
+}
+
 async function executeStep(
     step: Step,
     stepIndex: number,
@@ -107,12 +166,31 @@ export async function executeSteps(
         onUpdate?.(index + 1, 'pending');
     });
 
-    // Execute in parallel for speed optimization
-    const resultPromises = stepsToExecute.map(async (step, index) => {
+    // Execute sequentially to resolve dependencies
+    const results: ExecutionResult[] = [];
+
+    for (let index = 0; index < stepsToExecute.length; index++) {
+        const step = stepsToExecute[index];
         const stepNum = index + 1;
+
+        // Resolve dependencies from previous results
+        const resolvedStep = resolveDependencies(step, results);
+
+        // Log dependency resolution in development
+        if (process.env.NODE_ENV === "development") {
+            const hasPlaceholder = Object.values(step.args).some(
+                v => typeof v === 'string' && v.startsWith('USE_FROM_STEP_')
+            );
+            if (hasPlaceholder) {
+                console.log(`[Executor] Step ${stepNum}: Resolved dependencies`);
+                console.log(`[Executor]   Original args:`, step.args);
+                console.log(`[Executor]   Resolved args:`, resolvedStep.args);
+            }
+        }
+
         onUpdate?.(stepNum, 'running');
 
-        const result = await executeStep(step, stepNum, tools);
+        const result = await executeStep(resolvedStep, stepNum, tools);
 
         onUpdate?.(
             stepNum,
@@ -120,21 +198,17 @@ export async function executeSteps(
             result.success ? undefined : result.error
         );
 
-        return result;
-    });
+        results.push(result);
 
-    const results = await Promise.all(resultPromises);
-
-    // Log execution (for debugging)
-    if (process.env.NODE_ENV === "development") {
-        results.forEach(result => {
+        // Log execution (for debugging)
+        if (process.env.NODE_ENV === "development") {
             console.log(
                 `[Executor] Step ${result.step}: ${result.tool} - ${result.success ? "SUCCESS" : "FAILED"} (${result.durationMs}ms)`
             );
             if (!result.success && result.error) {
                 console.error(`[Executor] Error details for Step ${result.step}:`, result.error);
             }
-        });
+        }
     }
 
     return {
@@ -144,6 +218,7 @@ export async function executeSteps(
         totalDurationMs: Date.now() - startTime,
     };
 }
+
 
 /**
  * Aggregate execution results into a context string for the LLM

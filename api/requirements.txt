@@ -1,8 +1,4 @@
 fastapi
 uvicorn
-fastf1
-pandas
-numpy
-python-dateutil
+httpx
 pydantic
-diskcache

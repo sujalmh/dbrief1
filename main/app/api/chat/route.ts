@@ -22,7 +22,7 @@ import { z } from "zod";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
 import { getPlannerModel, getResponderModel, Provider } from "@/lib/llm";
-import { planQuery, createFallbackPlan, Plan } from "@/lib/planner";
+import { planQuery, streamPlanQuery, createFallbackPlan, Plan } from "@/lib/planner";
 import { executeSteps, aggregateContext, simplifyContext } from "@/lib/executor";
 import { f1Tools } from "@/lib/tools/fastf1";
 import { getSearchTools } from "@/lib/tools/search";
@@ -163,10 +163,19 @@ export async function POST(request: NextRequest) {
                         return;
                     }
 
-                    // 2. Plan Query
+                    // 2. Plan Query with Streaming Reasoning
                     let plan: Plan;
                     try {
-                        plan = await planQuery(plannerModel, message, web_search, reasoning);
+                        plan = await streamPlanQuery(
+                            plannerModel,
+                            message,
+                            web_search,
+                            reasoning,
+                            (token) => {
+                                // Stream reasoning tokens to frontend
+                                sendEvent("reasoning", { token });
+                            }
+                        );
                     } catch (error) {
                         console.error("[Planner] Error:", error);
                         plan = createFallbackPlan(message);

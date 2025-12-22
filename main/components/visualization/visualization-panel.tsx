@@ -6,6 +6,11 @@ import { LapTimesChart, ComparisonChart, TelemetryChart } from "./chart-types"
 import { BarChart3, X, ChevronRight, ChevronLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 import type { LapDataPoint, TelemetryDataPoint, ComparisonDataPoint } from "@/lib/visualization/data-parser"
 import { useMediaQuery } from "@/lib/hooks/use-media-query"
@@ -262,17 +267,25 @@ export function VisualizationPanel() {
                 "fixed z-30 flex items-center transition-all duration-300",
                 isDesktop ? "right-0 top-14 h-[calc(100vh-3.5rem)]" : "bottom-6 right-4"
             )}>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => toggleVisualizationCollapse(false)}
-                    className={cn(
-                        "bg-muted/50 hover:bg-muted border-border shadow-lg backdrop-blur-sm",
-                        isDesktop ? "h-12 w-8 rounded-l-lg rounded-r-none border-l border-y" : "h-12 w-12 rounded-full border"
-                    )}
-                >
-                    <ChevronLeft className="h-4 w-4" />
-                </Button>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => toggleVisualizationCollapse(false)}
+                            className={cn(
+                                "bg-muted/50 hover:bg-muted border-border shadow-lg backdrop-blur-sm",
+                                isDesktop ? "h-12 w-8 rounded-l-lg rounded-r-none border-l border-y" : "h-12 w-12 rounded-full border"
+                            )}
+                        >
+                            <ChevronLeft className="h-4 w-4" />
+                            <span className="sr-only">Expand Visualization</span>
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                        <p>Expand Visualization</p>
+                    </TooltipContent>
+                </Tooltip>
             </div>
         )
     }
@@ -313,14 +326,22 @@ export function VisualizationPanel() {
                     <BarChart3 className="h-5 w-5 text-[var(--f1-yellow)]" />
                     <h2 className="font-bold text-sm uppercase tracking-wider">Visualization</h2>
                 </div>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => toggleVisualizationCollapse(true)}
-                    className="h-8 w-8"
-                >
-                    <ChevronRight className="h-4 w-4" />
-                </Button>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => toggleVisualizationCollapse(true)}
+                            className="h-8 w-8"
+                        >
+                            <ChevronRight className="h-4 w-4" />
+                            <span className="sr-only">Collapse Visualization</span>
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                        <p>Collapse Visualization</p>
+                    </TooltipContent>
+                </Tooltip>
             </div>
 
             {/* Chart Area */}

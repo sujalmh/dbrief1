@@ -64,11 +64,13 @@ interface ChatStore {
     updateSettings: (settings: Partial<Settings>) => void
     updateMessage: (id: string, content: string, isError?: boolean) => void
     updateMessageSteps: (id: string, steps: Message['steps']) => void
+    updateMessageReasoning: (id: string, reasoning: string) => void
     updateMessageVisualization: (id: string, data: any) => void
     setVisualizationData: (data: any) => void
     addGraphToHistory: (name: string, type: GraphHistoryItem['type'], data: any) => void
     removeGraphFromHistory: (id: string) => void
     clearMessages: () => void
+    deleteMessage: (id: string) => void
 
     // Global Error State
     error: string | null
@@ -126,6 +128,12 @@ export const useChatStore = create<ChatStore>()(
                         msg.id === id ? { ...msg, steps } : msg
                     )
                 })),
+            updateMessageReasoning: (id, reasoning) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id ? { ...msg, reasoning } : msg
+                    )
+                })),
             updateMessageVisualization: (id, data) =>
                 set((state) => ({
                     messages: state.messages.map(msg =>
@@ -143,6 +151,9 @@ export const useChatStore = create<ChatStore>()(
                 graphHistory: state.graphHistory.filter(item => item.id !== id)
             })),
             clearMessages: () => set({ messages: [], visualizationData: null, graphHistory: [], activeMessageId: null }),
+            deleteMessage: (id) => set((state) => ({
+                messages: state.messages.filter(msg => msg.id !== id)
+            })),
         }),
         {
             name: 'f1-chat-storage',

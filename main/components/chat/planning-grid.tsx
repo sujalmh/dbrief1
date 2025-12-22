@@ -1,8 +1,8 @@
 "use client"
 
-import { memo } from "react"
+import { memo, useState } from "react"
 import { cn } from "@/lib/utils"
-import { Check, X, Loader2 } from "lucide-react"
+import { Check, X, Loader2, ChevronDown, ChevronUp, Brain } from "lucide-react"
 
 interface PlanningGridProps {
     steps: {
@@ -11,9 +11,11 @@ interface PlanningGridProps {
         status: 'pending' | 'running' | 'success' | 'failed'
         result?: string
     }[]
+    reasoning?: string
 }
 
-function PlanningGridComponent({ steps }: PlanningGridProps) {
+function PlanningGridComponent({ steps, reasoning }: PlanningGridProps) {
+    const [isReasoningExpanded, setIsReasoningExpanded] = useState(false)
     if (!steps || steps.length === 0) return null
 
     // Determine overall state for container styling
@@ -21,9 +23,36 @@ function PlanningGridComponent({ steps }: PlanningGridProps) {
     const hasError = steps.some(s => s.status === 'failed')
 
     return (
-        <div className="group relative z-10 w-full mb-3 select-none">
+        <div className="relative z-10 w-full mb-3 select-none">
+            {/* Reasoning Trace (if available) */}
+            {reasoning && (
+                <div className="mb-2 rounded-lg border bg-background/95 shadow-sm overflow-hidden transition-all duration-300">
+                    <button
+                        onClick={() => setIsReasoningExpanded(!isReasoningExpanded)}
+                        className="w-full flex items-center justify-between p-2 hover:bg-muted/50 transition-colors"
+                    >
+                        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            <Brain className="h-3 w-3" />
+                            <span>Thinking Process</span>
+                        </div>
+                        {isReasoningExpanded ? <ChevronUp className="h-3 w-3 text-muted-foreground" /> : <ChevronDown className="h-3 w-3 text-muted-foreground" />}
+                    </button>
+
+                    <div className={cn(
+                        "grid transition-all duration-300 ease-in-out",
+                        isReasoningExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                    )}>
+                        <div className="min-h-0">
+                            <div className="px-3 pb-3 pt-0 text-xs font-mono text-foreground/70 whitespace-pre-wrap leading-relaxed border-t border-muted/20">
+                                {reasoning}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Combined Visualization */}
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 group">
 
                 {/* 1. Progress Lines Container */}
                 <div className="flex h-1.5 w-full gap-1 overflow-hidden rounded-full bg-muted/20">

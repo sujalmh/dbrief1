@@ -45,6 +45,10 @@ export const TOOL_SCHEMAS = {
     get_sessions: {
         required: ['year', 'gp'],
         optional: []
+    },
+    get_driver_standings: {
+        required: ['year'],
+        optional: ['driver']
     }
 }
 

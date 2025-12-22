@@ -26,7 +26,7 @@ export interface ExecutionResult {
 // Configuration
 // =============================================================================
 
-const MAX_STEPS = 5;
+
 const STEP_TIMEOUT_MS = 60000;
 
 export interface ExecutionContext {
@@ -99,8 +99,8 @@ export async function executeSteps(
 ): Promise<ExecutionContext> {
     const startTime = Date.now();
 
-    // Limit to max steps
-    const stepsToExecute = steps.slice(0, MAX_STEPS);
+    // Limit to max steps provided by planner
+    const stepsToExecute = steps;
 
     // Initial pending state
     stepsToExecute.forEach((_, index) => {

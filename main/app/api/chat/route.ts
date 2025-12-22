@@ -166,7 +166,7 @@ export async function POST(request: NextRequest) {
                     // 2. Plan Query
                     let plan: Plan;
                     try {
-                        plan = await planQuery(plannerModel, message, web_search);
+                        plan = await planQuery(plannerModel, message, web_search, reasoning);
                     } catch (error) {
                         console.error("[Planner] Error:", error);
                         plan = createFallbackPlan(message);

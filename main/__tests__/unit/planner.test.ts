@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import { planQuery, createFallbackPlan, PlanSchema } from '@/lib/planner'
-import { createTestPlannerModel, createMockPlannerLLM } from '../utils/llm-client'
+import { createTestPlannerModel, createMockPlannerLLM, MockLLM } from '../utils/llm-client'
 import {
     assertPlanContainsTool,
     assertPlanArgs,
@@ -126,7 +126,7 @@ describe('Planner - Unit Tests (Mocked)', () => {
         })
 
         it('should reject telemetry for pre-2018 years', async () => {
-            const response = await mockLLM.invoke("Show Schumacher telemetry in 2000 race")
+            const response = await mockLLM.invoke("Show 2000 Schumacher telemetry")
             const plan = PlanSchema.parse(JSON.parse(response))
 
             // Telemetry not available for pre-2018
@@ -149,6 +149,41 @@ describe('Planner - Unit Tests (Mocked)', () => {
             const plan = PlanSchema.parse(JSON.parse(response))
 
             expect(plan.steps.length).toBe(0)
+        })
+    })
+    describe('8️⃣ Reasoning Mode Tests', () => {
+        // Create a custom mock for this specific test to ensure we get a long plan
+        const longPlanSteps = Array(10).fill(null).map((_, i) => ({
+            description: `Step ${i + 1}`,
+            tool: 'get_laps',
+            args: { year: 2023, gp: 'Monaco', session: 'R', driver: 'VER' }
+        }));
+
+        const longPlanResponse = JSON.stringify({
+            steps: longPlanSteps,
+            reasoning: "Complex analysis requiring many steps"
+        });
+
+        const reasoningMockLLM = {
+            invoke: async (messages: any[]) => {
+                return { content: longPlanResponse };
+            }
+        };
+
+        it('should allow > 5 steps when reasoning mode is enabled', async () => {
+            // Pass reasoningMode = true
+            const plan = await planQuery(reasoningMockLLM as any, "Perform complex analysis", false, true)
+
+            expect(plan.steps.length).toBe(10)
+            expect(plan.steps[9].description).toBe("Step 10")
+        })
+
+        it('should cap at 5 steps when reasoning mode is disabled', async () => {
+            // Pass reasoningMode = false (default)
+            const plan = await planQuery(reasoningMockLLM as any, "Perform complex analysis", false, false)
+
+            expect(plan.steps.length).toBe(5)
+            expect(plan.steps[4].description).toBe("Step 5")
         })
     })
 })

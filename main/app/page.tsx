@@ -7,12 +7,16 @@ import { SettingsModal } from "@/components/chat/settings-modal"
 import { ErrorModal } from "@/components/ui/error-modal"
 import { VisualizationPanel } from "@/components/visualization/visualization-panel"
 import { useChatStore } from "@/lib/store"
+import { useMediaQuery } from "@/lib/hooks/use-media-query"
 
 export default function Home() {
   const { settings, visualizationWidth, isVisualizationCollapsed } = useChatStore()
+  const isDesktop = useMediaQuery("(min-width: 768px)")
 
-  // Calculate dynamic padding based on visualization state
-  const prValue = (settings.visualizeEnabled && !isVisualizationCollapsed) ? `${visualizationWidth}px` : "0px"
+  // Calculate dynamic padding based on visualization state - ONLY on Desktop
+  const prValue = (isDesktop && settings.visualizeEnabled && !isVisualizationCollapsed)
+    ? `${visualizationWidth}px`
+    : "0px"
 
   return (
     <div className="flex h-screen flex-col bg-background font-sans antialiased text-foreground overflow-hidden">
@@ -37,7 +41,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Visualization Panel (Fixed Right) */}
+        {/* Visualization Panel (Fixed Right on Desktop, Overlay on Mobile) */}
         <VisualizationPanel />
       </main>
 

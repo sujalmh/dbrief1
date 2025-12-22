@@ -26,7 +26,7 @@ export const StepSchema = z.object({
  * Schema for the complete execution plan
  */
 export const PlanSchema = z.object({
-    steps: z.array(StepSchema).max(5).describe("List of execution steps (max 5)"),
+    steps: z.array(StepSchema).max(25).describe("List of execution steps (max 25)"),
     reasoning: z.string().optional().describe("Brief explanation of the plan"),
 });
 
@@ -118,7 +118,8 @@ Example 2: "Compare telemetry between Lando and Oscar in Abu Dhabi 2023 race"
 export async function planQuery(
     model: BaseChatModel,
     message: string,
-    webSearchEnabled: boolean = false
+    webSearchEnabled: boolean = false,
+    reasoningMode: boolean = false
 ): Promise<Plan> {
     // Build the system prompt with web search context
     let systemPrompt = PLANNER_SYSTEM_PROMPT;
@@ -127,6 +128,10 @@ export async function planQuery(
 
     if (!webSearchEnabled) {
         systemPrompt += "\n\n**NOTE: Web search is DISABLED. Do not use the web_search tool.**";
+    }
+
+    if (reasoningMode) {
+        systemPrompt = systemPrompt.replace("MAX 5 steps total", "MAX 25 steps total. Create as many steps as needed for a comprehensive analysis.");
     }
 
     // Create messages
@@ -148,7 +153,26 @@ export async function planQuery(
     const plan = parseJsonResponse(content);
 
     // Validate with Zod
-    const validatedPlan = PlanSchema.parse(plan);
+    // We treat the "max(5)" in Zod as a soft validator for standard queries,
+    // but ensuring we don't strictly fail validation for valid reasoning queries requires
+    // potentially loosening the schema or manual check.
+    // Since Zod.max(5) is hardcoded in PlanSchema, we might need to bypass it or update PlanSchema.
+    // Let's rely on manual slicing instead of Zod for the count to support dynamic limits.
+    // Note: To do this properly without changing PlanSchema globally (which might affect other things),
+    // we can parse against StepSchema array directly or temporarily loosen PlanSchema.
+    // However, for this file, let's just make PlanSchema permissive and enforce logic here.
+
+    let validatedPlan: Plan;
+    try {
+        validatedPlan = PlanSchema.parse(plan);
+    } catch (e) {
+        // If it fails specifically on max length and we are in reasoning mode, we might want to allow it.
+        // But PlanSchema line 29 has .max(5).
+        // Let's modify PlanSchema first (in a separate edit if needed, or assume we change it).
+        // Actually, I should update PlanSchema in the same file.
+        // For now, I will update PlanSchema to max(25) generally, and enforce limits in logic.
+        validatedPlan = PlanSchema.parse(plan);
+    }
 
     // Filter out web_search if disabled
     if (!webSearchEnabled) {
@@ -157,9 +181,10 @@ export async function planQuery(
         );
     }
 
-    // Enforce max 5 steps
-    if (validatedPlan.steps.length > 5) {
-        validatedPlan.steps = validatedPlan.steps.slice(0, 5);
+    // Enforce max steps based on mode
+    const maxSteps = reasoningMode ? 25 : 5;
+    if (validatedPlan.steps.length > maxSteps) {
+        validatedPlan.steps = validatedPlan.steps.slice(0, maxSteps);
     }
 
     return validatedPlan;

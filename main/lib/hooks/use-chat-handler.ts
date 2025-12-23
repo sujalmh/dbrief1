@@ -1,9 +1,29 @@
 "use client"
 
 import { useChatStore } from "@/lib/store"
+import { useAuth } from "@/lib/firebase/auth-context"
+import { createSession } from "@/lib/firebase/firestore"
 
 export function useChatHandler() {
-    const { input, setInput, isLoading, setLoading, addMessage, updateMessage, updateMessageSteps, updateMessageVisualization, updateMessageReasoning, setError, settings } = useChatStore()
+    const {
+        input,
+        setInput,
+        isLoading,
+        setLoading,
+        addMessage,
+        updateMessage,
+        updateMessageSteps,
+        updateMessageVisualization,
+        updateMessageReasoning,
+        setError,
+        settings,
+        currentSessionId,
+        setCurrentSessionId,
+        sessions,
+        setSessions,
+        messages
+    } = useChatStore()
+    const { user } = useAuth()
 
     const handleSend = async (overrideInput?: string) => {
         const messageText = (overrideInput ?? input).trim()
@@ -19,6 +39,27 @@ export function useChatHandler() {
         // My implementation plan said: "regenerate the last assistant response by using the previous user message".
 
         let userMsgId = Date.now().toString()
+        let effectiveSessionId = currentSessionId
+
+        // 1. Create session if it doesn't exist and user is logged in
+        if (!effectiveSessionId && user) {
+            try {
+                effectiveSessionId = await createSession(user.uid, messageText.slice(0, 30) + "...")
+                setCurrentSessionId(effectiveSessionId)
+                // Add to sessions list
+                setSessions([{
+                    id: effectiveSessionId,
+                    userId: user.uid,
+                    title: messageText.slice(0, 30) + "...",
+                    createdAt: new Date(),
+                    lastMessageAt: new Date(),
+                    context: {}
+                }, ...sessions])
+            } catch (err) {
+                console.error("Failed to create session:", err)
+            }
+        }
+
         if (!overrideInput) {
             addMessage({
                 id: userMsgId,
@@ -26,6 +67,17 @@ export function useChatHandler() {
                 content: messageText,
                 timestamp: Date.now()
             })
+
+            // Persist User Message to Firestore
+            if (effectiveSessionId && user) {
+                // Don't await this to keep UI snappy
+                import("@/lib/firebase/firestore").then(({ addMessageToSession }) => {
+                    addMessageToSession(effectiveSessionId!, {
+                        role: "user",
+                        content: messageText,
+                    }).catch(err => console.error("Error saving user message:", err));
+                });
+            }
         }
 
         // 2. Set Loading
@@ -42,6 +94,9 @@ export function useChatHandler() {
         })
 
         try {
+            // Check if this is the first message in the session
+            const isFirstMessage = messages.filter(m => m.role === "user").length === 0;
+
             const response = await fetch("/api/chat", {
                 method: "POST",
                 headers: {
@@ -53,7 +108,9 @@ export function useChatHandler() {
                     model: settings.model,
                     apiKey: settings.apiKey,
                     reasoning: settings.reasoningEnabled,
-                    web_search: settings.webSearchEnabled
+                    web_search: settings.webSearchEnabled,
+                    sessionId: effectiveSessionId,
+                    isFirstMessage
                 })
             })
 
@@ -76,6 +133,19 @@ export function useChatHandler() {
             let currentSteps: any[] = []
             let updateFrameId: number | null = null
             let buffer = ""
+            let done = false
+
+            // Function to save assistant message on completion
+            const saveAssistantMessage = () => {
+                if (effectiveSessionId && user && assistantContent) {
+                    import("@/lib/firebase/firestore").then(({ addMessageToSession }) => {
+                        addMessageToSession(effectiveSessionId!, {
+                            role: "assistant",
+                            content: assistantContent,
+                        }).catch(err => console.error("Error saving assistant message:", err));
+                    });
+                }
+            };
 
             const scheduleUpdate = () => {
                 if (updateFrameId) return
@@ -86,8 +156,12 @@ export function useChatHandler() {
             }
 
             while (true) {
-                const { done, value } = await reader.read()
-                if (done) break
+                const { done: streamDone, value } = await reader.read()
+                if (streamDone) {
+                    done = true
+                    saveAssistantMessage()
+                    break
+                }
 
                 const chunk = decoder.decode(value, { stream: true })
                 buffer += chunk
@@ -101,7 +175,13 @@ export function useChatHandler() {
 
                     if (trimmedLine.startsWith("data: ")) {
                         const content = trimmedLine.slice(6)
-                        if (content === "[DONE]") break
+                        if (content === "[DONE]") {
+                            if (!done) {
+                                done = true
+                                saveAssistantMessage()
+                            }
+                            break
+                        }
 
                         try {
                             const parsed = JSON.parse(content)
@@ -140,6 +220,26 @@ export function useChatHandler() {
                                     case "visualization":
                                         useChatStore.getState().setVisualizationData(data.data)
                                         updateMessageVisualization(assistantMsgId, data.data)
+                                        break
+                                    case "metadata":
+                                        // Update session title and type in the store
+                                        if (effectiveSessionId) {
+                                            const currentSessions = useChatStore.getState().sessions;
+                                            const updatedSessions = currentSessions.map(s =>
+                                                s.id === effectiveSessionId
+                                                    ? { ...s, title: data.title, type: data.type }
+                                                    : s
+                                            )
+                                            setSessions(updatedSessions)
+
+                                            // Persist metadata to Firestore (Client SDK)
+                                            if (user) {
+                                                import("@/lib/firebase/firestore").then(({ updateSessionMetadata }) => {
+                                                    updateSessionMetadata(effectiveSessionId!, data.title, data.type)
+                                                        .catch(err => console.error("Error updating session metadata:", err));
+                                                });
+                                            }
+                                        }
                                         break
                                     case "error":
                                         setError(data.message)

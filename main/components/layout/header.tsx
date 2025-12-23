@@ -13,7 +13,7 @@ import {
 import { useMemo } from "react"
 
 export function Header() {
-    const { setSettingsOpen, activeMessageId, messages } = useChatStore()
+    const { setSettingsOpen, activeMessageId, messages, sessions, currentSessionId } = useChatStore()
     const { setTheme, theme } = useTheme()
 
     const toggleTheme = () => {
@@ -28,21 +28,19 @@ export function Header() {
     // Derive context from the active message
     const context = useMemo(() => {
         const data = activeMessage?.visualizationData
+        const currentSession = sessions.find(s => s.id === currentSessionId)
 
-        let sessionString = "2023 SEASON OVERVIEW" // Default
+        // Use session title if available, otherwise "NEW CHAT"
+        let sessionString = currentSession?.title ? currentSession.title.toUpperCase() : "NEW CHAT"
         let mode = "Telemetry" // Default
 
         if (data) {
-            // Heuristic: specific session info in data or derive from title
-            if (data.session_info) {
-                // Example format: "Q3 - Saudi Arabia 2024"
-                sessionString = data.session_info.toUpperCase()
-            } else if (data.title) {
-                // Allow title to map to session string if no specific session info
-                sessionString = data.title.toUpperCase()
-            }
+            // Heuristic: check data title for overrides, but prefer session title for main context
+            // If data has specific session info like "Q3 - Saudi Arabia", we might want to prioritize that contextually
+            // But for the main "Badge", the user asked to replace "2023 SEASON OVERVIEW" which acts as the page title.
+            // So sticking to session title is safer for "smart title" request.
 
-            // Heuristic for mode
+            // Keep mode detection
             const title = (data.title || "").toLowerCase()
             if (title.includes("strategy") || title.includes("pit")) mode = "Strategy"
             else if (title.includes("compare") || title.includes("gap") || title.includes("vs")) mode = "Comparison"
@@ -50,8 +48,13 @@ export function Header() {
             else mode = "Telemetry"
         }
 
+        // If the session has a type, use that to override the mode
+        if (currentSession?.type) {
+            mode = currentSession.type.charAt(0).toUpperCase() + currentSession.type.slice(1)
+        }
+
         return { sessionString, mode }
-    }, [activeMessage])
+    }, [activeMessage, sessions, currentSessionId])
 
 
     return (

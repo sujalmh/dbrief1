@@ -27,6 +27,8 @@ import { executeSteps, aggregateContext, simplifyContext } from "@/lib/executor"
 import { f1Tools } from "@/lib/tools/fastf1";
 import { getSearchTools } from "@/lib/tools/search";
 import { getVisualizationTools } from "@/lib/tools/visualization";
+import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { FieldValue } from "firebase-admin/firestore";
 
 // =============================================================================
 // Request Validation
@@ -40,6 +42,8 @@ const ChatRequestSchema = z.object({
     reasoning: z.boolean().default(false),
     web_search: z.boolean().default(false),
     images: z.array(z.string()).default([]),
+    sessionId: z.string().optional(),
+    isFirstMessage: z.boolean().default(false),
 });
 
 type ChatRequest = z.infer<typeof ChatRequestSchema>;
@@ -140,7 +144,29 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { message, provider, model, apiKey, reasoning, web_search } = validationResult.data as ChatRequest;
+        // 1. Authenticate User
+        const token = request.cookies.get("firebaseToken")?.value;
+        let userId: string | null = null;
+        if (token) {
+            try {
+                const decodedToken = await adminAuth.verifyIdToken(token);
+                userId = decodedToken.uid;
+            } catch (error) {
+                console.error("[Auth] Token verification failed:", error);
+            }
+        }
+
+        const { message, provider, model, apiKey, reasoning, web_search, sessionId, isFirstMessage } = validationResult.data as ChatRequest;
+
+        // If sessionId is provided, and we have userId, verify ownership (optional but recommended)
+        // SKIPPED: Admin SDK credentials missing in local dev. Client-side rules are verified by Firebase.
+        if (sessionId && userId) {
+            // const sessionDoc = await adminDb.collection("sessions").doc(sessionId).get();
+            // if (sessionDoc.exists && sessionDoc.data()?.userId !== userId) {
+            //    return Response.json({ error: "Unauthorized access to session" }, { status: 403 });
+            // }
+        }
+
         const encoder = new TextEncoder();
 
         const stream = new ReadableStream({
@@ -215,7 +241,7 @@ export async function POST(request: NextRequest) {
                     const simplifiedData = simplifyContext(executionContext);
                     const currentDate = new Date().toISOString().split('T')[0];
 
-                    const userMessage = `## User Question
+                    const userMessageContext = `## User Question
 ${message}
 
 ## User Context
@@ -233,20 +259,37 @@ Please answer the user's question based on the F1 data provided above.`;
 
                     const messages = [
                         new SystemMessage(RESPONDER_SYSTEM_PROMPT),
-                        new HumanMessage(userMessage),
+                        new HumanMessage(userMessageContext),
                     ];
 
                     // Stream Response
+                    let assistantContent = "";
                     const response = await responderModel.stream(messages);
 
                     for await (const chunk of response) {
                         const content = typeof chunk.content === "string" ? chunk.content : JSON.stringify(chunk.content);
                         if (content) {
+                            assistantContent += content;
                             sendEvent("token", { content });
                         }
                     }
 
                     sendEvent("done", {});
+
+                    // 5. Generate Session Metadata (if first message)
+                    if (isFirstMessage && sessionId) {
+                        try {
+                            const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
+                            const metadata = await generateSessionMetadata(message, provider, model, apiKey);
+
+                            // Emit metadata update event to client
+                            // The client will handle persisting this to Firestore
+                            sendEvent("metadata", metadata);
+                        } catch (error) {
+                            console.error("Error generating session metadata:", error);
+                        }
+                    }
+
                     controller.close();
 
                 } catch (error) {

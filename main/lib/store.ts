@@ -49,12 +49,20 @@ interface ChatStore {
     activeMessageId: string | null
     setActiveMessageId: (id: string | null) => void
 
+    currentSessionId: string | null
+    setCurrentSessionId: (id: string | null) => void
+    sessions: any[]
+    setSessions: (sessions: any[]) => void
+
     isSettingsOpen: boolean
     setSettingsOpen: (isOpen: boolean) => void
     visualizationWidth: number
     updateVisualizationWidth: (width: number) => void
     isVisualizationCollapsed: boolean
+
     toggleVisualizationCollapse: (collapsed?: boolean) => void
+    isSidebarOpen: boolean
+    setSidebarOpen: (isOpen: boolean) => void
 
     // Actions
     setInput: (input: string) => void
@@ -103,12 +111,18 @@ export const useChatStore = create<ChatStore>()(
             graphHistory: [],
             activeMessageId: null,
             error: null,
+            currentSessionId: null,
+            sessions: [],
 
             setSettingsOpen: (isOpen) => set({ isSettingsOpen: isOpen }),
             updateVisualizationWidth: (width) => set({ visualizationWidth: width }),
             toggleVisualizationCollapse: (collapsed) =>
                 set((state) => ({ isVisualizationCollapsed: collapsed ?? !state.isVisualizationCollapsed })),
+            isSidebarOpen: true,
+            setSidebarOpen: (isOpen) => set({ isSidebarOpen: isOpen }),
             setActiveMessageId: (id) => set({ activeMessageId: id }),
+            setCurrentSessionId: (id) => set({ currentSessionId: id }),
+            setSessions: (sessions) => set({ sessions }),
             setInput: (input) => set({ input }),
             addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
             setMessages: (messages) => set({ messages }),

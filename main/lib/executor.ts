@@ -340,13 +340,101 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
     return result;
 }
 
+// =============================================================================
+// Safe Truncation Utilities
+// =============================================================================
+
+const TRUNCATION_NOTICE = "\n\n**[Context truncated due to size limits]**";
+
+function fitsBudget(text: string, maxChars: number): boolean {
+    return text.length + TRUNCATION_NOTICE.length <= maxChars;
+}
+
+function tryParseJSON(text: string): unknown | null {
+    try {
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
+}
+
+function safeJSONStringify(value: unknown): string {
+    return JSON.stringify(value, null, 2);
+}
+
 /**
- * Aggregate execution results into a context string for the LLM
- * WITH CONTEXT BUDGETING - prevents token overflow
- *
- * @param context - Execution context with results
- * @returns Formatted string for LLM context (budget-safe)
+ * Truncate JSON safely by removing whole top-level elements
  */
+function truncateJSONSafely(
+    jsonText: string,
+    maxChars: number
+): string | null {
+    const parsed = tryParseJSON(jsonText);
+    if (!parsed) return null;
+
+    // Case 1: Top-level array → drop items from the end
+    if (Array.isArray(parsed)) {
+        const arr = [...parsed];
+        while (arr.length > 0) {
+            const candidate = safeJSONStringify(arr);
+            if (fitsBudget(candidate, maxChars)) {
+                return candidate + TRUNCATION_NOTICE;
+            }
+            arr.pop();
+        }
+        return null;
+    }
+
+    // Case 2: Top-level object → drop least-important keys (heuristic: last keys)
+    if (typeof parsed === "object" && parsed !== null) {
+        const entries = Object.entries(parsed);
+        const reduced: Record<string, unknown> = {};
+
+        for (const [k, v] of entries) {
+            reduced[k] = v;
+        }
+
+        while (Object.keys(reduced).length > 0) {
+            const candidate = safeJSONStringify(reduced);
+            if (fitsBudget(candidate, maxChars)) {
+                return candidate + TRUNCATION_NOTICE;
+            }
+            const lastKey = Object.keys(reduced).at(-1);
+            if (!lastKey) break;
+            delete reduced[lastKey];
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Truncate non-JSON text at safe structural boundaries
+ */
+function truncateTextSafely(text: string, maxChars: number): string {
+    const limit = maxChars - TRUNCATION_NOTICE.length;
+    if (limit <= 0) return TRUNCATION_NOTICE;
+
+    const slice = text.slice(0, limit);
+
+    const boundaries = [
+        slice.lastIndexOf("\n\n"),
+        slice.lastIndexOf("\n"),
+        slice.lastIndexOf("```"),
+        slice.lastIndexOf("}"),
+        slice.lastIndexOf("]")
+    ].filter(i => i > 0);
+
+    const cut = boundaries.length > 0 ? Math.max(...boundaries) : -1;
+
+    if (cut > 0) {
+        return slice.slice(0, cut) + TRUNCATION_NOTICE;
+    }
+
+    // Absolute last resort
+    return slice + TRUNCATION_NOTICE;
+}
+
 export function aggregateContext(context: ExecutionContext): string {
     if (context.results.length === 0) {
         return "No data was retrieved from F1 tools.";
@@ -381,8 +469,23 @@ export function aggregateContext(context: ExecutionContext): string {
 
         // Truncate to fit budget (keep beginning which has summary)
         const maxChars = MAX_CONTEXT_TOKENS * CHARS_PER_TOKEN;
-        aggregated = aggregated.substring(0, maxChars);
-        aggregated += "\n\n**[Context truncated due to size limits]**";
+
+        // Attempt JSON-safe truncation if applicable
+        const trimmed = aggregated.trimStart();
+        const looksLikeJSON = trimmed.startsWith("{") || trimmed.startsWith("[");
+        
+        let truncated: string | null = null;
+        
+        if (looksLikeJSON) {
+            truncated = truncateJSONSafely(trimmed, maxChars);
+        }
+        
+        // Fallback to structural-safe text truncation
+        if (!truncated) {
+            truncated = truncateTextSafely(aggregated, maxChars);
+        }
+        
+        aggregated = truncated;
     }
 
     return aggregated;

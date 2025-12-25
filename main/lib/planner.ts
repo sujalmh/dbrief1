@@ -53,6 +53,7 @@ Available Tools (FastAPI):
 - get_tyres(year, gp, session, driver?): Tyre strategies.
 
 - get_driver_standings(year, driver?): Final driver standings (points, wins).
+- retrieve_regulations(query, year, type): Search FIA regulation documents (sporting, technical, financial). Returns relevant regulation chunks with source citations.
 - web_search(query): For news/current events ONLY.
 
 Common Driver Codes (2024):

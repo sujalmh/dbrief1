@@ -14,6 +14,7 @@ export function useChatHandler() {
         updateMessage,
         updateMessageSteps,
         updateMessageVisualization,
+        updateMessageCitations,
         updateMessageReasoning,
         setError,
         settings,
@@ -205,13 +206,39 @@ export function useChatHandler() {
                                     case "step_update":
                                         const stepIndex = (typeof data.step === 'number' ? data.step : parseInt(data.step)) - 1
                                         if (stepIndex >= 0 && stepIndex < currentSteps.length) {
-                                            currentSteps[stepIndex] = {
+                                            const updatedStep = {
                                                 ...currentSteps[stepIndex],
                                                 status: data.status,
                                                 result: data.additional
                                             }
+                                            currentSteps[stepIndex] = updatedStep
+
+                                            // Sub-query expansion logic for retrieval tool
+                                            if (updatedStep.tool === "retrieve_regulations" && data.additional) {
+                                                try {
+                                                    const result = JSON.parse(data.additional)
+                                                    if (result.used_subqueries && Array.isArray(result.used_subqueries)) {
+                                                        // Insert sub-queries as completed steps immediately after the main retrieval step
+                                                        const subSteps = result.used_subqueries.map((sq: string) => ({
+                                                            description: `Sub-query: "${sq}"`,
+                                                            tool: "rag_subquery",
+                                                            status: "success" as const,
+                                                            result: "Completed"
+                                                        }))
+
+                                                        // Insert after current index
+                                                        currentSteps.splice(stepIndex + 1, 0, ...subSteps)
+                                                    }
+                                                } catch (e) {
+                                                    // Ignore parsing errors
+                                                }
+                                            }
+
                                             updateMessageSteps(assistantMsgId, [...currentSteps])
                                         }
+                                        break
+                                    case "citations":
+                                        updateMessageCitations(assistantMsgId, data.citations)
                                         break
                                     case "token":
                                         assistantContent += data.content

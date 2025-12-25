@@ -27,6 +27,7 @@ import { executeSteps, aggregateContext, simplifyContext } from "@/lib/executor"
 import { f1Tools } from "@/lib/tools/fastf1";
 import { getSearchTools } from "@/lib/tools/search";
 import { getVisualizationTools } from "@/lib/tools/visualization";
+import { getRegulationTools } from "@/lib/tools/regulation";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -213,6 +214,7 @@ export async function POST(request: NextRequest) {
                     // 3. Execute Plan
                     const tools = {
                         ...f1Tools,
+                        ...getRegulationTools(),
                         ...(web_search ? getSearchTools() : {}),
                     };
 

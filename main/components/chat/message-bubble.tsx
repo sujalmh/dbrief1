@@ -2,7 +2,7 @@
 
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { BrainCircuit, AlertTriangle, Copy, Check, RotateCcw, Trash2 } from "lucide-react"
+import { BrainCircuit, AlertTriangle, Copy, Check, RotateCcw, Trash2, FileText } from "lucide-react"
 import { Message, useChatStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -238,6 +238,26 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
                             <BrainCircuit className="h-3.5 w-3.5" />
                             Show Chart
                         </button>
+                    </div>
+                )}
+
+                {/* Citations Section */}
+                {message.citations && message.citations.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border/50">
+                        <div className="flex items-center gap-2 mb-2">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Sources</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {message.citations.map((citation, i) => (
+                                <div
+                                    key={i}
+                                    className="flex items-center gap-1.5 px-2 py-1 rounded bg-muted/50 border border-border/50 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                    <FileText className="h-3 w-3" />
+                                    <span className="truncate max-w-[200px]">{citation.source}</span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 )}
 

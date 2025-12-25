@@ -15,6 +15,10 @@ export interface Message {
         status: 'pending' | 'running' | 'success' | 'failed'
         result?: string
     }[]
+    citations?: {
+        source: string
+        type: string
+    }[]
     visualizationData?: any
 }
 
@@ -74,6 +78,7 @@ interface ChatStore {
     updateMessageSteps: (id: string, steps: Message['steps']) => void
     updateMessageReasoning: (id: string, reasoning: string) => void
     updateMessageVisualization: (id: string, data: any) => void
+    updateMessageCitations: (id: string, citations: { source: string; type: string }[]) => void
     setVisualizationData: (data: any) => void
     addGraphToHistory: (name: string, type: GraphHistoryItem['type'], data: any) => void
     removeGraphFromHistory: (id: string) => void
@@ -152,6 +157,12 @@ export const useChatStore = create<ChatStore>()(
                 set((state) => ({
                     messages: state.messages.map(msg =>
                         msg.id === id ? { ...msg, visualizationData: data } : msg
+                    )
+                })),
+            updateMessageCitations: (id, citations) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id ? { ...msg, citations } : msg
                     )
                 })),
             setVisualizationData: (data) => set({ visualizationData: data }),

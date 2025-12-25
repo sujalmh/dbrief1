@@ -215,3 +215,16 @@ describe('Step Executor', () => {
         })
     })
 })
+
+// =============================================================================
+// Tests for simplifyContext removal
+// =============================================================================
+
+describe('Executor - simplifyContext Removal', () => {
+    it('should not have simplifyContext in exports', () => {
+        // The simplifyContext function was removed in the changes
+        // This test verifies it's no longer available
+        const executor = require('@/lib/executor')
+        expect(executor.simplifyContext).toBeUndefined()
+    })
+})

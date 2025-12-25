@@ -236,6 +236,34 @@ export async function POST(request: NextRequest) {
                             error: result.error || null
                         }));
                         sendEvent("visualization", { data: visualizationPayload });
+
+                        // Extract and stream citations from retrieval results
+                        const citations: { source: string; type: string }[] = [];
+                        executionContext.results.forEach(result => {
+                            if (result.tool === "retrieve_regulations" && result.success && result.data) {
+                                try {
+                                    // Parse data if it's a string (executor might stringify it)
+                                    const data = typeof result.data === 'string' ? JSON.parse(result.data) : result.data;
+
+                                    if (data.retrieved_documents && Array.isArray(data.retrieved_documents)) {
+                                        data.retrieved_documents.forEach((doc: any) => {
+                                            if (doc.source) {
+                                                citations.push({
+                                                    source: doc.source,
+                                                    type: doc.type || "regulation"
+                                                });
+                                            }
+                                        });
+                                    }
+                                } catch (e) {
+                                    console.error("Error parsing citations:", e);
+                                }
+                            }
+                        });
+
+                        if (citations.length > 0) {
+                            sendEvent("citations", { citations });
+                        }
                     }
 
                     // 4. Generate Response

@@ -54,6 +54,7 @@ from schemas import (
     TeamsResponse,
     TelemetryRequest,
     TelemetryResponse,
+    TelemetrySummaryResponse,
     TrackStatusRequest,
     TrackStatusResponse,
     TyresRequest,
@@ -198,7 +199,7 @@ async def get_driver_standings(request: DriverStandingsRequest):
             "standings": data
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # =============================================================================
@@ -655,6 +656,141 @@ async def get_telemetry(request: TelemetryRequest):
             corners=corners_data,
             total_points=len(data),
             downsampled_from=original_count
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# =============================================================================
+# F2. Telemetry Summary Endpoint (LLM-Optimized)
+# =============================================================================
+
+
+def calculate_channel_summary(values: list) -> dict:
+    """Calculate min/max/avg for a list of numeric values."""
+    clean_values = [v for v in values if v is not None and not np.isnan(v)]
+    if not clean_values:
+        return {"min": 0.0, "max": 0.0, "avg": 0.0}
+    return {
+        "min": round(float(min(clean_values)), 2),
+        "max": round(float(max(clean_values)), 2),
+        "avg": round(float(sum(clean_values) / len(clean_values)), 2),
+    }
+
+
+@app.post("/f1/telemetry/summary", response_model=TelemetrySummaryResponse)
+async def get_telemetry_summary(request: TelemetryRequest):
+    """
+    Get a statistical summary of telemetry data for LLM consumption.
+    Returns aggregated stats instead of raw data points.
+    Much more token-efficient for LLM context.
+    """
+    try:
+        session = await get_session(request.year, request.gp, request.session)
+        
+        # Get driver's laps
+        driver_laps = session.laps.pick_drivers(request.driver)
+        
+        if driver_laps.empty:
+            raise HTTPException(status_code=404, detail=f"No laps found for driver {request.driver}")
+        
+        # Get the specific lap
+        if request.lap == "fastest":
+            lap = driver_laps.pick_fastest()
+        else:
+            try:
+                lap_number = int(request.lap)
+                lap_df = driver_laps[driver_laps["LapNumber"] == lap_number]
+                if lap_df.empty:
+                    raise HTTPException(status_code=404, detail=f"Lap {lap_number} not found for driver {request.driver}")
+                lap = lap_df.iloc[0]
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid lap identifier: {request.lap}")
+        
+        if lap is None or (hasattr(lap, 'empty') and lap.empty):
+            raise HTTPException(status_code=404, detail="No valid lap found")
+        
+        # Get telemetry for the lap
+        telemetry = lap.get_telemetry()
+        
+        if telemetry is None or telemetry.empty:
+            raise HTTPException(status_code=404, detail="No telemetry data available for this lap")
+        
+        # Extract lap metadata
+        lap_number = int(lap.get("LapNumber", 0)) if hasattr(lap, 'get') else int(lap["LapNumber"])
+        lap_time = format_timedelta(lap.get("LapTime") if hasattr(lap, 'get') else lap["LapTime"])
+        compound = str(lap.get("Compound", "")) if pd.notna(lap.get("Compound")) else None
+        tyre_life = int(lap.get("TyreLife", 0)) if pd.notna(lap.get("TyreLife")) else None
+        
+        # Calculate speed summary
+        speed_values = telemetry["Speed"].tolist() if "Speed" in telemetry.columns else []
+        speed_summary = calculate_channel_summary(speed_values)
+        
+        # Calculate throttle summary
+        throttle_values = telemetry["Throttle"].tolist() if "Throttle" in telemetry.columns else []
+        throttle_summary = calculate_channel_summary(throttle_values)
+        
+        # Calculate brake summary
+        brake_values = telemetry["Brake"].tolist() if "Brake" in telemetry.columns else []
+        brake_summary = calculate_channel_summary(brake_values)
+        
+        # Get corner minimum speeds (if corners data available)
+        corner_min_speeds = None
+        try:
+            circuit_info = session.get_circuit_info()
+            if circuit_info is not None and hasattr(circuit_info, 'corners'):
+                corners_df = circuit_info.corners
+                if corners_df is not None and not corners_df.empty and "Distance" in telemetry.columns:
+                    corner_speeds = []
+                    distances = telemetry["Distance"].values
+                    speeds = telemetry["Speed"].values if "Speed" in telemetry.columns else None
+                    
+                    if speeds is not None:
+                        for _, corner in corners_df.iterrows():
+                            corner_dist = corner.get("Distance", 0)
+                            # Find speed at corner (within 20m)
+                            mask = np.abs(distances - corner_dist) < 20
+                            if np.any(mask):
+                                corner_speed = float(np.min(speeds[mask]))
+                                corner_speeds.append({
+                                    "corner": int(corner.get("Number", 0)),
+                                    "letter": str(corner.get("Letter", "")),
+                                    "min_speed": round(corner_speed, 1)
+                                })
+                    corner_min_speeds = corner_speeds
+        except Exception:
+            print(f"Warning: Failed to calculate corner speeds: {e}")
+            # Non-critical, continue without corners
+        
+        # Not real sector formula used in F1, consider changing in future
+        sector_speeds = None
+        if "Distance" in telemetry.columns and "Speed" in telemetry.columns:
+            max_dist = telemetry["Distance"].max()
+            if max_dist > 0:
+                s1_mask = telemetry["Distance"] <= max_dist / 3
+                s2_mask = (telemetry["Distance"] > max_dist / 3) & (telemetry["Distance"] <= 2 * max_dist / 3)
+                s3_mask = telemetry["Distance"] > 2 * max_dist / 3
+                
+                sector_speeds = {
+                    "sector1_avg_speed": round(float(telemetry.loc[s1_mask, "Speed"].mean()), 1) if s1_mask.any() else 0,
+                    "sector2_avg_speed": round(float(telemetry.loc[s2_mask, "Speed"].mean()), 1) if s2_mask.any() else 0,
+                    "sector3_avg_speed": round(float(telemetry.loc[s3_mask, "Speed"].mean()), 1) if s3_mask.any() else 0,
+                }
+        
+        return TelemetrySummaryResponse(
+            driver=request.driver,
+            lap_number=lap_number,
+            lap_time=lap_time,
+            compound=compound,
+            tyre_life=tyre_life,
+            speed_summary=speed_summary,
+            throttle_summary=throttle_summary,
+            brake_summary=brake_summary,
+            corner_min_speeds=corner_min_speeds,
+            sector_speeds=sector_speeds,
+            total_points_analyzed=len(telemetry)
         )
     except HTTPException:
         raise

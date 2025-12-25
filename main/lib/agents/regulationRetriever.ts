@@ -25,7 +25,7 @@ const EMBEDDING_DIM = 1536;
 const MAX_SUBQUERIES = 5;
 const MIN_SUBQUERIES = 2;
 const DEFAULT_MATCH_COUNT = 5;
-const TOP_N_RESULTS = 8;
+const TOP_N_RESULTS = 5;
 
 // =============================================================================
 // Zod Schemas

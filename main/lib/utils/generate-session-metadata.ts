@@ -23,10 +23,12 @@ export async function generateSessionMetadata(
 Given the following user query, you must:
 1. Generate a concise, descriptive title (max 40 characters)
 2. Categorize the query into ONE of these types:
-   - "telemetry": Questions about car data, performance metrics, lap times, speeds, etc.
-   - "comparison": Questions comparing drivers, teams, or sessions
+   - "telemetry": Questions about car data, speed, throttle, brake, telemetry, performance metrics. Use this when "telemetry" is mentioned.
+   - "comparison": Questions comparing drivers, teams, race results, or qualifying times (not telemetry comparisons)
    - "strategy": Questions about race strategy, pit stops, tire choices, etc.
-   - "insights": General analysis, trends, or high-level observations
+   - "insights": General analysis, trends, regulations, or high-level observations
+
+IMPORTANT: If the query mentions "telemetry", classify as "telemetry" even if it's a comparison.
 
 User Query: "${userQuery}"
 

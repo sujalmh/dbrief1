@@ -223,6 +223,28 @@ class TelemetryResponse(BaseModel):
     downsampled_from: int
 
 
+class ChannelSummary(BaseModel):
+    """Statistical summary for a telemetry channel."""
+    min: float
+    max: float
+    avg: float
+
+
+class TelemetrySummaryResponse(BaseModel):
+    """LLM-optimized telemetry summary response (no raw data)."""
+    driver: str
+    lap_number: int
+    lap_time: Optional[str]
+    compound: Optional[str]
+    tyre_life: Optional[int]
+    speed_summary: ChannelSummary
+    throttle_summary: ChannelSummary
+    brake_summary: ChannelSummary
+    corner_min_speeds: Optional[List[dict]] = None
+    sector_speeds: Optional[dict] = None
+    total_points_analyzed: int
+
+
 class CarDataResponse(BaseModel):
     """Response for car data."""
     driver: str

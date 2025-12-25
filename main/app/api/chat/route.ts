@@ -23,7 +23,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
 import { getPlannerModel, getResponderModel, Provider } from "@/lib/llm";
 import { planQuery, streamPlanQuery, createFallbackPlan, Plan } from "@/lib/planner";
-import { executeSteps, aggregateContext, simplifyContext } from "@/lib/executor";
+import { executeSteps, aggregateContext } from "@/lib/executor";
 import { f1Tools } from "@/lib/tools/fastf1";
 import { getSearchTools } from "@/lib/tools/search";
 import { getVisualizationTools } from "@/lib/tools/visualization";
@@ -227,6 +227,8 @@ export async function POST(request: NextRequest) {
                     );
 
                     // Send visualization data if available
+                    // NOTE: This sends full data to the FRONTEND for charts.
+                    // LLM protection is handled separately in aggregateContext.
                     if (executionContext.results.length > 0) {
                         const visualizationPayload = executionContext.results.map((result) => ({
                             tool: result.tool,
@@ -268,7 +270,6 @@ export async function POST(request: NextRequest) {
 
                     // 4. Generate Response
                     const contextString = aggregateContext(executionContext);
-                    const simplifiedData = simplifyContext(executionContext);
                     const currentDate = new Date().toISOString().split('T')[0];
 
                     const userMessageContext = `## User Question
@@ -279,11 +280,6 @@ Current Date: ${currentDate}
 
 ## F1 Data Context
 ${contextString}
-
-## Simplified Data
-\`\`\`json
-${JSON.stringify(simplifiedData, null, 2)}
-\`\`\`
 
 Please answer the user's question based on the F1 data provided above.`;
 

@@ -235,7 +235,7 @@ export const getTelemetryTool = tool(
     },
     {
         name: "get_telemetry",
-        description: "Get detailed telemetry data (speed, throttle, brake, gear) for a specific driver and lap",
+        description: "Get detailed telemetry data (speed, throttle, brake, gear) for a specific driver and lap. WARNING: Returns large data arrays - use get_telemetry_summary for LLM analysis",
         schema: z.object({
             year: YearSchema,
             gp: GpSchema,
@@ -245,6 +245,33 @@ export const getTelemetryTool = tool(
         }),
     }
 );
+
+/**
+ * Get telemetry summary (LLM-optimized)
+ */
+export const getTelemetrySummaryTool = tool(
+    async ({ year, gp, session, driver, lap }) => {
+        return await f1Post("/f1/telemetry/summary", {
+            year,
+            gp,
+            session,
+            driver,
+            lap: lap ? String(lap) : "fastest",
+        });
+    },
+    {
+        name: "get_telemetry_summary",
+        description: "Get statistical summary of telemetry (min/max/avg speed, throttle, brake, corner speeds) for a driver's lap. PREFERRED for LLM analysis - much more token-efficient than raw telemetry",
+        schema: z.object({
+            year: YearSchema,
+            gp: GpSchema,
+            session: SessionSchema,
+            driver: DriverSchema,
+            lap: z.union([z.string(), z.number()]).optional().describe("Lap identifier: 'fastest' or lap number"),
+        }),
+    }
+);
+
 
 /**
  * Get weather data
@@ -344,6 +371,7 @@ export const f1Tools: Record<string, StructuredTool> = {
     get_laps: getLapsTool,
     get_fastest_lap: getFastestLapTool,
     get_telemetry: getTelemetryTool,
+    get_telemetry_summary: getTelemetrySummaryTool,
     get_weather: getWeatherTool,
     get_race_control: getRaceControlTool,
 

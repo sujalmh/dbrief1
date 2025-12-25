@@ -225,6 +225,37 @@ function summarizeTelemetryForLLM(data: { data: unknown[];[key: string]: unknown
     };
 }
 
+
+/**
+ * Helper to parse various lap time formats into seconds
+ * Handles: numbers, "MM:SS.mmm", "HH:MM:SS.mmm"
+ */
+function parseLapTimeToSeconds(lapTime: unknown): number | null {
+    if (typeof lapTime === 'number') return lapTime;
+    
+    if (typeof lapTime === 'string') {
+        // Clean potential "0 days " prefix (common in Python timedelta stringification)
+        const cleanTime = lapTime.replace("0 days ", "").trim();
+        
+        const parts = cleanTime.split(':');
+        
+        // Handle HH:MM:SS.mmm
+        if (parts.length === 3) {
+            return (+parts[0]) * 3600 + (+parts[1]) * 60 + (+parts[2]);
+        }
+        // Handle MM:SS.mmm
+        if (parts.length === 2) {
+            return (+parts[0]) * 60 + (+parts[1]);
+        }
+        
+        // Handle raw seconds string
+        const num = parseFloat(cleanTime);
+        return isNaN(num) ? null : num;
+    }
+    
+    return null;
+}
+
 /**
  * Summarize laps data for LLM consumption
  * Keeps only key laps (fastest, first, last) and aggregates the rest
@@ -236,32 +267,49 @@ function summarizeLapsForLLM(data: { laps: unknown[];[key: string]: unknown }): 
         return { ...data, summary: "No lap data available" };
     }
 
-    // Find fastest lap
+    // Find fastest lap (lexical comparison works for standard time strings)
     const fastestLap = laps.reduce((fastest, lap) => {
-        const currentTime = lap.LapTime as string | undefined;
-        const fastestTime = fastest.LapTime as string | undefined;
-        if (!currentTime) return fastest;
-        if (!fastestTime) return lap;
-        return currentTime < fastestTime ? lap : fastest;
+        const currentSec = parseLapTimeToSeconds(lap.LapTime);
+        const fastestSec = parseLapTimeToSeconds(fastest.LapTime);
+    
+        if (currentSec === null) return fastest;
+        if (fastestSec === null) return lap;
+    
+        return currentSec < fastestSec ? lap : fastest;
     }, laps[0]);
+
+    // Calculate Average Lap Time
+    const validLapSeconds = laps
+        .map((l) => parseLapTimeToSeconds(l.LapTime))
+        .filter((t): t is number => t !== null && t > 0);
+
+    let averageLapTimeStr = "N/A";
+    
+    if (validLapSeconds.length > 0) {
+        const totalSeconds = validLapSeconds.reduce((a, b) => a + b, 0);
+        const avgSeconds = totalSeconds / validLapSeconds.length;
+        
+        // Format back to MM:SS.mmm for readability
+        const mins = Math.floor(avgSeconds / 60);
+        const secs = (avgSeconds % 60).toFixed(3);
+        averageLapTimeStr = `${mins}:${secs.padStart(6, '0')}`;
+    }
 
     // Get first and last lap
     const firstLap = laps[0];
     const lastLap = laps[laps.length - 1];
 
-    // Calculate averages for numeric fields
-    const avgLapTime = laps.filter((l) => l.LapTime).length;
-
     return {
         session_name: data.session_name,
         total_laps: laps.length,
+        average_lap_time: averageLapTimeStr,
         key_laps: {
             fastest: fastestLap,
             first: firstLap,
             last: lastLap,
         },
-        laps_with_times: avgLapTime,
-        note: "Full lap table replaced with key laps summary for LLM context efficiency",
+        laps_with_times: validLapSeconds.length,
+        note: "Full lap table replaced with key laps and average summary for LLM context efficiency",
     };
 }
 

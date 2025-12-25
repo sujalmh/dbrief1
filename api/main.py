@@ -764,7 +764,7 @@ async def get_telemetry_summary(request: TelemetryRequest):
             print(f"Warning: Failed to calculate corner speeds: {e}")
             # Non-critical, continue without corners
         
-        # Calculate sector speeds (split into thirds by distance)
+        # Not real sector formula used in F1, consider changing in future
         sector_speeds = None
         if "Distance" in telemetry.columns and "Speed" in telemetry.columns:
             max_dist = telemetry["Distance"].max()

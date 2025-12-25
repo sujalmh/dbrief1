@@ -359,3 +359,15 @@ class DriverStandingsResponse(BaseModel):
     """Response for driver standings."""
     year: int
     standings: List[dict]
+
+class CornerMinSpeed(BaseModel):
+    """Minimum speed at a corner."""
+    corner: int
+    letter: str
+    min_speed: float
+
+class SectorSpeeds(BaseModel):
+    """Average speeds per sector."""
+    sector1_avg_speed: float
+    sector2_avg_speed: float
+    sector3_avg_speed: float

@@ -761,7 +761,8 @@ async def get_telemetry_summary(request: TelemetryRequest):
                                 })
                     corner_min_speeds = corner_speeds
         except Exception:
-            pass  # Non-critical, continue without corners
+            print(f"Warning: Failed to calculate corner speeds: {e}")
+            # Non-critical, continue without corners
         
         # Calculate sector speeds (split into thirds by distance)
         sector_speeds = None

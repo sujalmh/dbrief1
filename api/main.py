@@ -199,7 +199,7 @@ async def get_driver_standings(request: DriverStandingsRequest):
             "standings": data
         }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 # =============================================================================

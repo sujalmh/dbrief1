@@ -157,7 +157,7 @@ export async function planQuery(
     try {
         validatedPlan = PlanSchema.parse(parsedPlan);
     } catch (e) {
-        validatedPlan = PlanSchema.parse(parsedPlan);
+        throw new Error(`Invalid plan format: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     // Merge extracted reasoning with plan reasoning if available

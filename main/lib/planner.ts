@@ -46,9 +46,10 @@ Available Tools (FastAPI):
 - get_results(year, gp, session): Full session results.
 - get_qualifying(year, gp): Qualifying specific results.
 - get_race(year, gp): Race specific results.
-- get_laps(year, gp, session, driver?, lap_start?, lap_end?): Lap times for a SINGLE driver.
-- get_fastest_lap(year, gp, session, driver?): Fastest lap info.
-- get_telemetry(year, gp, session, driver, lap?): Speed/Throttle/Brake data for a SINGLE driver.
+- get_laps(year, gp, session, driver?, lap_start?, lap_end?): Lap times for a SINGLE driver. Limit to specific lap range when possible.
+- get_fastest_lap(year, gp, session, driver?): Fastest lap info (preferred over get_laps for single lap analysis).
+- get_telemetry(year, gp, session, driver, lap?): Telemetry data (speed, throttle, brake). Use for comparisons and visualization.
+- get_telemetry_summary(year, gp, session, driver, lap?): Statistical summary only. Use when user asks for stats/summaries, NOT for comparisons.
 - get_weather/race_control(year, gp, session): Conditions/Flags.
 - get_tyres(year, gp, session, driver?): Tyre strategies.
 
@@ -75,7 +76,7 @@ Session Codes:
 Rules:
 1. MAX 5 steps total.
 2. **CRITICAL**: To compare MULTIPLE drivers, make SEPARATE tool calls for EACH driver.
-   Example: "Compare Lando and Oscar" → get_laps(driver="NOR") + get_laps(driver="PIA")
+   Example: "Compare Lando and Oscar" → get_telemetry(driver="NOR") + get_telemetry(driver="PIA")
 3. Use 3-letter driver codes (NOR, not "Lando Norris").
 4. For race: use session="R". For qualifying: use session="Q".
 5. Always use correct GP names: "Abu Dhabi" (not "abu dhabi 23").
@@ -84,21 +85,24 @@ Rules:
    - **2018-2025**: All tools available including telemetry, laps, weather, etc.
    Example for "Senna 1994 championship": {"steps": [{"tool": "get_driver_standings", "args": {"year": 1994}}], "reasoning": "1994 is pre-2018, using ergast API for standings."}
    Example for "1994 Monaco race telemetry": {"steps": [], "reasoning": "Telemetry not available for 1994. Only standings and results available for pre-2018 seasons."}
+7. **TOOL SELECTION**:
+   - Use get_telemetry for comparisons and visualization queries
+   - Use get_telemetry_summary only when user explicitly asks for "stats" or "summary"
+   - Use get_fastest_lap for single lap analysis
 
 **OUTPUT FORMAT**:
 First, output your reasoning as plain text explaining your thought process.
 Then, output the JSON plan on a new line starting with "PLAN:".
 
 Example output:
-I need to compare two drivers' lap times. This requires fetching data for each driver separately. Monaco 2024 is a recent race with full telemetry available. I'll use get_laps for both VER and HAM in qualifying session.
+I need to compare two drivers' lap times. This requires fetching data for each driver separately. Monaco 2024 is a recent race with full telemetry available. I'll use get_fastest_lap for both VER and HAM in qualifying session for efficiency.
 
-PLAN: {"steps": [{"description": "Fetch lap times for Verstappen", "tool": "get_laps", "args": {"year": 2024, "gp": "Monaco", "session": "Q", "driver": "VER"}}, {"description": "Fetch lap times for Hamilton", "tool": "get_laps", "args": {"year": 2024, "gp": "Monaco", "session": "Q", "driver": "HAM"}}], "reasoning": "Fetch lap data separately for VER and HAM to enable comparison visualization."}
+PLAN: {"steps": [{"description": "Get fastest lap for Verstappen", "tool": "get_fastest_lap", "args": {"year": 2024, "gp": "Monaco", "session": "Q", "driver": "VER"}}, {"description": "Get fastest lap for Hamilton", "tool": "get_fastest_lap", "args": {"year": 2024, "gp": "Monaco", "session": "Q", "driver": "HAM"}}], "reasoning": "Using get_fastest_lap for token efficiency."}
 
 Example 2: "Compare telemetry between Lando and Oscar in Abu Dhabi 2023 race"
 The user wants telemetry comparison between two McLaren drivers. I need to get telemetry for both NOR and PIA. Since they want race data, I'll use session="R" and fetch the fastest lap for each driver.
 
-PLAN: {"steps": [{"description": "Get fastest lap telemetry for Norris", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "NOR", "lap": "fastest"}}, {"description": "Get fastest lap telemetry for Piastri", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "PIA", "lap": "fastest"}}], "reasoning": "Fetch telemetry for both McLaren drivers (NOR and PIA) for comparison."}`;
-
+PLAN: {"steps": [{"description": "Get telemetry for Norris", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "NOR", "lap": "fastest"}}, {"description": "Get telemetry for Piastri", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "PIA", "lap": "fastest"}}], "reasoning": "Using get_telemetry for visualization comparison."}`;
 // =============================================================================
 // Planner Functions
 // =============================================================================
@@ -153,7 +157,7 @@ export async function planQuery(
     try {
         validatedPlan = PlanSchema.parse(parsedPlan);
     } catch (e) {
-        validatedPlan = PlanSchema.parse(parsedPlan);
+        throw new Error(`Invalid plan format: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     // Merge extracted reasoning with plan reasoning if available

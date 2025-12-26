@@ -223,6 +223,28 @@ class TelemetryResponse(BaseModel):
     downsampled_from: int
 
 
+class ChannelSummary(BaseModel):
+    """Statistical summary for a telemetry channel."""
+    min: float
+    max: float
+    avg: float
+
+
+class TelemetrySummaryResponse(BaseModel):
+    """LLM-optimized telemetry summary response (no raw data)."""
+    driver: str
+    lap_number: int
+    lap_time: Optional[str]
+    compound: Optional[str]
+    tyre_life: Optional[int]
+    speed_summary: ChannelSummary
+    throttle_summary: ChannelSummary
+    brake_summary: ChannelSummary
+    corner_min_speeds: Optional[List[dict]] = None
+    sector_speeds: Optional[dict] = None
+    total_points_analyzed: int
+
+
 class CarDataResponse(BaseModel):
     """Response for car data."""
     driver: str
@@ -337,3 +359,15 @@ class DriverStandingsResponse(BaseModel):
     """Response for driver standings."""
     year: int
     standings: List[dict]
+
+class CornerMinSpeed(BaseModel):
+    """Minimum speed at a corner."""
+    corner: int
+    letter: str
+    min_speed: float
+
+class SectorSpeeds(BaseModel):
+    """Average speeds per sector."""
+    sector1_avg_speed: float
+    sector2_avg_speed: float
+    sector3_avg_speed: float

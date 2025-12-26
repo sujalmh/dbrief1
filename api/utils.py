@@ -50,6 +50,7 @@ def sanitize_dict(d: Dict[str, Any]) -> Dict[str, Any]:
 def sanitize_value(value: Any) -> Any:
     """
     Sanitize a single value for JSON serialization.
+    Includes precision reduction for floats (2 decimal places) to reduce token usage.
     """
     if value is None:
         return None
@@ -58,7 +59,13 @@ def sanitize_value(value: Any) -> Any:
     if isinstance(value, (np.floating,)):
         if np.isnan(value) or np.isinf(value):
             return None
-        return float(value)
+        # Precision reduction: round to 2 decimal places for token efficiency
+        return round(float(value), 2)
+    if isinstance(value, float):
+        if np.isnan(value) or np.isinf(value):
+            return None
+        # Precision reduction for native Python floats too
+        return round(value, 2)
     if isinstance(value, np.bool_):
         return bool(value)
     if isinstance(value, np.ndarray):

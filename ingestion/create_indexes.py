@@ -46,5 +46,16 @@ try:
 except Exception as e:
     print(f"⚠️  Index for 'type' might already exist: {e}")
 
+# Create index for 'source' field (keyword/string)
+try:
+    client.create_payload_index(
+        collection_name=COLLECTION_NAME,
+        field_name="source",
+        field_schema="keyword",
+    )
+    print("✅ Created index for 'source' (keyword)")
+except Exception as e:
+    print(f"⚠️  Index for 'source' might already exist: {e}")
+
 print("\n✅ Payload indexes created successfully!")
-print("\nYou can now run queries with filters on 'year' and 'type'.")
+print("\nYou can now run queries with filters on 'year', 'type', and 'source'.")

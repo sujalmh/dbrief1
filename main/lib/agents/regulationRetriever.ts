@@ -41,6 +41,7 @@ export type RagInput = z.infer<typeof RagInputSchema>;
 
 export const DocumentSchema = z.object({
     source: z.string(),
+    source_url: z.string().optional(),
     date: z.string().nullable(),
     type: z.string(),
     content: z.string(),
@@ -61,6 +62,7 @@ interface SupabaseDocument {
     year: number;
     type: string;
     source: string;
+    source_url?: string;
     date: string | null;
     content: string;
     similarity?: number;
@@ -194,6 +196,7 @@ interface QdrantPoint {
         year: number;
         type: string;
         source: string;
+        source_url?: string;
         date: string | null;
         content: string;
     };
@@ -266,6 +269,7 @@ export async function retrieveFromQdrant(
             year: point.payload.year,
             type: point.payload.type,
             source: point.payload.source,
+            source_url: point.payload.source_url,
             date: point.payload.date,
             content: point.payload.content,
             similarity: point.score,
@@ -310,6 +314,7 @@ export function deduplicateAndRank(results: SupabaseDocument[][]): Document[] {
                 // Add new document
                 documentMap.set(key, {
                     source: doc.source,
+                    source_url: doc.source_url,
                     date: doc.date,
                     type: doc.type,
                     content: doc.content,

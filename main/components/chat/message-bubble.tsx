@@ -121,7 +121,17 @@ const MessageContent = memo(function MessageContent({
     return null;
 });
 
-// Main component wrapped in React.memo for performance
+/**
+ * Render a chat message bubble with avatar, formatted content, and contextual action controls.
+ *
+ * Displays a user or assistant message with avatar, Markdown-rendered content, optional planning steps,
+ * citations, visualization trigger, and an action toolbar (copy, retry, delete). For assistant messages,
+ * entering view marks the message as active. The retry action regenerates the assistant response using
+ * the preceding user message; the copy action places the message content on the clipboard.
+ *
+ * @param message - The message to render, including role, content, optional steps, reasoning, citations, visualizationData, and error flag.
+ * @returns A JSX element representing the message bubble ready for rendering in the chat UI.
+ */
 function MessageBubbleComponent({ message }: MessageBubbleProps) {
     const isUser = message.role === "user"
     const isError = message.isError

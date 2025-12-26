@@ -4,6 +4,14 @@ import { useEffect, useRef } from "react"
 import { useChatStore } from "@/lib/store"
 import { MessageBubble } from "@/components/chat/message-bubble"
 
+/**
+ * Render the chat message list and ensure the view scrolls to the newest message.
+ *
+ * When there are no messages, renders a centered placeholder prompting to connect telemetry.
+ * When messages exist, renders each message as a MessageBubble and keeps a bottom spacer that is scrolled into view whenever messages or loading state change.
+ *
+ * @returns The rendered message list element
+ */
 export function MessageList() {
     const { messages, isLoading } = useChatStore()
     const bottomRef = useRef<HTMLDivElement>(null)

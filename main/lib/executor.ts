@@ -249,7 +249,8 @@ function parseLapTimeToSeconds(lapTime: unknown): number | null {
         }
         // Handle MM:SS.mmm
         if (parts.length === 2) {
-            const m = parseFloat(parts[0]); + const s = parseFloat(parts[1]);
+            const m = parseFloat(parts[0]);
+            const s = parseFloat(parts[1]);
             if (isNaN(m) || isNaN(s)) return null;
             return m * 60 + s;
         }

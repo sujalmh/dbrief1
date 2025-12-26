@@ -207,8 +207,8 @@ function summarizeTelemetryForLLM(data: { data: unknown[];[key: string]: unknown
         const values = points.map((p) => p[channel]).filter((v) => typeof v === "number" && !isNaN(v));
         if (values.length > 0) {
             summary[channel] = {
-                min: Math.round(Math.min(...values) * 100) / 100,
-                max: Math.round(Math.max(...values) * 100) / 100,
+                min: Math.round(values.reduce((a, b) => Math.min(a, b)) * 100) / 100,
+                max: Math.round(values.reduce((a, b) => Math.max(a, b)) * 100) / 100,
                 avg: Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100,
             };
         }

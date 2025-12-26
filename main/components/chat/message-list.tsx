@@ -3,11 +3,9 @@
 import { useEffect, useRef } from "react"
 import { useChatStore } from "@/lib/store"
 import { MessageBubble } from "@/components/chat/message-bubble"
-import { ScrollArea } from "@/components/ui/scroll-area"
 
 export function MessageList() {
     const { messages, isLoading } = useChatStore()
-    const scrollRef = useRef<HTMLDivElement>(null)
     const bottomRef = useRef<HTMLDivElement>(null)
 
     // Auto-scroll to bottom on new message
@@ -31,7 +29,7 @@ export function MessageList() {
     }
 
     return (
-        <ScrollArea className="h-full p-4" ref={scrollRef}>
+        <div className="h-full p-4">
             <div className="flex flex-col gap-6 pb-32 max-w-3xl mx-auto">
                 {messages.map((msg) => (
                     <MessageBubble key={msg.id} message={msg} />
@@ -39,6 +37,6 @@ export function MessageList() {
                 {/* Loading indicator removed in favor of MessageBubble internal state */}
                 <div ref={bottomRef} />
             </div>
-        </ScrollArea>
+        </div>
     )
 }

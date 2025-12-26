@@ -191,8 +191,71 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
         useChatStore.getState().setVisualizationData(message.visualizationData)
     }, [message.visualizationData])
 
+    const ActionsToolbar = (
+        <div className={cn(
+            "flex items-center gap-1",
+            isUser
+                ? "opacity-0 group-hover:opacity-100 transition-opacity self-center mr-2"
+                : "mt-2 justify-start"
+        )}>
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <Button
+                        variant="minimal"
+                        size="icon"
+                        className="h-7 w-7 rounded-sm hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={handleCopy}
+                    >
+                        {isCopied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span className="sr-only">Copy</span>
+                    </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px] px-2 py-1">
+                    <p>{isCopied ? "Copied!" : "Copy Message"}</p>
+                </TooltipContent>
+            </Tooltip>
+
+            {!isUser && isLastAssistant && (
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button
+                            variant="minimal"
+                            size="icon"
+                            className="h-7 w-7 rounded-sm hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                            onClick={handleRetry}
+                            disabled={isLoading}
+                        >
+                            <RotateCcw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+                            <span className="sr-only">Retry</span>
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-[10px] px-2 py-1">
+                        <p>Regenerate Response</p>
+                    </TooltipContent>
+                </Tooltip>
+            )}
+
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-sm hover:bg-muted/50 text-muted-foreground hover:text-red-500 transition-colors"
+                        onClick={() => deleteMessage(message.id)}
+                    >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span className="sr-only">Delete</span>
+                    </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-[10px] px-2 py-1">
+                    <p>Delete Message</p>
+                </TooltipContent>
+            </Tooltip>
+        </div>
+    );
+
     return (
-        <div ref={containerRef} className={cn("flex w-full gap-3 p-4", isUser ? "flex-row-reverse" : "flex-row")}>
+        <div ref={containerRef} className={cn("group flex w-full gap-3 p-4", isUser ? "flex-row-reverse" : "flex-row")}>
             <Avatar className={cn("h-8 w-8 border", isUser ? "bg-muted/50 border-[var(--f1-red)]" : "bg-background")}>
                 <AvatarFallback className={cn("text-xs font-bold", isUser ? "text-[var(--f1-red)] bg-transparent" : "bg-background text-foreground")}>
                     {isUser ? "DRV" : "PIT"}
@@ -261,66 +324,12 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
                     </div>
                 )}
 
-                {/* Message Actions Toolbar */}
-                <div className={cn(
-                    "flex items-center gap-1 mt-2",
-                    isUser ? "justify-end" : "justify-start"
-                )}>
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Button
-                                variant="minimal"
-                                size="icon"
-                                className="h-7 w-7 rounded-sm hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
-                                onClick={handleCopy}
-                            >
-                                {isCopied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
-                                <span className="sr-only">Copy</span>
-                            </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="text-[10px] px-2 py-1">
-                            <p>{isCopied ? "Copied!" : "Copy Message"}</p>
-                        </TooltipContent>
-                    </Tooltip>
-
-                    {!isUser && isLastAssistant && (
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <Button
-                                    variant="minimal"
-                                    size="icon"
-                                    className="h-7 w-7 rounded-sm hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
-                                    onClick={handleRetry}
-                                    disabled={isLoading}
-                                >
-                                    <RotateCcw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
-                                    <span className="sr-only">Retry</span>
-                                </Button>
-                            </TooltipTrigger>
-                            <TooltipContent side="bottom" className="text-[10px] px-2 py-1">
-                                <p>Regenerate Response</p>
-                            </TooltipContent>
-                        </Tooltip>
-                    )}
-
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 rounded-sm hover:bg-muted/50 text-muted-foreground hover:text-red-500 transition-colors"
-                                onClick={() => deleteMessage(message.id)}
-                            >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                <span className="sr-only">Delete</span>
-                            </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="text-[10px] px-2 py-1">
-                            <p>Delete Message</p>
-                        </TooltipContent>
-                    </Tooltip>
-                </div>
+                {/* Message Actions Toolbar - Inside for Assistant */}
+                {!isUser && ActionsToolbar}
             </div>
+
+            {/* Message Actions Toolbar - Outside for User */}
+            {isUser && ActionsToolbar}
         </div>
     )
 }

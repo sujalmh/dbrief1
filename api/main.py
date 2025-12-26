@@ -159,7 +159,44 @@ def get_event_schedule(year: int) -> pd.DataFrame:
     """Get event schedule for a year."""
     return fastf1.get_event_schedule(year)
 
-
+async def get_driver_lap(session: fastf1.core.Session, driver: str, lap_identifier: str):
+    """
+    Get a specific lap for a driver from a session.
+    
+    Args:
+        session: Loaded F1 session
+        driver: Driver code (e.g., 'VER', 'HAM')
+        lap_identifier: Either 'fastest' or a lap number as string
+        
+    Returns:
+        The requested lap (Series object)
+        
+    Raises:
+        HTTPException: If driver or lap not found
+    """
+    driver_laps = session.laps.pick_drivers(driver)
+    
+    if driver_laps.empty:
+        raise HTTPException(status_code=404, detail=f"No laps found for driver {driver}")
+    
+    # Get the specific lap
+    if lap_identifier == "fastest":
+        lap = driver_laps.pick_fastest()
+    else:
+        try:
+            lap_number = int(lap_identifier)
+            lap_df = driver_laps[driver_laps["LapNumber"] == lap_number]
+            if lap_df.empty:
+                raise HTTPException(status_code=404, detail=f"Lap {lap_number} not found for driver {driver}")
+            lap = lap_df.iloc[0]
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid lap identifier: {lap_identifier}")
+    
+    if lap is None or (hasattr(lap, 'empty') and lap.empty):
+        raise HTTPException(status_code=404, detail="No valid lap found")
+    
+    return lap
+    
 # =============================================================================
 # K. Standings Endpoint
 # =============================================================================
@@ -590,31 +627,9 @@ async def get_telemetry(request: TelemetryRequest):
     """
     try:
         session = await get_session(request.year, request.gp, request.session)
-        
-        # Get driver's laps
-        driver_laps = session.laps.pick_drivers(request.driver)
-        
-        if driver_laps.empty:
-            raise HTTPException(status_code=404, detail=f"No laps found for driver {request.driver}")
-        
-        # Get the specific lap
-        if request.lap == "fastest":
-            lap = driver_laps.pick_fastest()
-        else:
-            try:
-                lap_number = int(request.lap)
-                lap_df = driver_laps[driver_laps["LapNumber"] == lap_number]
-                if lap_df.empty:
-                    raise HTTPException(status_code=404, detail=f"Lap {lap_number} not found for driver {request.driver}")
-                lap = lap_df.iloc[0]
-            except ValueError:
-                raise HTTPException(status_code=400, detail=f"Invalid lap identifier: {request.lap}")
-        
-        if lap is None or (hasattr(lap, 'empty') and lap.empty):
-            raise HTTPException(status_code=404, detail="No valid lap found")
-        
-        # Get telemetry for the lap
+        lap = await get_driver_lap(session, request.driver, request.lap)
         telemetry = lap.get_telemetry()
+
         
         if telemetry is None or telemetry.empty:
             raise HTTPException(status_code=404, detail="No telemetry data available for this lap")
@@ -689,30 +704,7 @@ async def get_telemetry_summary(request: TelemetryRequest):
     """
     try:
         session = await get_session(request.year, request.gp, request.session)
-        
-        # Get driver's laps
-        driver_laps = session.laps.pick_drivers(request.driver)
-        
-        if driver_laps.empty:
-            raise HTTPException(status_code=404, detail=f"No laps found for driver {request.driver}")
-        
-        # Get the specific lap
-        if request.lap == "fastest":
-            lap = driver_laps.pick_fastest()
-        else:
-            try:
-                lap_number = int(request.lap)
-                lap_df = driver_laps[driver_laps["LapNumber"] == lap_number]
-                if lap_df.empty:
-                    raise HTTPException(status_code=404, detail=f"Lap {lap_number} not found for driver {request.driver}")
-                lap = lap_df.iloc[0]
-            except ValueError:
-                raise HTTPException(status_code=400, detail=f"Invalid lap identifier: {request.lap}")
-        
-        if lap is None or (hasattr(lap, 'empty') and lap.empty):
-            raise HTTPException(status_code=404, detail="No valid lap found")
-        
-        # Get telemetry for the lap
+        lap = await get_driver_lap(session, request.driver, request.lap)
         telemetry = lap.get_telemetry()
         
         if telemetry is None or telemetry.empty:

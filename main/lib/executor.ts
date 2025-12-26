@@ -241,11 +241,17 @@ function parseLapTimeToSeconds(lapTime: unknown): number | null {
         
         // Handle HH:MM:SS.mmm
         if (parts.length === 3) {
-            return (+parts[0]) * 3600 + (+parts[1]) * 60 + (+parts[2]);
+            const h = parseFloat(parts[0]);
+            const m = parseFloat(parts[1]);
+            const s = parseFloat(parts[2]);
+            if (isNaN(h) || isNaN(m) || isNaN(s)) return null;
+            return h * 3600 + m * 60 + s;
         }
         // Handle MM:SS.mmm
         if (parts.length === 2) {
-            return (+parts[0]) * 60 + (+parts[1]);
+            const m = parseFloat(parts[0]); + const s = parseFloat(parts[1]);
+            if (isNaN(m) || isNaN(s)) return null;
+            return m * 60 + s;
         }
         
         // Handle raw seconds string
@@ -440,7 +446,7 @@ export function aggregateContext(context: ExecutionContext): string {
         return "No data was retrieved from F1 tools.";
     }
 
-    // Step 1: Reduce large data structures (telemetry, laps)
+    // Step 1: Reduce large data structures (telemetry, laps, etc.)
     const reducedResults = context.results.map(reduceResultData);
 
     const sections: string[] = [];
@@ -448,44 +454,49 @@ export function aggregateContext(context: ExecutionContext): string {
     for (const result of reducedResults) {
         if (result.success && result.data) {
             sections.push(
-                `### ${result.tool} (Step ${result.step})\n\`\`\`json\n${JSON.stringify(result.data, null, 2)}\n\`\`\``
+                `### ${result.tool} (Step ${result.step})\n` +
+                "```json\n" +
+                `${JSON.stringify(result.data, null, 2)}\n` +
+                "```"
             );
         } else if (!result.success) {
             sections.push(
-                `### ${result.tool} (Step ${result.step}) - FAILED\nError: ${result.error}`
+                `### ${result.tool} (Step ${result.step}) - FAILED\n` +
+                `Error: ${result.error}`
             );
         }
     }
 
-    const summary = `**Execution Summary**: ${context.successCount}/${context.results.length} steps succeeded in ${context.totalDurationMs}ms`;
+    const summary =
+        `**Execution Summary**: ` +
+        `${context.successCount}/${context.results.length} steps succeeded ` +
+        `in ${context.totalDurationMs}ms`;
 
-    let aggregated = `${summary}\n\n${sections.join("\n\n")}`;
+    // Build progressively to avoid mid-section truncation
+    const maxChars = MAX_CONTEXT_TOKENS * CHARS_PER_TOKEN;
+    let aggregated = summary;
+    let remaining = maxChars - summary.length;
 
-    // Step 2: Check token budget and truncate if needed
+    for (const section of sections) {
+        // +2 for the double newline we add
+        const sectionSize = section.length + 2;
+
+        if (sectionSize > remaining) {
+            aggregated +=
+                "\n\n**[Context truncated due to size limits — some tool results omitted]**";
+            break;
+        }
+
+        aggregated += `\n\n${section}`;
+        remaining -= sectionSize;
+    }
+
+    // Optional safety check (logging only)
     const estimatedTokens = estimateTokens(aggregated);
-
     if (estimatedTokens > MAX_CONTEXT_TOKENS) {
-        console.warn(`[Executor] Context too large (${estimatedTokens} tokens), truncating...`);
-
-        // Truncate to fit budget (keep beginning which has summary)
-        const maxChars = MAX_CONTEXT_TOKENS * CHARS_PER_TOKEN;
-
-        // Attempt JSON-safe truncation if applicable
-        const trimmed = aggregated.trimStart();
-        const looksLikeJSON = trimmed.startsWith("{") || trimmed.startsWith("[");
-        
-        let truncated: string | null = null;
-        
-        if (looksLikeJSON) {
-            truncated = truncateJSONSafely(trimmed, maxChars);
-        }
-        
-        // Fallback to structural-safe text truncation
-        if (!truncated) {
-            truncated = truncateTextSafely(aggregated, maxChars);
-        }
-        
-        aggregated = truncated;
+        console.warn(
+            `[Executor] Context near token limit (${estimatedTokens}/${MAX_CONTEXT_TOKENS})`
+        );
     }
 
     return aggregated;

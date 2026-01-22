@@ -1,8 +1,20 @@
 """
 Create Payload Indexes in Qdrant
 =================================
-Qdrant requires indexes on payload fields used in filters.
-This script creates indexes for 'year' and 'type' fields.
+Creates all required indexes for filtering FIA documents.
+
+Indexes:
+- year (integer) - Document year
+- season (integer) - F1 season year
+- type (keyword) - Document type (decision, summons, classification, etc.)
+- category (keyword) - Category (race, regulation, etc.)
+- championship (keyword) - Championship (f1, f2, f3)
+- source (keyword) - Source filename
+- published_date (keyword) - ISO date string
+- race (keyword) - Grand Prix name
+
+Usage:
+    python create_indexes.py
 """
 
 import os
@@ -24,38 +36,36 @@ client = QdrantClient(
 
 print(f"\nCreating payload indexes for collection '{COLLECTION_NAME}'...")
 
-# Create index for 'year' field (integer)
-try:
-    client.create_payload_index(
-        collection_name=COLLECTION_NAME,
-        field_name="year",
-        field_schema="integer",
-    )
-    print("✅ Created index for 'year' (integer)")
-except Exception as e:
-    print(f"⚠️  Index for 'year' might already exist: {e}")
+# Define all indexes
+INDEXES = [
+    ("year", "integer"),
+    ("season", "integer"),
+    ("type", "keyword"),
+    ("category", "keyword"),
+    ("championship", "keyword"),
+    ("source", "keyword"),
+    ("published_date", "keyword"),
+    ("race", "keyword"),
+]
 
-# Create index for 'type' field (keyword/string)
-try:
-    client.create_payload_index(
-        collection_name=COLLECTION_NAME,
-        field_name="type",
-        field_schema="keyword",
-    )
-    print("✅ Created index for 'type' (keyword)")
-except Exception as e:
-    print(f"⚠️  Index for 'type' might already exist: {e}")
-
-# Create index for 'source' field (keyword/string)
-try:
-    client.create_payload_index(
-        collection_name=COLLECTION_NAME,
-        field_name="source",
-        field_schema="keyword",
-    )
-    print("✅ Created index for 'source' (keyword)")
-except Exception as e:
-    print(f"⚠️  Index for 'source' might already exist: {e}")
+for field_name, field_schema in INDEXES:
+    try:
+        client.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name=field_name,
+            field_schema=field_schema,
+        )
+        print(f"✅ Created index for '{field_name}' ({field_schema})")
+    except Exception as e:
+        print(f"⚠️  Index for '{field_name}' might already exist: {str(e)[:50]}")
 
 print("\n✅ Payload indexes created successfully!")
-print("\nYou can now run queries with filters on 'year', 'type', and 'source'.")
+print("\nAvailable filters:")
+print("  - year: Filter by document year (integer)")
+print("  - season: Filter by F1 season (integer)")
+print("  - type: decision | summons | classification | lap-deletion | protest | etc.")
+print("  - category: race | regulation | etc.")
+print("  - championship: f1 | f2 | f3")
+print("  - source: Filter by filename")
+print("  - published_date: Filter by ISO date (YYYY-MM-DD)")
+print("  - race: Filter by Grand Prix name")

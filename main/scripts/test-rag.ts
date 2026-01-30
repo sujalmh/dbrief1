@@ -60,7 +60,7 @@ async function main() {
 
         if (result.retrieved_documents.length === 0) {
             console.log("   ⚠️  No documents found. This might mean:");
-            console.log("      - The Supabase database is empty");
+            console.log("      - The Qdrant collection is empty");
             console.log("      - The ingestion script hasn't run yet");
             console.log("      - The query doesn't match any regulations");
         } else {

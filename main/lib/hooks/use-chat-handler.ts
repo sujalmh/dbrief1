@@ -108,7 +108,7 @@ export function useChatHandler() {
                     provider: settings.provider,
                     model: settings.model,
                     apiKey: settings.apiKey,
-                    reasoning: settings.reasoningEnabled,
+                    deepResearchMode: settings.deepResearchMode,
                     web_search: settings.webSearchEnabled,
                     sessionId: effectiveSessionId,
                     isFirstMessage

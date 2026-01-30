@@ -15,11 +15,21 @@ import {
 import type { LapDataPoint, TelemetryDataPoint, ComparisonDataPoint } from "@/lib/visualization/data-parser"
 import { useMediaQuery } from "@/lib/hooks/use-media-query"
 
+// Chart Item Interface
+interface ChartItem {
+    id: string
+    type: 'lap_times' | 'telemetry' | 'comparison'
+    data: any
+    title: string
+    description?: string
+}
+
 export function VisualizationPanel() {
     const { settings, visualizationData, visualizationWidth, updateVisualizationWidth, isVisualizationCollapsed, toggleVisualizationCollapse } = useChatStore()
     const [localWidth, setLocalWidth] = useState(visualizationWidth)
     const [isResizing, setIsResizing] = useState(false)
     const [isHoveringHandle, setIsHoveringHandle] = useState(false)
+    const [currentChartIndex, setCurrentChartIndex] = useState(0)
     const isDesktop = useMediaQuery("(min-width: 768px)")
 
     // Sync local width with store width when not resizing
@@ -68,66 +78,68 @@ export function VisualizationPanel() {
 
     // Process visualization data from store - MEMOIZED to prevent infinite loops
     const hasData = visualizationData && visualizationData.length > 0
-    // IMPORTANT: All hooks must be called before any conditional returns
-    // IMPORTANT: All hooks must be called before any conditional returns
-    const { lapData, telemetryData, comparisonData, corners } = useMemo(() => {
-        // Use Maps for deduplication
-        const lapMap = new Map<string, LapDataPoint>()
-        const telemetryMap = new Map<string, TelemetryDataPoint>()
-        const comparisonMap = new Map<string, ComparisonDataPoint>()
 
-        const laps: LapDataPoint[] = []
-        const telemetry: TelemetryDataPoint[] = []
-        const comparison: ComparisonDataPoint[] = []
+    // Process all available charts into ChartItem array
+    const charts = useMemo(() => {
+        const chartItems: ChartItem[] = []
 
         if (!hasData) {
-            return { lapData: laps, telemetryData: telemetry, comparisonData: comparison, corners: [] }
+            return chartItems
         }
 
         console.log("[VizPanel] Raw Visualization Data:", visualizationData)
 
+        // Use Maps for deduplication per chart type
+        const lapsByDriver = new Map<string, { data: LapDataPoint[], args: any }>()
+        const telemetryByDriver = new Map<string, { data: TelemetryDataPoint[], corners: any[], args: any }>()
+        const comparisonBySession = new Map<string, { data: ComparisonDataPoint[], args: any }>()
+
+        // First pass: Collect and deduplicate data
         for (const result of visualizationData) {
             if (!result.success || !result.data) continue
 
             // Handle laps data
             if (result.tool === 'get_laps' && result.data.laps) {
-                // ... (existing lap logic)
+                const driver = result.data.driver || result.args?.driver_number || 'Unknown'
+                const lapMap = new Map<string, LapDataPoint>()
+
                 for (const lap of result.data.laps) {
                     const lapNumber = parseInt(lap.lap_number || lap.LapNumber || '0')
                     const lapTime = parseLapTime(lap.lap_time || lap.LapTime || '0')
-                    const driver = lap.driver || lap.Driver || result.data.driver
+                    const driverCode = lap.driver || lap.Driver || driver
 
-                    // Only add if valid numbers
                     if (!isNaN(lapNumber) && !isNaN(lapTime) && lapTime > 0) {
-                        // Key: Driver + Lap (e.g. "VER-1")
-                        const key = `${driver}-${lapNumber}`
+                        const key = `${driverCode}-${lapNumber}`
                         if (!lapMap.has(key)) {
                             lapMap.set(key, {
                                 lap: lapNumber,
                                 time: lapTime,
-                                driver,
+                                driver: driverCode,
                                 compound: lap.compound || lap.Compound
                             })
                         }
                     }
                 }
+
+                if (lapMap.size > 0) {
+                    const existing = lapsByDriver.get(driver) || { data: [], args: result.args }
+                    existing.data.push(...Array.from(lapMap.values()))
+                    lapsByDriver.set(driver, existing)
+                }
             }
 
             // Handle telemetry data
             if (result.tool === 'get_telemetry' && result.data.data) {
-                // ... (existing telemetry logic)
-                const driverCode = result.data.driver || 'Unknown'
-                for (const point of result.data.data) {
-                    // Start of fix: Helper for case-insensitive lookup
-                    const getVal = (k1: string, k2: string) => point[k1] !== undefined ? point[k1] : point[k2];
+                const driver = result.data.driver || result.args?.driver_number || 'Unknown'
+                const telemetryMap = new Map<string, TelemetryDataPoint>()
 
+                for (const point of result.data.data) {
+                    const getVal = (k1: string, k2: string) => point[k1] !== undefined ? point[k1] : point[k2]
                     const distance = parseFloat(getVal('Distance', 'distance') || '0')
 
                     if (!isNaN(distance)) {
-                        // Key: Driver + Distance (e.g. "VER-100.5")
-                        const key = `${driverCode}-${distance.toFixed(1)}`
+                        const key = `${driver}-${distance.toFixed(1)}`
                         if (!telemetryMap.has(key)) {
-                            // Helper for safe parsing
                             const parseTelemetryValue = (val: any) => {
                                 if (val === true) return 100
                                 if (val === false) return 0
@@ -141,17 +153,28 @@ export function VisualizationPanel() {
                                 throttle: parseTelemetryValue(getVal('Throttle', 'throttle')),
                                 brake: parseTelemetryValue(getVal('Brake', 'brake')),
                                 gear: parseInt(getVal('nGear', 'gear') || '0') || 0,
-                                driver: driverCode
+                                driver
                             })
                         }
                     }
+                }
+
+                if (telemetryMap.size > 0) {
+                    const existing = telemetryByDriver.get(driver) || {
+                        data: [] as TelemetryDataPoint[],
+                        corners: result.data?.corners || [],
+                        args: result.args
+                    }
+                    existing.data.push(...Array.from(telemetryMap.values()))
+                    if (result.data?.corners && result.data.corners.length > 0) {
+                        existing.corners = result.data.corners
+                    }
+                    telemetryByDriver.set(driver, existing)
                 }
             }
 
             // Handle comparison data (qualifying/race results)
             if ((result.tool === 'get_qualifying' || result.tool === 'get_race') && result.data.results) {
-                // Priority 1: Use explicit 'year' argument from tool call (most robust)
-                // Priority 2: Extract from session name
                 let season = result.args?.year?.toString()
 
                 if (!season) {
@@ -160,19 +183,12 @@ export function VisualizationPanel() {
                     season = yearMatch ? yearMatch[1] : undefined
                 }
 
-                // Determine session type for clearer labeling
                 let sessionType = 'Race'
                 if (result.tool === 'get_qualifying') sessionType = 'Qualifying'
                 else if (result.args?.session === 'Q' || result.args?.session === 'Qualifying') sessionType = 'Qualifying'
 
-                // Construct a unique season label (e.g. "2024 (Race)", "2024 (Qualifying)")
-                // This ensures that if we have both race and quali data, they don't overwrite each other in the chart
-                const seasonLabel = season ? `${season} (${sessionType})` : sessionType
-
-                console.log(`[VizPanel] Processing results for: ${seasonLabel}`, {
-                    args: result.args,
-                    sessionName: result.data.session_name
-                })
+                const sessionLabel = season ? `${season} (${sessionType})` : sessionType
+                const comparisonMap = new Map<string, ComparisonDataPoint>()
 
                 for (const r of result.data.results) {
                     const driver = r.driver || r.Driver || r.Abbreviation || 'Unknown'
@@ -181,49 +197,104 @@ export function VisualizationPanel() {
                     const label = r.team || r.TeamName || ''
 
                     if (!isNaN(value)) {
-                        // Key: Driver + SeasonLabel + Value
-                        // This allows same driver to appear for multiple seasons AND multiple session types
-                        const key = `${driver}-${seasonLabel}-${value}`
+                        const key = `${driver}-${sessionLabel}-${value}`
                         if (!comparisonMap.has(key)) {
                             comparisonMap.set(key, {
                                 driver,
                                 value,
                                 label,
-                                season: seasonLabel
+                                season: sessionLabel
                             })
                         }
                     }
                 }
+
+                if (comparisonMap.size > 0) {
+                    const existing = comparisonBySession.get(sessionLabel) || { data: [], args: result.args }
+                    existing.data.push(...Array.from(comparisonMap.values()))
+                    comparisonBySession.set(sessionLabel, existing)
+                }
             }
         }
 
-        const stats = {
-            lapData: Array.from(lapMap.values()),
-            telemetryData: Array.from(telemetryMap.values()),
-            comparisonData: Array.from(comparisonMap.values()),
-            corners: [] as any[] // Start with empty array
-        }
+        // Second pass: Create ChartItem objects with titles
+        let chartId = 0
 
-        // Second pass: Find first valid corners data from telemetry results
-        // We do this after the loop or inside, but doing it here ensures we just grab one valid set
-        for (const result of visualizationData) {
-            if (result.tool === 'get_telemetry' && result.data?.corners && result.data.corners.length > 0) {
-                stats.corners = result.data.corners
-                break // Only need one set of corners for the track
-            }
-        }
+        // Create Lap Times charts (one per driver or combined)
+        lapsByDriver.forEach((lapInfo, driver) => {
+            const drivers = Array.from(new Set(lapInfo.data.map(d => d.driver)))
+            const lapRange = lapInfo.data.length > 0
+                ? `${Math.min(...lapInfo.data.map(d => d.lap))}-${Math.max(...lapInfo.data.map(d => d.lap))}`
+                : 'N/A'
 
-        console.log("[VizPanel] Processed Data:", stats)
-        return stats
+            const title = drivers.length > 1
+                ? `Lap Times: ${drivers.join(', ')} (Laps ${lapRange})`
+                : `Lap Times: ${driver} (Laps ${lapRange})`
+
+            chartItems.push({
+                id: `lap-${chartId++}`,
+                type: 'lap_times',
+                data: lapInfo.data,
+                title,
+                description: `${lapInfo.data.length} laps`
+            })
+        })
+
+        // Create Telemetry charts (one per driver)
+        telemetryByDriver.forEach((telemetryInfo, driver) => {
+            const lapNumber = telemetryInfo.args?.lap_number || 'N/A'
+            const title = `Telemetry: ${driver} - Lap ${lapNumber}`
+
+            chartItems.push({
+                id: `telemetry-${chartId++}`,
+                type: 'telemetry',
+                data: { telemetry: telemetryInfo.data, corners: telemetryInfo.corners },
+                title,
+                description: `${telemetryInfo.data.length} data points`
+            })
+        })
+
+        // Create Comparison charts (one per session)
+        comparisonBySession.forEach((comparisonInfo, session) => {
+            const drivers = Array.from(new Set(comparisonInfo.data.map(d => d.driver)))
+            const title = `Comparison: ${session}`
+
+            chartItems.push({
+                id: `comparison-${chartId++}`,
+                type: 'comparison',
+                data: comparisonInfo.data,
+                title,
+                description: `${drivers.length} drivers`
+            })
+        })
+
+        console.log("[VizPanel] Generated Charts:", chartItems)
+        return chartItems
     }, [visualizationData, hasData])
+
+    // Reset chart index when charts change
+    useEffect(() => {
+        if (currentChartIndex >= charts.length && charts.length > 0) {
+            setCurrentChartIndex(0)
+        }
+    }, [charts, currentChartIndex])
 
     // NOW we can do conditional returns - after all hooks are called
     if (!settings.visualizeEnabled) {
         return null
     }
 
+    // Carousel navigation handlers
+    const handlePrevChart = () => {
+        setCurrentChartIndex(prev => (prev > 0 ? prev - 1 : charts.length - 1))
+    }
+
+    const handleNextChart = () => {
+        setCurrentChartIndex(prev => (prev < charts.length - 1 ? prev + 1 : 0))
+    }
+
     const renderChart = () => {
-        if (!hasData) {
+        if (charts.length === 0) {
             return (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
                     <BarChart3 className="h-16 w-16 mb-4 opacity-20" />
@@ -237,24 +308,103 @@ export function VisualizationPanel() {
             )
         }
 
-        // Try to render based on available data
-        if (lapData.length > 0) {
-            return <LapTimesChart data={lapData} />
-        }
+        const currentChart = charts[currentChartIndex]
 
-        if (telemetryData.length > 0) {
-            return <TelemetryChart data={telemetryData} corners={corners} />
-        }
-
-        if (comparisonData.length > 0) {
-            return <ComparisonChart data={comparisonData} />
+        if (!currentChart) {
+            return (
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
+                    <X className="h-12 w-12 mb-2 opacity-50" />
+                    <p className="text-sm">No visualizable data in results</p>
+                    <p className="text-xs mt-1 opacity-50">Try queries about laps, telemetry, or results</p>
+                </div>
+            )
         }
 
         return (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8">
-                <X className="h-12 w-12 mb-2 opacity-50" />
-                <p className="text-sm">No visualizable data in results</p>
-                <p className="text-xs mt-1 opacity-50">Try queries about laps, telemetry, or results</p>
+            <div className="flex flex-col h-full">
+                {/* Chart Title */}
+                <div className="px-4 pb-3 border-b border-border/50">
+                    <h3 className="font-bold text-base uppercase tracking-wide text-foreground">
+                        {currentChart.title}
+                    </h3>
+                    {currentChart.description && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                            {currentChart.description}
+                        </p>
+                    )}
+                </div>
+
+                {/* Chart Content */}
+                <div className="flex-1 overflow-auto">
+                    {currentChart.type === 'lap_times' && (
+                        <LapTimesChart data={currentChart.data} />
+                    )}
+                    {currentChart.type === 'telemetry' && (
+                        <TelemetryChart
+                            data={currentChart.data.telemetry}
+                            corners={currentChart.data.corners || []}
+                        />
+                    )}
+                    {currentChart.type === 'comparison' && (
+                        <ComparisonChart data={currentChart.data} />
+                    )}
+                </div>
+
+                {/* Carousel Navigation - Only show if multiple charts */}
+                {charts.length > 1 && (
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-border/50 bg-muted/5">
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={handlePrevChart}
+                                    className="h-9 w-9"
+                                >
+                                    <ChevronLeft className="h-5 w-5" />
+                                    <span className="sr-only">Previous Chart</span>
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                <p>Previous Chart</p>
+                            </TooltipContent>
+                        </Tooltip>
+
+                        {/* Dots Indicator */}
+                        <div className="flex items-center gap-2">
+                            {charts.map((_, index) => (
+                                <button
+                                    key={index}
+                                    onClick={() => setCurrentChartIndex(index)}
+                                    className={cn(
+                                        "h-2 w-2 rounded-full transition-all duration-200",
+                                        index === currentChartIndex
+                                            ? "bg-[var(--f1-red)] w-6"
+                                            : "bg-muted-foreground/30 hover:bg-muted-foreground/50"
+                                    )}
+                                    aria-label={`Go to chart ${index + 1}`}
+                                />
+                            ))}
+                        </div>
+
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={handleNextChart}
+                                    className="h-9 w-9"
+                                >
+                                    <ChevronRight className="h-5 w-5" />
+                                    <span className="sr-only">Next Chart</span>
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                <p>Next Chart</p>
+                            </TooltipContent>
+                        </Tooltip>
+                    </div>
+                )}
             </div>
         )
     }
@@ -325,6 +475,12 @@ export function VisualizationPanel() {
                 <div className="flex items-center gap-2">
                     <BarChart3 className="h-5 w-5 text-[var(--f1-yellow)]" />
                     <h2 className="font-bold text-sm uppercase tracking-wider">Visualization</h2>
+                    {/* Research Mode Indicator */}
+                    {settings.deepResearchMode && (
+                        <span className="ml-2 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            Deep Research
+                        </span>
+                    )}
                 </div>
                 <Tooltip>
                     <TooltipTrigger asChild>
@@ -353,13 +509,12 @@ export function VisualizationPanel() {
             </div>
 
             {/* Footer Info */}
-            {hasData && (
+            {charts.length > 0 && (
                 <div className="p-3 border-t border-border bg-muted/10 shrink-0">
                     <div className="text-xs text-muted-foreground flex justify-between items-center">
                         <div>
-                            {lapData.length > 0 && `${lapData.length} laps`}
-                            {telemetryData.length > 0 && ` • ${telemetryData.length} telemetry points`}
-                            {comparisonData.length > 0 && ` • ${new Set(comparisonData.map(d => d.driver)).size} drivers`}
+                            {charts.length === 1 ? '1 chart' : `${charts.length} charts`}
+                            {charts.length > 1 && ` • ${currentChartIndex + 1}/${charts.length}`}
                         </div>
                         <div className="text-[10px] opacity-40">
                             {Math.round(localWidth)}px

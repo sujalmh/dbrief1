@@ -15,7 +15,7 @@ import { ragRetrieve, RagInputSchema } from "@/lib/agents/regulationRetriever";
 
 /**
  * Regulation retrieval tool for FIA documents
- * Retrieves relevant regulation chunks from Supabase vector store
+ * Retrieves relevant regulation chunks from Qdrant vector store
  */
 export const regulationRetrieveTool = tool(
     async ({ query, year, type }) => {

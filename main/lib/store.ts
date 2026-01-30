@@ -28,7 +28,7 @@ interface Settings {
     model: string
     temperature: number
     maxTokens: number
-    reasoningEnabled: boolean
+    deepResearchMode: boolean
     webSearchEnabled: boolean
     visualizeEnabled: boolean
     developerMode: boolean
@@ -96,7 +96,7 @@ const defaultSettings: Settings = {
     model: 'qwen/qwen3-coder:free',
     temperature: 0.7,
     maxTokens: 1000,
-    reasoningEnabled: false,
+    deepResearchMode: false,
     webSearchEnabled: false,
     visualizeEnabled: false,
     developerMode: false,

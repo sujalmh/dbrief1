@@ -28,6 +28,7 @@ import { f1Tools } from "@/lib/tools/fastf1";
 import { getSearchTools } from "@/lib/tools/search";
 import { getVisualizationTools } from "@/lib/tools/visualization";
 import { getRegulationTools } from "@/lib/tools/regulation";
+import { getSimulationTools } from "@/lib/tools/simulation";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { FieldValue } from "firebase-admin/firestore";
 
@@ -40,7 +41,7 @@ const ChatRequestSchema = z.object({
     provider: z.enum(["gemini", "openrouter", "huggingface"]).default("gemini"),
     model: z.string().default("gemini-2.0-flash"),
     apiKey: z.string().optional(),
-    reasoning: z.boolean().default(false),
+    deepResearchMode: z.boolean().default(false),
     web_search: z.boolean().default(false),
     images: z.array(z.string()).default([]),
     sessionId: z.string().optional(),
@@ -157,7 +158,7 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        const { message, provider, model, apiKey, reasoning, web_search, sessionId, isFirstMessage } = validationResult.data as ChatRequest;
+        const { message, provider, model, apiKey, deepResearchMode, web_search, sessionId, isFirstMessage } = validationResult.data as ChatRequest;
 
         // If sessionId is provided, and we have userId, verify ownership (optional but recommended)
         // SKIPPED: Admin SDK credentials missing in local dev. Client-side rules are verified by Firebase.
@@ -181,7 +182,7 @@ export async function POST(request: NextRequest) {
                     let plannerModel, responderModel;
                     try {
                         plannerModel = await getPlannerModel(provider as Provider, apiKey);
-                        responderModel = await getResponderModel(provider as Provider, model, reasoning, apiKey);
+                        responderModel = await getResponderModel(provider as Provider, model, deepResearchMode, apiKey);
                     } catch (error) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
@@ -193,11 +194,14 @@ export async function POST(request: NextRequest) {
                     // 2. Plan Query with Streaming Reasoning
                     let plan: Plan;
                     try {
+                        // In Deep Research Mode, force web search to be enabled
+                        const effectiveWebSearch = deepResearchMode ? true : web_search;
+
                         plan = await streamPlanQuery(
                             plannerModel,
                             message,
-                            web_search,
-                            reasoning,
+                            effectiveWebSearch,
+                            deepResearchMode,
                             (token) => {
                                 // Stream reasoning tokens to frontend
                                 sendEvent("reasoning", { token });
@@ -211,12 +215,24 @@ export async function POST(request: NextRequest) {
                     // Send plan to frontend
                     sendEvent("plan", { steps: plan.steps });
 
-                    // 3. Execute Plan
-                    const tools = {
-                        ...f1Tools,
-                        ...getRegulationTools(),
-                        ...(web_search ? getSearchTools() : {}),
-                    };
+                    // 3. Execute Plan with mode-specific tools
+                    let tools: Record<string, any>;
+
+                    if (deepResearchMode) {
+                        // Deep Research Mode: All agents enabled
+                        tools = {
+                            ...f1Tools,
+                            ...getRegulationTools(),
+                            ...getSimulationTools(),
+                            ...getSearchTools(), // Always include in deep mode
+                        };
+                    } else {
+                        // Normal Mode: Limited agents only (Data API + Retrieval)
+                        tools = {
+                            ...f1Tools,
+                            ...getRegulationTools(),
+                        };
+                    }
 
                     const executionContext = await executeSteps(
                         plan.steps,

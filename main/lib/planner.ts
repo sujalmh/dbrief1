@@ -57,6 +57,14 @@ Available Tools (FastAPI):
 - retrieve_regulations(query, year, type): Search FIA regulation documents (sporting, technical, financial). Returns relevant regulation chunks with source citations.
 - web_search(query): For news/current events ONLY.
 
+Simulation Tool:
+- run_simulation(scenario_id, horizon, metric, iterations?, base_value?, variance?, seed?): Run counterfactual/predictive simulations for "what-if" analysis.
+  * horizon: "lap" | "race" | "season" | "custom"
+  * metric: "time" (lap times), "points" (0-25 per race), "gap" (performance delta), "position" (1-20), "score" (0-100)
+  * base_value: Expected/average value. For "gap" use negative = faster (e.g., -2.5 means 2.5s faster per lap)
+  * variance: Standard deviation for randomness
+  * Returns: Statistical summary (mean, min, max, percentiles)
+
 Common Driver Codes (2024):
 - Max Verstappen: VER | Lewis Hamilton: HAM | Fernando Alonso: ALO
 - Charles Leclerc: LEC | Carlos Sainz: SAI | Sergio Perez: PER
@@ -89,6 +97,16 @@ Rules:
    - Use get_telemetry for comparisons and visualization queries
    - Use get_telemetry_summary only when user explicitly asks for "stats" or "summary"
    - Use get_fastest_lap for single lap analysis
+8. **WHAT-IF / HYPOTHETICAL QUERIES**: Use run_simulation for:
+   - "What if X didn't happen?" (counterfactuals)
+   - "What would happen if...?" (predictions)
+   - "How would X affect Y?" (impact analysis)
+   - "Simulate...", "Project...", "Predict..." queries
+   DO NOT use LLM reasoning for hypotheticals. Always use run_simulation with appropriate parameters.
+9. **DATA-DRIVEN SIMULATIONS**: For what-if queries about specific races/events:
+   - Step 1: Fetch relevant historical data (get_laps, get_race, etc.) to ground the simulation
+   - Step 2: Run simulation with base_value/variance informed by the fetched data
+   This ensures simulations are based on REAL data, not guessed parameters.
 
 **OUTPUT FORMAT**:
 First, output your reasoning as plain text explaining your thought process.
@@ -102,7 +120,22 @@ PLAN: {"steps": [{"description": "Get fastest lap for Verstappen", "tool": "get_
 Example 2: "Compare telemetry between Lando and Oscar in Abu Dhabi 2023 race"
 The user wants telemetry comparison between two McLaren drivers. I need to get telemetry for both NOR and PIA. Since they want race data, I'll use session="R" and fetch the fastest lap for each driver.
 
-PLAN: {"steps": [{"description": "Get telemetry for Norris", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "NOR", "lap": "fastest"}}, {"description": "Get telemetry for Piastri", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "PIA", "lap": "fastest"}}], "reasoning": "Using get_telemetry for visualization comparison."}`;
+PLAN: {"steps": [{"description": "Get telemetry for Norris", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "NOR", "lap": "fastest"}}, {"description": "Get telemetry for Piastri", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "PIA", "lap": "fastest"}}], "reasoning": "Using get_telemetry for visualization comparison."}
+
+Example 3: "What if Abu Dhabi 2021 didn't end under safety car?"
+This is a data-driven counterfactual. First I need to fetch the actual lap times around lap 53 (when SC was deployed) to see the real gap. Then simulate what would have happened without the SC.
+
+PLAN: {"steps": [{"description": "Get HAM laps before safety car", "tool": "get_laps", "args": {"year": 2021, "gp": "Abu Dhabi", "session": "R", "driver": "HAM", "lap_start": 50, "lap_end": 55}}, {"description": "Get VER laps before safety car", "tool": "get_laps", "args": {"year": 2021, "gp": "Abu Dhabi", "session": "R", "driver": "VER", "lap_start": 50, "lap_end": 55}}, {"description": "Simulate race finish without SC", "tool": "run_simulation", "args": {"scenario_id": "abu-dhabi-21-no-sc", "horizon": "race", "metric": "gap", "base_value": 12.0, "variance": 2.0, "iterations": 1000}}], "reasoning": "Fetching real lap data to ground simulation. HAM had ~12s lead before SC."}
+
+Example 4: "Show telemetry for Lando and Oscar in Monaco 2024"
+The user wants to see telemetry for two drivers separately. Using "show" indicates they want individual visualizations for each driver, not a single comparison. I'll fetch telemetry for both NOR and PIA separately, which will create two distinct charts.
+
+PLAN: {"steps": [{"description": "Get telemetry for Norris", "tool": "get_telemetry", "args": {"year": 2024, "gp": "Monaco", "session": "Q", "driver": "NOR", "lap": "fastest"}}, {"description": "Get telemetry for Piastri", "tool": "get_telemetry", "args": {"year": 2024, "gp": "Monaco", "session": "Q", "driver": "PIA", "lap": "fastest"}}], "reasoning": "Separate telemetry calls create individual charts in the visualization carousel."}
+
+Example 5: "Compare qualifying results for Monaco 2024"
+The user wants a comparison of all drivers in qualifying. A single call to get_qualifying will return all results, and the frontend will create a comparison chart showing all drivers.
+
+PLAN: {"steps": [{"description": "Get qualifying results", "tool": "get_qualifying", "args": {"year": 2024, "gp": "Monaco"}}], "reasoning": "Single qualifying call provides comparison data for all drivers in one chart."}`;
 // =============================================================================
 // Planner Functions
 // =============================================================================
@@ -119,7 +152,7 @@ export async function planQuery(
     model: BaseChatModel,
     message: string,
     webSearchEnabled: boolean = false,
-    reasoningMode: boolean = false
+    deepResearchMode: boolean = false
 ): Promise<Plan> {
     // Build the system prompt with web search context
     let systemPrompt = PLANNER_SYSTEM_PROMPT;
@@ -130,7 +163,7 @@ export async function planQuery(
         systemPrompt += "\n\n**NOTE: Web search is DISABLED. Do not use the web_search tool.**";
     }
 
-    if (reasoningMode) {
+    if (deepResearchMode) {
         systemPrompt = systemPrompt.replace("MAX 5 steps total", "MAX 25 steps total. Create as many steps as needed for a comprehensive analysis.");
     }
 
@@ -176,7 +209,7 @@ export async function planQuery(
     }
 
     // Enforce max steps based on mode
-    const maxSteps = reasoningMode ? 25 : 5;
+    const maxSteps = deepResearchMode ? 25 : 5;
     if (validatedPlan.steps.length > maxSteps) {
         validatedPlan.steps = validatedPlan.steps.slice(0, maxSteps);
     }
@@ -198,7 +231,7 @@ export async function streamPlanQuery(
     model: BaseChatModel,
     message: string,
     webSearchEnabled: boolean = false,
-    reasoningMode: boolean = false,
+    deepResearchMode: boolean = false,
     onReasoningToken?: (token: string) => void
 ): Promise<Plan> {
     // Build the system prompt with web search context
@@ -210,7 +243,7 @@ export async function streamPlanQuery(
         systemPrompt += "\n\n**NOTE: Web search is DISABLED. Do not use the web_search tool.**";
     }
 
-    if (reasoningMode) {
+    if (deepResearchMode) {
         systemPrompt = systemPrompt.replace("MAX 5 steps total", "MAX 25 steps total. Create as many steps as needed for a comprehensive analysis.");
     }
 
@@ -265,8 +298,9 @@ export async function streamPlanQuery(
         );
     }
 
+
     // Enforce max steps based on mode
-    const maxSteps = reasoningMode ? 25 : 5;
+    const maxSteps = deepResearchMode ? 25 : 5;
     if (validatedPlan.steps.length > maxSteps) {
         validatedPlan.steps = validatedPlan.steps.slice(0, maxSteps);
     }

@@ -3,7 +3,7 @@
  * ==========================
  * RAG retrieval module for FIA regulation documents.
  * Accepts queries from the planner, generates sub-queries,
- * performs vector search in Supabase, and returns structured evidence.
+ * performs vector search in Qdrant, and returns structured evidence.
  *
  * This module is:
  * - Server-side only
@@ -55,9 +55,9 @@ export const RagOutputSchema = z.object({
 
 export type RagOutput = z.infer<typeof RagOutputSchema>;
 
-// Internal type for Supabase RPC response
-interface SupabaseDocument {
-    id: number;
+// Internal type for document representation
+interface RetrievedDocument {
+    id: number | string;
     year: number;
     type: string;
     source: string;
@@ -217,7 +217,7 @@ export async function retrieveFromQdrant(
     year: number,
     type: string,
     matchCount: number = DEFAULT_MATCH_COUNT
-): Promise<SupabaseDocument[]> {
+): Promise<RetrievedDocument[]> {
     const qdrantUrl = process.env.QDRANT_URL;
     const qdrantApiKey = process.env.QDRANT_API_KEY;
 
@@ -291,7 +291,7 @@ interface RankedDocument extends Document {
  * @param results - Array of document arrays from each sub-query
  * @returns Deduplicated and ranked array of documents (top N)
  */
-export function deduplicateAndRank(results: SupabaseDocument[][]): Document[] {
+export function deduplicateAndRank(results: RetrievedDocument[][]): Document[] {
     // Track document occurrences and their original order
     const documentMap = new Map<string, RankedDocument>();
 
@@ -342,7 +342,7 @@ export function deduplicateAndRank(results: SupabaseDocument[][]): Document[] {
  * Orchestrates:
  * 1. Sub-query generation
  * 2. Embedding generation for each sub-query
- * 3. Vector search in Supabase for each sub-query
+ * 3. Vector search in Qdrant for each sub-query
  * 4. Deduplication and ranking of results
  *
  * @param input - The RAG input containing query, year, and type

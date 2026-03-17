@@ -33,7 +33,7 @@ export function ControlPanel() {
     return (
         <div className="flex items-center justify-between w-full pt-2">
             <div className="flex items-center gap-1">
-                {/* Reasoning Toggle */}
+                {/* Deep Research Mode Toggle (repurposed from Reasoning) */}
                 <Tooltip>
                     <TooltipTrigger asChild>
                         <Button
@@ -41,43 +41,45 @@ export function ControlPanel() {
                             size="icon"
                             onClick={() =>
                                 updateSettings({
-                                    reasoningEnabled: !settings.reasoningEnabled,
+                                    deepResearchMode: !settings.deepResearchMode,
                                 })
                             }
                             className="btn-wheel btn-wheel-purple h-8 w-8"
-                            data-active={settings.reasoningEnabled}
+                            data-active={settings.deepResearchMode}
                         >
                             <Brain className="h-4 w-4" />
                         </Button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom">
-                        <p>Reasoning</p>
+                        <p>{settings.deepResearchMode ? "Deep Research Mode" : "Normal Mode"}</p>
                     </TooltipContent>
                 </Tooltip>
 
-                {/* Web Search Toggle */}
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() =>
-                                updateSettings({
-                                    webSearchEnabled: !settings.webSearchEnabled,
-                                })
-                            }
-                            className="btn-wheel btn-wheel-green h-8 w-8"
-                            data-active={settings.webSearchEnabled}
-                        >
-                            <Globe className="h-4 w-4" />
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                        <p>Web Search</p>
-                    </TooltipContent>
-                </Tooltip>
+                {/* Web Search Toggle - Only visible in Deep Research Mode */}
+                {settings.deepResearchMode && (
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() =>
+                                    updateSettings({
+                                        webSearchEnabled: !settings.webSearchEnabled,
+                                    })
+                                }
+                                className="btn-wheel btn-wheel-green h-8 w-8"
+                                data-active={settings.webSearchEnabled}
+                            >
+                                <Globe className="h-4 w-4" />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                            <p>Web Search</p>
+                        </TooltipContent>
+                    </Tooltip>
+                )}
 
-                {/* Visualization Toggle */}
+                {/* Visualization Toggle - Always visible */}
                 <Tooltip>
                     <TooltipTrigger asChild>
                         <Button

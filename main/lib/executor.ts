@@ -232,13 +232,13 @@ function summarizeTelemetryForLLM(data: { data: unknown[];[key: string]: unknown
  */
 function parseLapTimeToSeconds(lapTime: unknown): number | null {
     if (typeof lapTime === 'number') return lapTime;
-    
+
     if (typeof lapTime === 'string') {
         // Clean potential "0 days " prefix (common in Python timedelta stringification)
         const cleanTime = lapTime.replace("0 days ", "").trim();
-        
+
         const parts = cleanTime.split(':');
-        
+
         // Handle HH:MM:SS.mmm
         if (parts.length === 3) {
             const h = parseFloat(parts[0]);
@@ -254,12 +254,12 @@ function parseLapTimeToSeconds(lapTime: unknown): number | null {
             if (isNaN(m) || isNaN(s)) return null;
             return m * 60 + s;
         }
-        
+
         // Handle raw seconds string
         const num = parseFloat(cleanTime);
         return isNaN(num) ? null : num;
     }
-    
+
     return null;
 }
 
@@ -278,10 +278,10 @@ function summarizeLapsForLLM(data: { laps: unknown[];[key: string]: unknown }): 
     const fastestLap = laps.reduce((fastest, lap) => {
         const currentSec = parseLapTimeToSeconds(lap.LapTime);
         const fastestSec = parseLapTimeToSeconds(fastest.LapTime);
-    
+
         if (currentSec === null) return fastest;
         if (fastestSec === null) return lap;
-    
+
         return currentSec < fastestSec ? lap : fastest;
     }, laps[0]);
 
@@ -291,11 +291,11 @@ function summarizeLapsForLLM(data: { laps: unknown[];[key: string]: unknown }): 
         .filter((t): t is number => t !== null && t > 0);
 
     let averageLapTimeStr = "N/A";
-    
+
     if (validLapSeconds.length > 0) {
         const totalSeconds = validLapSeconds.reduce((a, b) => a + b, 0);
         const avgSeconds = totalSeconds / validLapSeconds.length;
-        
+
         // Format back to MM:SS.mmm for readability
         const mins = Math.floor(avgSeconds / 60);
         const secs = (avgSeconds % 60).toFixed(3);
@@ -347,100 +347,6 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
     return result;
 }
 
-// =============================================================================
-// Safe Truncation Utilities
-// =============================================================================
-
-const TRUNCATION_NOTICE = "\n\n**[Context truncated due to size limits]**";
-
-function fitsBudget(text: string, maxChars: number): boolean {
-    return text.length + TRUNCATION_NOTICE.length <= maxChars;
-}
-
-function tryParseJSON(text: string): unknown | null {
-    try {
-        return JSON.parse(text);
-    } catch {
-        return null;
-    }
-}
-
-function safeJSONStringify(value: unknown): string {
-    return JSON.stringify(value, null, 2);
-}
-
-/**
- * Truncate JSON safely by removing whole top-level elements
- */
-function truncateJSONSafely(
-    jsonText: string,
-    maxChars: number
-): string | null {
-    const parsed = tryParseJSON(jsonText);
-    if (!parsed) return null;
-
-    // Case 1: Top-level array → drop items from the end
-    if (Array.isArray(parsed)) {
-        const arr = [...parsed];
-        while (arr.length > 0) {
-            const candidate = safeJSONStringify(arr);
-            if (fitsBudget(candidate, maxChars)) {
-                return candidate + TRUNCATION_NOTICE;
-            }
-            arr.pop();
-        }
-        return null;
-    }
-
-    // Case 2: Top-level object → drop least-important keys (heuristic: last keys)
-    if (typeof parsed === "object" && parsed !== null) {
-        const entries = Object.entries(parsed);
-        const reduced: Record<string, unknown> = {};
-
-        for (const [k, v] of entries) {
-            reduced[k] = v;
-        }
-
-        while (Object.keys(reduced).length > 0) {
-            const candidate = safeJSONStringify(reduced);
-            if (fitsBudget(candidate, maxChars)) {
-                return candidate + TRUNCATION_NOTICE;
-            }
-            const lastKey = Object.keys(reduced).at(-1);
-            if (!lastKey) break;
-            delete reduced[lastKey];
-        }
-    }
-
-    return null;
-}
-
-/**
- * Truncate non-JSON text at safe structural boundaries
- */
-function truncateTextSafely(text: string, maxChars: number): string {
-    const limit = maxChars - TRUNCATION_NOTICE.length;
-    if (limit <= 0) return TRUNCATION_NOTICE;
-
-    const slice = text.slice(0, limit);
-
-    const boundaries = [
-        slice.lastIndexOf("\n\n"),
-        slice.lastIndexOf("\n"),
-        slice.lastIndexOf("```"),
-        slice.lastIndexOf("}"),
-        slice.lastIndexOf("]")
-    ].filter(i => i > 0);
-
-    const cut = boundaries.length > 0 ? Math.max(...boundaries) : -1;
-
-    if (cut > 0) {
-        return slice.slice(0, cut) + TRUNCATION_NOTICE;
-    }
-
-    // Absolute last resort
-    return slice + TRUNCATION_NOTICE;
-}
 
 export function aggregateContext(context: ExecutionContext): string {
     if (context.results.length === 0) {

@@ -12,7 +12,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from dotenv import load_dotenv
 
 import openai
-from supabase import create_client, Client
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
+import uuid
 
 # Configure Logging
 logging.basicConfig(
@@ -22,23 +24,29 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Load Environment Variables
-load_dotenv()
+load_dotenv(dotenv_path="main/.env.local")
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-    raise ValueError("Missing Supabase credentials in .env")
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
 if not OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY not found in .env. Embeddings will fail.")
 
+if not QDRANT_URL or not QDRANT_API_KEY:
+    raise ValueError("Missing Qdrant credentials in .env")
+
 # Initialize Clients
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+# Initialize Clients
 if OPENAI_API_KEY:
     openai.api_key = OPENAI_API_KEY
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+# Initialize Qdrant Client
+qdrant_client = QdrantClient(
+    url=QDRANT_URL,
+    api_key=QDRANT_API_KEY,
+)
 
 
 # Constants
@@ -48,6 +56,7 @@ BATCH_SIZE = 5
 TEMP_DIR = "temp_pdfs"
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIM = 1536
+COLLECTION_NAME = "fia_documents"
 
 
 def setup_temp_dir():
@@ -90,17 +99,38 @@ def crawl_pdf_links() -> List[str]:
 
 
 def is_already_ingested(filename: str) -> bool:
-    """Checks if the file source already exists in Supabase."""
+    """Checks if the file source already exists in Qdrant."""
+    # We can check if any point exists with source=filename
     try:
-        response = supabase.table("fia_documents").select("id").eq("source", filename).limit(1).execute()
-        return len(response.data) > 0
+        # Qdrant scroll/search is one way.
+        # Filter where source == filename
+        # We just need 1 result to know it exists.
+        
+        scroll_result = qdrant_client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="source",
+                        match=models.MatchValue(value=filename)
+                    )
+                ]
+            ),
+            limit=1,
+            with_payload=False,
+            with_vectors=False
+        )
+        
+        # scroll_result returns (points, next_page_offset)
+        # if points list is not empty, it exists.
+        return len(scroll_result[0]) > 0
+
     except Exception as e:
-        logger.error(f"Error checking Supabase for {filename}: {e}")
-        # Fail safe: assume false to re-check or log error, but better to prevent duplicates
-        # If DB is down, we might want to stop. For now, log and return False (risk duplicate) or True (skip)
-        # Choosing to return True to be safe against mass duplication if connection is flaky? 
-        # Actually better to raise or return False and let unique constraint (if any) handle it, 
-        # but requirements say "If exists -> skip file entirely".
+        logger.error(f"Error checking Qdrant for {filename}: {e}")
+        # If Qdrant is down or error, assume False to retry or True to skip?
+        # Safe is False (re-ingest, upsert handles dupes if IDs are deterministic, 
+        # but here we generate random IDs so we'd duplicate data if we returned False and it existed.
+        # However, if we can't check, we probably can't insert either.)
         return False
 
 
@@ -147,11 +177,7 @@ def extract_metadata(filename: str, text_content: str) -> Dict:
     if year_match:
         metadata["year"] = int(year_match.group(0))
     else:
-        # Fallback or default? Req says "Extract using regex". If not found, maybe null or strict.
-        # DB says `year int not null`. We must find a year. 
-        # If we can't find it, we might defaults to current year or raise.
-        # For now, let's look harder or fail gracefully for that row.
-        # Defaulting to 2024 if absolutely failing, but better to log warning.
+        # Defaulting to 0
         logger.warning(f"Could not extract year for {filename}. Defaulting to 0.")
         metadata["year"] = 0
 
@@ -273,6 +299,7 @@ def process_batch(batch_urls: List[str]):
                     "year": metadata["year"],
                     "type": metadata["type"],
                     "source": metadata["source"],
+                    "url": url,
                     "date": metadata["date"],
                     "content": chunk,
                     "embedding": embedding
@@ -291,27 +318,33 @@ def process_batch(batch_urls: List[str]):
             if os.path.exists(local_path):
                 os.remove(local_path)
 
-    # Insert Batch to Supabase
+    # Insert Batch to Qdrant
     if rows_to_insert:
         try:
-            # Upsert is safer but requirements say "Inserts". 
-            # Supabase Python client `table.insert(data)`
-            # We might need to chunk the insertion if it's too large 
-            # (e.g. 5 PDFs * 100 pages * 2 chunks = 1000 rows).
-            # Supabase API limit is often around request size.
-            
-            # Sub-batching inserts
-            INSERT_BATCH_SIZE = 100
-            total_rows = len(rows_to_insert)
-            
-            for i in range(0, total_rows, INSERT_BATCH_SIZE):
-                batch_data = rows_to_insert[i : i + INSERT_BATCH_SIZE]
-                supabase.table("fia_documents").insert(batch_data).execute()
-                
-            logger.info(f"Inserted {total_rows} rows for {processed_count} PDFs.")
+            points = []
+            for row in rows_to_insert:
+                point_id = str(uuid.uuid4())
+                payload = {
+                    "year": row["year"],
+                    "type": row["type"],
+                    "source": row["source"],
+                    "url": row["url"],
+                    "date": row["date"],
+                    "content": row["content"]
+                }
+                points.append(models.PointStruct(
+                    id=point_id,
+                    vector=row["embedding"],
+                    payload=payload
+                ))
 
+            qdrant_client.upsert(
+                collection_name=COLLECTION_NAME,
+                points=points
+            )
+            logger.info(f"Successfully uploaded {len(points)} points to Qdrant.")
         except Exception as e:
-            logger.error(f"Error inserting to Supabase: {e}")
+            logger.error(f"Error inserting to Qdrant: {e}")
 
     logger.info(f"Batch complete. Processed: {processed_count}, Skipped: {skipped_count}")
 

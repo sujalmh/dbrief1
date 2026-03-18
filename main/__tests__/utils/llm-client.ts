@@ -26,8 +26,9 @@ if (!OPENROUTER_API_KEY) {
 // =============================================================================
 
 /**
- * Create a GLM 4.5 Air model via OpenRouter for testing
- * This is the FREE model specified by the user
+ * Create a GLM 4.5 Air model via OpenRouter for testing.
+ * This model uses internal reasoning tokens, so maxTokens must be high enough
+ * to accommodate both reasoning and content output.
  */
 export function createTestModel(temperature: number = 0): BaseChatModel {
     if (!OPENROUTER_API_KEY) {
@@ -38,7 +39,8 @@ export function createTestModel(temperature: number = 0): BaseChatModel {
         model: 'z-ai/glm-4.5-air:free',
         apiKey: OPENROUTER_API_KEY,
         temperature,
-        maxTokens: 4096,
+        maxTokens: 16384,
+        timeout: 90000,
         configuration: {
             baseURL: 'https://openrouter.ai/api/v1',
         },
@@ -57,126 +59,6 @@ export function createTestPlannerModel(): BaseChatModel {
  */
 export function createTestResponderModel(): BaseChatModel {
     return createTestModel(0.3) // slight creativity for natural responses
-}
-
-// =============================================================================
-// Mock LLM for Unit Tests (No API calls)
-// =============================================================================
-
-export interface MockLLMConfig {
-    responses: Map<RegExp, string>
-    fallbackResponse: string
-}
-
-export class MockLLM {
-    private responses: Map<RegExp, string>
-    private fallbackResponse: string
-    private callLog: string[] = []
-
-    constructor(config: MockLLMConfig) {
-        this.responses = config.responses
-        this.fallbackResponse = config.fallbackResponse
-    }
-
-    async invoke(prompt: string): Promise<string> {
-        this.callLog.push(prompt)
-
-        for (const [pattern, response] of this.responses) {
-            if (pattern.test(prompt)) {
-                return response
-            }
-        }
-
-        return this.fallbackResponse
-    }
-
-    getCallLog(): string[] {
-        return this.callLog
-    }
-
-    clearCallLog(): void {
-        this.callLog = []
-    }
-}
-
-/**
- * Create a mock LLM that returns predetermined plan responses
- */
-export function createMockPlannerLLM(): MockLLM {
-    return new MockLLM({
-        responses: new Map([
-            [/verstappen.*lap.*monaco/i, JSON.stringify({
-                steps: [
-                    { description: "Get Verstappen lap times", tool: "get_laps", args: { year: 2023, gp: "Monaco", session: "R", driver: "VER" } }
-                ],
-                reasoning: "Fetching lap times for VER at Monaco"
-            })],
-            [/hamilton.*tyre.*imola/i, JSON.stringify({
-                steps: [
-                    { description: "Get Hamilton tyre data", tool: "get_tyres", args: { year: 2020, gp: "Imola", session: "R", driver: "HAM" } }
-                ],
-                reasoning: "Fetching tyre stint data for HAM at Imola"
-            })],
-            [/compare.*ferrari.*red bull.*monza/i, JSON.stringify({
-                steps: [
-                    { description: "Get Leclerc laps", tool: "get_laps", args: { year: 2021, gp: "Monza", session: "R", driver: "LEC" } },
-                    { description: "Get Sainz laps", tool: "get_laps", args: { year: 2021, gp: "Monza", session: "R", driver: "SAI" } },
-                    { description: "Get Verstappen laps", tool: "get_laps", args: { year: 2021, gp: "Monza", session: "R", driver: "VER" } },
-                    { description: "Get Perez laps", tool: "get_laps", args: { year: 2021, gp: "Monza", session: "R", driver: "PER" } }
-                ],
-                reasoning: "Fetching lap data for Ferrari and Red Bull drivers for comparison"
-            })],
-            [/qualifying.*silverstone/i, JSON.stringify({
-                steps: [
-                    { description: "Get qualifying results", tool: "get_qualifying", args: { year: 2024, gp: "Silverstone" } }
-                ],
-                reasoning: "Fetching qualifying results for Silverstone"
-            })],
-            [/telemetry.*leclerc.*bahrain/i, JSON.stringify({
-                steps: [
-                    { description: "Get Leclerc telemetry", tool: "get_telemetry", args: { year: 2023, gp: "Bahrain", session: "R", driver: "LEC", lap: "fastest" } }
-                ],
-                reasoning: "Fetching fastest lap telemetry for LEC at Bahrain"
-            })],
-            [/senna.*2024/i, JSON.stringify({
-                steps: [],
-                reasoning: "Cannot provide Senna data for 2024 - driver not racing in this era"
-            })],
-            // Historical year patterns (use ergast tools)
-            [/\b2017\b.*(?:standings|points|championship)/i, JSON.stringify({
-                steps: [{ description: "Get 2017 driver standings", tool: "get_driver_standings", args: { year: 2017 } }],
-                reasoning: "Fetching 2017 season standings via Ergast API"
-            })],
-            [/\b2010\b.*(?:standings|points|championship)/i, JSON.stringify({
-                steps: [{ description: "Get 2010 driver standings", tool: "get_driver_standings", args: { year: 2010 } }],
-                reasoning: "Fetching 2010 season standings via Ergast API"
-            })],
-            [/\b2000\b.*(?:standings|points|championship)/i, JSON.stringify({
-                steps: [{ description: "Get 2000 driver standings", tool: "get_driver_standings", args: { year: 2000 } }],
-                reasoning: "Fetching 2000 season standings via Ergast API"
-            })],
-            [/\b1994\b/i, JSON.stringify({
-                steps: [{ description: "Get 1994 driver standings", tool: "get_driver_standings", args: { year: 1994 } }],
-                reasoning: "1994 season - using Ergast API for standings"
-            })],
-            [/\b1950\b|first.*season/i, JSON.stringify({
-                steps: [{ description: "Get 1950 driver standings", tool: "get_driver_standings", args: { year: 1950 } }],
-                reasoning: "1950 season - first F1 championship, fetching standings via Ergast API"
-            })],
-            [/\b(19\d{2}|200\d|201[0-7])\b.*(?:telemetry|lap.*times)/i, JSON.stringify({
-                steps: [],
-                reasoning: "Telemetry and lap-by-lap data not available for pre-2018 seasons. Only standings and race results available."
-            })],
-            [/ignore.*rules|fake.*data|made-up|pretend/i, JSON.stringify({
-                steps: [],
-                reasoning: "I cannot fabricate data or ignore my guidelines"
-            })]
-        ]),
-        fallbackResponse: JSON.stringify({
-            steps: [{ description: "Get events", tool: "get_events", args: { year: 2024 } }],
-            reasoning: "Fallback to listing events"
-        })
-    })
 }
 
 // =============================================================================

@@ -13,6 +13,7 @@ Features:
 """
 
 import asyncio
+import os
 from functools import lru_cache
 from typing import Optional
 
@@ -104,7 +105,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Enable Fast-F1 disk cache
+# Enable Fast-F1 disk cache (create directory if it doesn't exist)
+os.makedirs("cache", exist_ok=True)
 fastf1.Cache.enable_cache("cache")
 
 # Mutex for session loading (prevent concurrent loads)

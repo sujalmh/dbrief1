@@ -49,6 +49,26 @@ export const TOOL_SCHEMAS = {
     get_driver_standings: {
         required: ['year'],
         optional: ['driver']
+    },
+    get_race_control: {
+        required: ['year', 'gp', 'session'],
+        optional: []
+    },
+    get_telemetry_summary: {
+        required: ['year', 'gp', 'session', 'driver'],
+        optional: ['lap']
+    },
+    run_simulation: {
+        required: ['scenario_id', 'horizon', 'metric'],
+        optional: ['iterations', 'parameters']
+    },
+    retrieve_regulations: {
+        required: ['query'],
+        optional: ['year', 'type']
+    },
+    web_search: {
+        required: ['query'],
+        optional: []
     }
 }
 

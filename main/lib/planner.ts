@@ -136,79 +136,56 @@ Example 5: "Compare qualifying results for Monaco 2024"
 The user wants a comparison of all drivers in qualifying. A single call to get_qualifying will return all results, and the frontend will create a comparison chart showing all drivers.
 
 PLAN: {"steps": [{"description": "Get qualifying results", "tool": "get_qualifying", "args": {"year": 2024, "gp": "Monaco"}}], "reasoning": "Single qualifying call provides comparison data for all drivers in one chart."}`;
+
 // =============================================================================
-// Planner Functions
+// Shared Planner Helpers
 // =============================================================================
 
 /**
- * Plan execution steps for a user query
- *
- * @param model - The planner LLM model
- * @param message - User's message/query
- * @param webSearchEnabled - Whether web search is available
- * @returns Validated execution plan
+ * Build the full system prompt with date, web-search flag, and deep-research overrides.
  */
-export async function planQuery(
-    model: BaseChatModel,
-    message: string,
-    webSearchEnabled: boolean = false,
-    deepResearchMode: boolean = false
-): Promise<Plan> {
-    // Build the system prompt with web search context
-    let systemPrompt = PLANNER_SYSTEM_PROMPT;
+function buildPlannerPrompt(webSearchEnabled: boolean, deepResearchMode: boolean): string {
+    let prompt = PLANNER_SYSTEM_PROMPT;
     const currentDate = new Date().toISOString().split('T')[0];
-    systemPrompt += `\n\nCurrent Date: ${currentDate}`;
+    prompt += `\n\nCurrent Date: ${currentDate}`;
 
     if (!webSearchEnabled) {
-        systemPrompt += "\n\n**NOTE: Web search is DISABLED. Do not use the web_search tool.**";
+        prompt += "\n\n**NOTE: Web search is DISABLED. Do not use the web_search tool.**";
     }
 
     if (deepResearchMode) {
-        systemPrompt = systemPrompt.replace("MAX 5 steps total", "MAX 25 steps total. Create as many steps as needed for a comprehensive analysis.");
+        prompt = prompt.replace(
+            "MAX 5 steps total",
+            "MAX 25 steps total. Create as many steps as needed for a comprehensive analysis."
+        );
     }
 
-    // Create messages
-    const messages = [
-        new SystemMessage(systemPrompt),
-        new HumanMessage(message),
-    ];
+    return prompt;
+}
 
-    // Get response from LLM
-    const response = await model.invoke(messages);
+/**
+ * Validate raw parsed plan, merge reasoning, filter web_search, and cap step count.
+ */
+function validateAndFilterPlan(
+    parsedPlan: unknown,
+    extractedReasoning: string | undefined,
+    webSearchEnabled: boolean,
+    deepResearchMode: boolean
+): Plan {
+    const validatedPlan = PlanSchema.parse(parsedPlan);
 
-    // Extract content
-    const content =
-        typeof response.content === "string"
-            ? response.content
-            : JSON.stringify(response.content);
-
-    // Parse JSON from response (now returns { plan, reasoning })
-    const { plan: parsedPlan, reasoning: extractedReasoning } = parseJsonResponse(content);
-
-    // Validate with Zod
-    let validatedPlan: Plan;
-    try {
-        validatedPlan = PlanSchema.parse(parsedPlan);
-    } catch (e) {
-        throw new Error(`Invalid plan format: ${e instanceof Error ? e.message : String(e)}`);
-    }
-
-    // Merge extracted reasoning with plan reasoning if available
     if (extractedReasoning && !validatedPlan.reasoning) {
         validatedPlan.reasoning = extractedReasoning;
     } else if (extractedReasoning && validatedPlan.reasoning) {
-        // Prepend extracted reasoning to plan reasoning
         validatedPlan.reasoning = `${extractedReasoning}\n\n${validatedPlan.reasoning}`;
     }
 
-    // Filter out web_search if disabled
     if (!webSearchEnabled) {
         validatedPlan.steps = validatedPlan.steps.filter(
             (step) => step.tool !== "web_search"
         );
     }
 
-    // Enforce max steps based on mode
     const maxSteps = deepResearchMode ? 25 : 5;
     if (validatedPlan.steps.length > maxSteps) {
         validatedPlan.steps = validatedPlan.steps.slice(0, maxSteps);
@@ -217,15 +194,40 @@ export async function planQuery(
     return validatedPlan;
 }
 
+// =============================================================================
+// Planner Functions
+// =============================================================================
+
+/**
+ * Plan execution steps for a user query
+ */
+export async function planQuery(
+    model: BaseChatModel,
+    message: string,
+    webSearchEnabled: boolean = false,
+    deepResearchMode: boolean = false
+): Promise<Plan> {
+    const systemPrompt = buildPlannerPrompt(webSearchEnabled, deepResearchMode);
+
+    const messages = [
+        new SystemMessage(systemPrompt),
+        new HumanMessage(message),
+    ];
+
+    const response = await model.invoke(messages);
+
+    const content =
+        typeof response.content === "string"
+            ? response.content
+            : JSON.stringify(response.content);
+
+    const { plan: parsedPlan, reasoning } = parseJsonResponse(content);
+
+    return validateAndFilterPlan(parsedPlan, reasoning, webSearchEnabled, deepResearchMode);
+}
+
 /**
  * Stream planning with reasoning trace
- * 
- * @param model - The planner LLM model
- * @param message - User's message/query
- * @param webSearchEnabled - Whether web search is available
- * @param reasoningMode - Whether to allow more steps
- * @param onReasoningToken - Callback for each reasoning token
- * @returns Validated execution plan
  */
 export async function streamPlanQuery(
     model: BaseChatModel,
@@ -234,26 +236,13 @@ export async function streamPlanQuery(
     deepResearchMode: boolean = false,
     onReasoningToken?: (token: string) => void
 ): Promise<Plan> {
-    // Build the system prompt with web search context
-    let systemPrompt = PLANNER_SYSTEM_PROMPT;
-    const currentDate = new Date().toISOString().split('T')[0];
-    systemPrompt += `\n\nCurrent Date: ${currentDate}`;
+    const systemPrompt = buildPlannerPrompt(webSearchEnabled, deepResearchMode);
 
-    if (!webSearchEnabled) {
-        systemPrompt += "\n\n**NOTE: Web search is DISABLED. Do not use the web_search tool.**";
-    }
-
-    if (deepResearchMode) {
-        systemPrompt = systemPrompt.replace("MAX 5 steps total", "MAX 25 steps total. Create as many steps as needed for a comprehensive analysis.");
-    }
-
-    // Create messages
     const messages = [
         new SystemMessage(systemPrompt),
         new HumanMessage(message),
     ];
 
-    // Stream response from LLM
     let fullContent = "";
     const stream = await model.stream(messages);
 
@@ -266,46 +255,15 @@ export async function streamPlanQuery(
         if (content) {
             fullContent += content;
 
-            // If we haven't hit the PLAN: marker yet, emit reasoning tokens
             if (onReasoningToken && !fullContent.includes('PLAN:')) {
                 onReasoningToken(content);
             }
         }
     }
 
-    // Parse the complete response
-    const { plan: parsedPlan, reasoning: extractedReasoning } = parseJsonResponse(fullContent);
+    const { plan: parsedPlan, reasoning } = parseJsonResponse(fullContent);
 
-    // Validate with Zod
-    let validatedPlan: Plan;
-    try {
-        validatedPlan = PlanSchema.parse(parsedPlan);
-    } catch (e) {
-        validatedPlan = PlanSchema.parse(parsedPlan);
-    }
-
-    // Merge extracted reasoning with plan reasoning if available
-    if (extractedReasoning && !validatedPlan.reasoning) {
-        validatedPlan.reasoning = extractedReasoning;
-    } else if (extractedReasoning && validatedPlan.reasoning) {
-        validatedPlan.reasoning = `${extractedReasoning}\n\n${validatedPlan.reasoning}`;
-    }
-
-    // Filter out web_search if disabled
-    if (!webSearchEnabled) {
-        validatedPlan.steps = validatedPlan.steps.filter(
-            (step) => step.tool !== "web_search"
-        );
-    }
-
-
-    // Enforce max steps based on mode
-    const maxSteps = deepResearchMode ? 25 : 5;
-    if (validatedPlan.steps.length > maxSteps) {
-        validatedPlan.steps = validatedPlan.steps.slice(0, maxSteps);
-    }
-
-    return validatedPlan;
+    return validateAndFilterPlan(parsedPlan, reasoning, webSearchEnabled, deepResearchMode);
 }
 
 /**

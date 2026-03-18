@@ -271,6 +271,209 @@ export const INJECTION_PROMPTS: InjectionTestCase[] = [
 ]
 
 // =============================================================================
+// 8️⃣ Response Quality Test Cases (Diverse Categories)
+// =============================================================================
+
+export interface ResponseQualityTestCase {
+    prompt: string
+    category: 'data' | 'strategy' | 'regulation' | 'simulation' | 'weather' | 'cross-domain' | 'conversational' | 'historical'
+    expectedTools: string[]
+    expectedArgPatterns: Record<string, unknown>[]
+    expectedResponseContains: string[]
+    expectedResponseNotContains?: string[]
+    description: string
+}
+
+export const RESPONSE_QUALITY_PROMPTS: ResponseQualityTestCase[] = [
+    // --- Data Queries ---
+    {
+        prompt: "Show Verstappen's lap times in the 2023 Monaco GP",
+        category: 'data',
+        expectedTools: ['get_laps'],
+        expectedArgPatterns: [{ driver: 'VER', gp: 'Monaco', year: 2023 }],
+        expectedResponseContains: ['VER', 'Monaco', '2023'],
+        description: "Basic lap times data retrieval"
+    },
+    {
+        prompt: "Get qualifying results for Silverstone 2024",
+        category: 'data',
+        expectedTools: ['get_qualifying'],
+        expectedArgPatterns: [{ gp: 'Silverstone', year: 2024 }],
+        expectedResponseContains: ['Silverstone', '2024'],
+        description: "Qualifying results data"
+    },
+    {
+        prompt: "Show telemetry for Leclerc fastest lap in Bahrain 2023",
+        category: 'data',
+        expectedTools: ['get_telemetry'],
+        expectedArgPatterns: [{ driver: 'LEC', gp: 'Bahrain', year: 2023 }],
+        expectedResponseContains: ['LEC', 'Bahrain'],
+        description: "Telemetry data retrieval"
+    },
+    {
+        prompt: "Who won the 2022 championship?",
+        category: 'data',
+        expectedTools: ['get_driver_standings'],
+        expectedArgPatterns: [{ year: 2022 }],
+        expectedResponseContains: ['2022'],
+        description: "Championship standings query"
+    },
+
+    // --- Strategy Queries ---
+    {
+        prompt: "What tyre strategy did Red Bull use at Silverstone 2023?",
+        category: 'strategy',
+        expectedTools: ['get_tyres'],
+        expectedArgPatterns: [{ gp: 'Silverstone', year: 2023 }],
+        expectedResponseContains: ['Silverstone', '2023'],
+        description: "Team tyre strategy analysis"
+    },
+    {
+        prompt: "Compare pit stop strategies for Verstappen and Norris at Monza 2024",
+        category: 'strategy',
+        expectedTools: ['get_tyres'],
+        expectedArgPatterns: [{ gp: 'Monza', year: 2024 }],
+        expectedResponseContains: ['Monza', '2024'],
+        description: "Pit stop strategy comparison"
+    },
+    {
+        prompt: "Show tyre degradation for Hamilton in Spa 2023 race",
+        category: 'strategy',
+        expectedTools: ['get_tyres', 'get_laps'],
+        expectedArgPatterns: [{ year: 2023 }],
+        expectedResponseContains: ['2023'],
+        description: "Tyre degradation requires laps or tyres data"
+    },
+
+    // --- Weather / Conditions Queries ---
+    {
+        prompt: "What were the weather conditions during the 2023 Monaco GP race?",
+        category: 'weather',
+        expectedTools: ['get_weather'],
+        expectedArgPatterns: [{ gp: 'Monaco', year: 2023, session: 'R' }],
+        expectedResponseContains: ['Monaco', '2023'],
+        description: "Race weather conditions"
+    },
+    {
+        prompt: "Show weather data for Spa 2024 qualifying",
+        category: 'weather',
+        expectedTools: ['get_weather'],
+        expectedArgPatterns: [{ year: 2024, session: 'Q' }],
+        expectedResponseContains: ['2024'],
+        description: "Qualifying weather data"
+    },
+
+    // --- Regulation Queries ---
+    {
+        prompt: "What are the 2025 cost cap regulations?",
+        category: 'regulation',
+        expectedTools: ['retrieve_regulations'],
+        expectedArgPatterns: [{ year: 2025 }],
+        expectedResponseContains: ['2025'],
+        description: "Financial regulation retrieval"
+    },
+    {
+        prompt: "How do sprint race points work under current sporting regulations?",
+        category: 'regulation',
+        expectedTools: ['retrieve_regulations'],
+        expectedArgPatterns: [{}],
+        expectedResponseContains: [],
+        description: "Sprint points regulation query"
+    },
+
+    // --- Simulation / What-If Queries ---
+    {
+        prompt: "What if Abu Dhabi 2021 didn't end under safety car?",
+        category: 'simulation',
+        expectedTools: ['get_laps', 'run_simulation'],
+        expectedArgPatterns: [{ year: 2021, gp: 'Abu Dhabi' }],
+        expectedResponseContains: ['Abu Dhabi', '2021'],
+        description: "Counterfactual simulation with data grounding"
+    },
+    {
+        prompt: "Simulate Verstappen vs Hamilton over a full season with equal cars",
+        category: 'simulation',
+        expectedTools: ['run_simulation'],
+        expectedArgPatterns: [{ horizon: 'season' }],
+        expectedResponseContains: [],
+        description: "Season-level what-if simulation"
+    },
+
+    // --- Cross-Domain Queries (data + regulations) ---
+    {
+        prompt: "Did the 2023 Monaco GP have any race control flags? What do the regulations say about safety car procedures?",
+        category: 'cross-domain',
+        expectedTools: ['get_race_control', 'retrieve_regulations'],
+        expectedArgPatterns: [{ gp: 'Monaco', year: 2023 }],
+        expectedResponseContains: ['Monaco', '2023'],
+        description: "Race control data combined with regulation lookup"
+    },
+
+    // --- Historical Queries ---
+    {
+        prompt: "Who won the 1994 championship?",
+        category: 'historical',
+        expectedTools: ['get_driver_standings'],
+        expectedArgPatterns: [{ year: 1994 }],
+        expectedResponseContains: ['1994'],
+        description: "Pre-2018 historical standings"
+    },
+    {
+        prompt: "Show the 2010 championship final standings",
+        category: 'historical',
+        expectedTools: ['get_driver_standings'],
+        expectedArgPatterns: [{ year: 2010 }],
+        expectedResponseContains: ['2010'],
+        description: "2010 season standings via Ergast"
+    },
+    {
+        prompt: "Race results from Silverstone 1950",
+        category: 'historical',
+        expectedTools: ['get_race', 'get_driver_standings'],
+        expectedArgPatterns: [{ year: 1950 }],
+        expectedResponseContains: ['1950'],
+        expectedResponseNotContains: ['telemetry', 'lap times'],
+        description: "First ever F1 race - should use ergast, not telemetry"
+    },
+
+    // --- Conversational / Vague Queries ---
+    {
+        prompt: "Tell me about the 2023 F1 season",
+        category: 'conversational',
+        expectedTools: ['get_events', 'get_driver_standings'],
+        expectedArgPatterns: [{ year: 2023 }],
+        expectedResponseContains: ['2023'],
+        description: "Broad season overview"
+    },
+    {
+        prompt: "What happened in the last race of 2024?",
+        category: 'conversational',
+        expectedTools: ['get_race'],
+        expectedArgPatterns: [{ year: 2024, gp: 'Abu Dhabi' }],
+        expectedResponseContains: ['2024'],
+        description: "Last race of season query"
+    },
+
+    // --- Multi-Driver Comparison ---
+    {
+        prompt: "Compare Verstappen and Norris pace in Abu Dhabi 2023",
+        category: 'data',
+        expectedTools: ['get_laps', 'get_telemetry'],
+        expectedArgPatterns: [{ driver: 'VER' }, { driver: 'NOR' }],
+        expectedResponseContains: ['VER', 'NOR', 'Abu Dhabi'],
+        description: "Two-driver pace comparison should create separate calls"
+    },
+    {
+        prompt: "Show telemetry comparison between both McLaren drivers in Abu Dhabi 2023",
+        category: 'data',
+        expectedTools: ['get_telemetry'],
+        expectedArgPatterns: [{ driver: 'NOR' }, { driver: 'PIA' }],
+        expectedResponseContains: ['Abu Dhabi', '2023'],
+        description: "Team-based telemetry comparison"
+    },
+]
+
+// =============================================================================
 // Driver & Team Aliases
 // =============================================================================
 

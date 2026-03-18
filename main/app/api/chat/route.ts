@@ -173,8 +173,22 @@ export async function POST(request: NextRequest) {
 
         const stream = new ReadableStream({
             async start(controller) {
+                let controllerClosed = false;
+
+                const safeClose = () => {
+                    if (!controllerClosed) {
+                        controllerClosed = true;
+                        try { controller.close(); } catch { /* already closed */ }
+                    }
+                };
+
                 const sendEvent = (event: string, data: any) => {
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ event, data })}\n\n`));
+                    if (controllerClosed) return;
+                    try {
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ event, data })}\n\n`));
+                    } catch {
+                        controllerClosed = true;
+                    }
                 };
 
                 try {
@@ -187,7 +201,7 @@ export async function POST(request: NextRequest) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
                         sendEvent("error", { message: errorMessage });
-                        controller.close();
+                        safeClose();
                         return;
                     }
 
@@ -332,13 +346,13 @@ Please answer the user's question based on the F1 data provided above.`;
                         }
                     }
 
-                    controller.close();
+                    safeClose();
 
                 } catch (error) {
                     console.error("[Stream Error]", error);
                     const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred";
                     sendEvent("error", { message: errorMessage });
-                    controller.close();
+                    safeClose();
                 }
             }
         });

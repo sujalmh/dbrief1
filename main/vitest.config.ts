@@ -7,7 +7,7 @@ export default defineConfig({
         environment: 'node',
         include: ['__tests__/**/*.test.ts'],
         exclude: ['node_modules', '.next'],
-        testTimeout: 60000, // 60s timeout for LLM calls
+        testTimeout: 120000, // 120s timeout for real LLM calls (GLM 4.5 Air uses reasoning tokens)
         hookTimeout: 30000,
         coverage: {
             provider: 'v8',

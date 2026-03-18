@@ -96,6 +96,57 @@ export function Sidebar() {
         }
     };
 
+    const [nowMs, setNowMs] = React.useState(() => Date.now());
+
+    React.useEffect(() => {
+        const intervalId = window.setInterval(() => setNowMs(Date.now()), 1000);
+        return () => window.clearInterval(intervalId);
+    }, []);
+
+    const getSessionTimeMs = (session: any): number | null => {
+        const source = session?.lastMessageAt ?? session?.createdAt;
+        if (!source) return null;
+
+        if (typeof source === "number") return source;
+        if (source instanceof Date) return source.getTime();
+
+        if (typeof source?.toMillis === "function") {
+            const ms = source.toMillis();
+            return Number.isFinite(ms) ? ms : null;
+        }
+
+        if (typeof source?.seconds === "number") {
+            return source.seconds * 1000;
+        }
+
+        return null;
+    };
+
+    const formatSessionDelta = (session: any, isActive: boolean): string => {
+        const sessionMs = getSessionTimeMs(session);
+
+        if (isActive) {
+            return sessionMs ? "+0s" : "--";
+        }
+
+        if (!sessionMs) return "--";
+
+        const diffSeconds = Math.max(0, Math.floor((nowMs - sessionMs) / 1000));
+
+        const days = Math.floor(diffSeconds / 86400);
+        if (days > 0) return `+${days}d`;
+
+        const hours = Math.floor(diffSeconds / 3600);
+        if (hours > 0) return `+${hours}hr`;
+
+        const minutes = Math.floor(diffSeconds / 60);
+        if (minutes > 0) return `+${minutes}m`;
+
+        if (diffSeconds < 60) return `+${diffSeconds}s`;
+
+        return "+0s";
+    };
+
     return (
         <div
             className={cn(
@@ -180,34 +231,39 @@ export function Sidebar() {
                                 {/* Content (Text) */}
                                 <div className={cn(
                                     "flex flex-col items-start gap-0.5 whitespace-nowrap overflow-hidden transition-all duration-300",
-                                    isSidebarOpen ? "w-full opacity-100 pr-6" : "w-0 opacity-0 pr-0"
+                                    isSidebarOpen ? "w-full opacity-100" : "w-0 opacity-0"
                                 )}>
-                                    <span className="text-xs font-medium truncate w-full">
-                                        {session.title || "New Chat"}
-                                    </span>
-                                    {session.type && (
-                                        <span className={cn(
-                                            "text-[9px] px-1 rounded border uppercase font-bold tracking-wider",
-                                            getTypeColor(session.type)
-                                        )}>
-                                            {session.type}
+                                    <div className="flex items-center justify-between w-full gap-2 overflow-hidden">
+                                        <span className="text-xs font-medium truncate min-w-0">
+                                            {session.title || "New Chat"}
                                         </span>
-                                    )}
+                                        <div className="relative h-6 w-6 shrink-0">
+                                            <span className="absolute inset-0 flex items-center justify-end text-[10px] font-mono tracking-wide text-muted-foreground/80 transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0">
+                                                {formatSessionDelta(session, currentSessionId === session.id)}
+                                            </span>
+                                            {isSidebarOpen && (
+                                                <button
+                                                    onClick={(e) => handleDeleteSession(session.id, e)}
+                                                    className="absolute inset-0 flex items-center justify-center rounded-md opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 bg-sidebar-accent hover:bg-red-500/20 text-muted-foreground hover:text-f1-red"
+                                                    title="Delete Session"
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 w-full overflow-hidden">
+                                        {session.type && (
+                                            <span className={cn(
+                                                "text-[9px] px-1 rounded border uppercase font-bold tracking-wider truncate",
+                                                getTypeColor(session.type)
+                                            )}>
+                                                {session.type}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
 
-                                {/* Delete Button - Absolute positioned, visible on group hover */}
-                                {isSidebarOpen && (
-                                    <button
-                                        onClick={(e) => handleDeleteSession(session.id, e)}
-                                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md 
-                                                   opacity-0 group-hover:opacity-100 transition-all duration-200
-                                                   bg-sidebar-accent hover:bg-red-500/20 text-muted-foreground hover:text-f1-red
-                                                   focus:opacity-100 z-10"
-                                        title="Delete Session"
-                                    >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
-                                )}
                             </div>
                         ))}
                     </div>

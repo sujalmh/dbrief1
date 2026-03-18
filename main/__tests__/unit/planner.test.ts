@@ -257,7 +257,7 @@ describe('Plan Schema Validation', () => {
 })
 
 // =============================================================================
-// Integration Tests with Real LLM (qwen3-coder via OpenRouter)
+// Integration Tests with Real LLM (GLM 4.5 Air via OpenRouter)
 // =============================================================================
 
 describe('Planner - Integration Tests (Real LLM)', () => {

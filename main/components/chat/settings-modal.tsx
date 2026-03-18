@@ -90,10 +90,9 @@ export function SettingsModal() {
                                     )}
                                     {settings.provider === 'openrouter' && (
                                         <>
-                                            <SelectItem value="google/gemini-2.0-flash-exp:free">Gemini 2.0 Flash (Free)</SelectItem>
-                                            <SelectItem value="google/gemini-2.0-flash-thinking-exp:free">Gemini 2.0 Thinking (Free)</SelectItem>
-                                            <SelectItem value="mistralai/devstral-2512:free">Mistral Devstral (Free)</SelectItem>
-                                            <SelectItem value="qwen/qwen3-coder:free">Qwen 3 Coder (Free)</SelectItem>
+                                            <SelectItem value="openrouter/hunter-alpha">Hunter Alpha</SelectItem>
+                                            <SelectItem value="z-ai/glm-4.5-air:free">GLM 4.5 Air (Free)</SelectItem>
+                                            <SelectItem value="stepfun/step-3.5-flash:free">Step 3.5 Flash (Free)</SelectItem>
                                         </>
                                     )}
                                     {settings.provider === 'huggingface' && (

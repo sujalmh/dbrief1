@@ -93,7 +93,7 @@ interface ChatStore {
 const defaultSettings: Settings = {
     apiKey: '',
     provider: 'openrouter',
-    model: 'qwen/qwen3-coder:free',
+    model: 'z-ai/glm-4.5-air:free',
     temperature: 0.7,
     maxTokens: 1000,
     deepResearchMode: false,

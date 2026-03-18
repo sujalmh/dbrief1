@@ -169,17 +169,14 @@ export function ControlPanel() {
 
                         {settings.provider === "openrouter" && (
                             <>
-                                <DropdownMenuRadioItem value="google/gemini-2.0-flash-exp:free">
-                                    Gemini 2.0 Flash (Free)
+                                <DropdownMenuRadioItem value="openrouter/hunter-alpha">
+                                    Hunter Alpha
                                 </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="google/gemini-2.0-flash-thinking-exp:free">
-                                    Gemini 2.0 Thinking (Free)
+                                <DropdownMenuRadioItem value="z-ai/glm-4.5-air:free">
+                                    GLM 4.5 Air (Free)
                                 </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="mistralai/devstral-2512:free">
-                                    Devstral (Free)
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="qwen/qwen3-coder:free">
-                                    Qwen 3 Coder (Free)
+                                <DropdownMenuRadioItem value="stepfun/step-3.5-flash:free">
+                                    Step 3.5 Flash (Free)
                                 </DropdownMenuRadioItem>
                             </>
                         )}

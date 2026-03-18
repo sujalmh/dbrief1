@@ -1,7 +1,7 @@
 /**
  * Chat Flow Integration Tests
  * ===========================
- * End-to-end tests for the complete chat flow using qwen3-coder via OpenRouter
+ * End-to-end tests for the complete chat flow using GLM 4.5 Air via OpenRouter
  */
 
 import { describe, it, expect, beforeAll } from 'vitest'
@@ -26,7 +26,7 @@ import {
 } from '../fixtures/test-prompts'
 
 // =============================================================================
-// Integration Tests with Real LLM (qwen3-coder via OpenRouter)
+// Integration Tests with Real LLM (GLM 4.5 Air via OpenRouter)
 // =============================================================================
 
 describe('Chat Flow - Integration Tests', () => {

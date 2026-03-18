@@ -1,7 +1,7 @@
 /**
  * LLM Test Client for F1 Chatbot Testing
  * =======================================
- * Uses qwen3-coder via OpenRouter (free tier) for testing
+ * Uses GLM 4.5 Air via OpenRouter (free tier) for testing
  */
 
 import { ChatOpenAI } from "@langchain/openai"
@@ -26,7 +26,7 @@ if (!OPENROUTER_API_KEY) {
 // =============================================================================
 
 /**
- * Create a qwen3-coder model via OpenRouter for testing
+ * Create a GLM 4.5 Air model via OpenRouter for testing
  * This is the FREE model specified by the user
  */
 export function createTestModel(temperature: number = 0): BaseChatModel {
@@ -35,7 +35,7 @@ export function createTestModel(temperature: number = 0): BaseChatModel {
     }
 
     return new ChatOpenAI({
-        model: 'qwen/qwen3-coder:free',
+        model: 'z-ai/glm-4.5-air:free',
         apiKey: OPENROUTER_API_KEY,
         temperature,
         maxTokens: 4096,

@@ -93,7 +93,7 @@ interface ChatStore {
 const defaultSettings: Settings = {
     apiKey: '',
     provider: 'openrouter',
-    model: 'z-ai/glm-4.5-air:free',
+    model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
     temperature: 0.7,
     maxTokens: 1000,
     deepResearchMode: false,

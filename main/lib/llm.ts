@@ -31,7 +31,7 @@ export interface ModelConfig {
  */
 const PLANNER_MODELS: Record<Provider, string> = {
     gemini: "gemini-2.0-flash",
-    openrouter: "z-ai/glm-4.5-air:free",
+    openrouter: "nvidia/nemotron-3-ultra-550b-a55b:free",
     huggingface: "mistralai/Mistral-7B-Instruct-v0.3",
 };
 
@@ -40,7 +40,7 @@ const PLANNER_MODELS: Record<Provider, string> = {
  */
 const REASONING_MODELS: Record<Provider, string> = {
     gemini: "gemini-2.0-flash-thinking-exp",
-    openrouter: "z-ai/glm-4.5-air:free",
+    openrouter: "nvidia/nemotron-3-ultra-550b-a55b:free",
     huggingface: "mistralai/Mixtral-8x7B-Instruct-v0.1",
 };
 

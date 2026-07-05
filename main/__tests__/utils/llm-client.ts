@@ -36,7 +36,7 @@ export function createTestModel(temperature: number = 0): BaseChatModel {
     }
 
     return new ChatOpenAI({
-        model: 'z-ai/glm-4.5-air:free',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
         apiKey: OPENROUTER_API_KEY,
         temperature,
         maxTokens: 16384,

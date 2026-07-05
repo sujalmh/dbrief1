@@ -90,9 +90,9 @@ export function SettingsModal() {
                                     )}
                                     {settings.provider === 'openrouter' && (
                                         <>
-                                            <SelectItem value="openrouter/hunter-alpha">Hunter Alpha</SelectItem>
-                                            <SelectItem value="z-ai/glm-4.5-air:free">GLM 4.5 Air (Free)</SelectItem>
-                                            <SelectItem value="stepfun/step-3.5-flash:free">Step 3.5 Flash (Free)</SelectItem>
+                                            <SelectItem value="poolside/laguna-m.1:free">Poolside Laguna M.1 (Free)</SelectItem>
+                                            <SelectItem value="nvidia/nemotron-3-ultra-550b-a55b:free">NVIDIA: Nemotron 3 Ultra (free)</SelectItem>
+                                            <SelectItem value="cohere/north-mini-code:free">Cohere: North Mini Code (free)</SelectItem>
                                         </>
                                     )}
                                     {settings.provider === 'huggingface' && (

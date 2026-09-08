@@ -21,9 +21,11 @@ import {
 } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
+import { PROVIDERS, getProviderMeta } from "@/lib/providers"
 
 export function SettingsModal() {
     const { isSettingsOpen, setSettingsOpen, settings, updateSettings, clearMessages } = useChatStore()
+    const activeProvider = getProviderMeta(settings.provider)
 
     return (
         <Dialog open={isSettingsOpen} onOpenChange={setSettingsOpen}>
@@ -66,11 +68,9 @@ export function SettingsModal() {
                                     <SelectValue placeholder="Select provider" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="gemini">Gemini</SelectItem>
-                                    <SelectItem value="openrouter">OpenRouter</SelectItem>
-                                    <SelectItem value="huggingface">HuggingFace</SelectItem>
-                                    <SelectItem value="zen">OpenCode Zen (free models)</SelectItem>
-                                    <SelectItem value="go">OpenCode Go</SelectItem>
+                                    {PROVIDERS.map((p) => (
+                                        <SelectItem key={p.id} value={p.id}>{p.menuLabel}</SelectItem>
+                                    ))}
                                 </SelectContent>
                             </Select>
                         </div>
@@ -84,43 +84,9 @@ export function SettingsModal() {
                                     <SelectValue placeholder="Select model" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    {settings.provider === 'gemini' && (
-                                        <>
-                                            <SelectItem value="gemini-2.0-flash">Gemini 2.0 Flash</SelectItem>
-                                            <SelectItem value="gemini-2.0-flash-thinking-exp">Gemini 2.0 Thinking</SelectItem>
-                                        </>
-                                    )}
-                                    {settings.provider === 'openrouter' && (
-                                        <>
-                                            <SelectItem value="poolside/laguna-m.1:free">Poolside Laguna M.1 (Free)</SelectItem>
-                                            <SelectItem value="nvidia/nemotron-3-ultra-550b-a55b:free">NVIDIA: Nemotron 3 Ultra (free)</SelectItem>
-                                            <SelectItem value="cohere/north-mini-code:free">Cohere: North Mini Code (free)</SelectItem>
-                                        </>
-                                    )}
-                                    {settings.provider === 'huggingface' && (
-                                        <>
-                                            <SelectItem value="mistralai/Mistral-7B-Instruct-v0.3">Mistral 7B</SelectItem>
-                                            <SelectItem value="mistralai/Mixtral-8x7B-Instruct-v0.1">Mixtral 8x7B</SelectItem>
-                                        </>
-                                    )}
-                                    {settings.provider === 'zen' && (
-                                        <>
-                                            <SelectItem value="nemotron-3-ultra-free">Nemotron 3 Ultra (Free)</SelectItem>
-                                            <SelectItem value="nemotron-3.5-lightning-free">Nemotron 3.5 Lightning (Free)</SelectItem>
-                                            <SelectItem value="mimo-v2.5-free">MiMo V2.5 (Free)</SelectItem>
-                                            <SelectItem value="ling-3.0-flash-fin-free">Ling 3.0 Flash Fin (Free)</SelectItem>
-                                            <SelectItem value="big-pickle">Big Pickle (Free)</SelectItem>
-                                        </>
-                                    )}
-                                    {settings.provider === 'go' && (
-                                        <>
-                                            <SelectItem value="kimi-k2.7-code">Kimi K2.7 Code</SelectItem>
-                                            <SelectItem value="kimi-k3">Kimi K3</SelectItem>
-                                            <SelectItem value="mimo-v2.5">MiMo V2.5</SelectItem>
-                                            <SelectItem value="glm-5.3-flash">GLM 5.3 Flash</SelectItem>
-                                            <SelectItem value="deepseek-v4-flash">DeepSeek V4 Flash</SelectItem>
-                                        </>
-                                    )}
+                                    {activeProvider?.models.map((m) => (
+                                        <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>
+                                    ))}
                                 </SelectContent>
                             </Select>
                         </div>

@@ -14,6 +14,7 @@ import {
     RagInputSchema,
     RagOutputSchema,
 } from "@/lib/agents/regulationRetriever";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
 // =============================================================================
 // Mock Setup
@@ -211,7 +212,7 @@ describe("generateSubQueries", () => {
         ];
 
         const mockLLM = createMockLLM(expectedQueries);
-        const result = await generateSubQueries("Test query", mockLLM as any);
+        const result = await generateSubQueries("Test query", mockLLM as unknown as BaseChatModel);
 
         expect(result).toEqual(expectedQueries);
         expect(mockLLM.invoke).toHaveBeenCalledOnce();
@@ -223,7 +224,7 @@ describe("generateSubQueries", () => {
             .map((_, i) => `query ${i}`);
 
         const mockLLM = createMockLLM(manyQueries);
-        const result = await generateSubQueries("Test query", mockLLM as any);
+        const result = await generateSubQueries("Test query", mockLLM as unknown as BaseChatModel);
 
         expect(result.length).toBeLessThanOrEqual(5);
     });
@@ -233,7 +234,7 @@ describe("generateSubQueries", () => {
             invoke: vi.fn().mockRejectedValue(new Error("LLM failed")),
         };
 
-        const result = await generateSubQueries("Original query", mockLLM as any);
+        const result = await generateSubQueries("Original query", mockLLM as unknown as BaseChatModel);
 
         expect(result).toEqual(["Original query"]);
     });
@@ -245,14 +246,14 @@ describe("generateSubQueries", () => {
             }),
         };
 
-        const result = await generateSubQueries("Original query", mockLLM as any);
+        const result = await generateSubQueries("Original query", mockLLM as unknown as BaseChatModel);
 
         expect(result).toEqual(["Original query"]);
     });
 
     it("should include original query if too few sub-queries generated", async () => {
         const mockLLM = createMockLLM(["single query"]);
-        const result = await generateSubQueries("Original query", mockLLM as any);
+        const result = await generateSubQueries("Original query", mockLLM as unknown as BaseChatModel);
 
         expect(result.length).toBeGreaterThanOrEqual(2);
         expect(result).toContain("Original query");
@@ -316,8 +317,7 @@ describe("deduplicateAndRank", () => {
     });
 
     it("should handle empty input", () => {
-        const results: any[][] = [[], []];
-        const ranked = deduplicateAndRank(results);
+        const ranked = deduplicateAndRank([[], []]);
 
         expect(ranked).toEqual([]);
     });

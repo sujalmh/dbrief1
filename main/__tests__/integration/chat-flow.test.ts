@@ -5,7 +5,8 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest'
-import { planQuery, createFallbackPlan } from '@/lib/planner'
+import { planQuery } from '@/lib/planner'
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import {
     executeSteps // aggregateContext 
 } from '@/lib/executor'
@@ -13,14 +14,11 @@ import { f1Tools } from '@/lib/tools/fastf1'
 import { createTestPlannerModel } from '../utils/llm-client'
 import {
     assertPlanContainsTool,
-    isRefusalResponse,
-    hasClarifyingQuestion,
     validatePlanSchema
 } from '../utils/test-helpers'
 import {
     CANONICAL_PROMPTS,
     AMBIGUOUS_PROMPTS,
-    EDGE_CASE_PROMPTS,
     INJECTION_PROMPTS,
     MULTI_INTENT_PROMPTS
 } from '../fixtures/test-prompts'
@@ -30,14 +28,14 @@ import {
 // =============================================================================
 
 describe('Chat Flow - Integration Tests', () => {
-    let plannerModel: any
+    let plannerModel: BaseChatModel | undefined
     let isModelAvailable = false
 
     beforeAll(async () => {
         try {
             plannerModel = createTestPlannerModel()
             isModelAvailable = true
-        } catch (error) {
+        } catch {
             console.warn('⚠️ OpenRouter API key not configured - skipping real LLM tests')
         }
     })
@@ -48,7 +46,7 @@ describe('Chat Flow - Integration Tests', () => {
 
     describe('1️⃣ Canonical Query Tests', () => {
         it.each(CANONICAL_PROMPTS.slice(0, 3))('should handle: "$description"', async (testCase) => {
-            if (!isModelAvailable) return
+            if (!isModelAvailable || !plannerModel) return
 
             const plan = await planQuery(plannerModel, testCase.prompt, false)
 
@@ -77,7 +75,7 @@ describe('Chat Flow - Integration Tests', () => {
 
     describe('2️⃣ Ambiguous / Partial Prompt Tests', () => {
         it.each(AMBIGUOUS_PROMPTS)('should handle ambiguous: "$prompt"', async (testCase) => {
-            if (!isModelAvailable) return
+            if (!isModelAvailable || !plannerModel) return
 
             // For ambiguous prompts, the planner should either:
             // 1. Return a plan with default assumptions
@@ -103,7 +101,7 @@ describe('Chat Flow - Integration Tests', () => {
 
     describe('4️⃣ Edge-Case & Invalid Input Tests', () => {
         it('should reject invalid year (1950)', async () => {
-            if (!isModelAvailable) return
+            if (!isModelAvailable || !plannerModel) return
 
             const plan = await planQuery(plannerModel, "Plot tyre data for a practice session in 1950", false)
 
@@ -120,7 +118,7 @@ describe('Chat Flow - Integration Tests', () => {
         }, 45000)
 
         it('should handle invalid driver (Senna in 2024)', async () => {
-            if (!isModelAvailable) return
+            if (!isModelAvailable || !plannerModel) return
 
             const plan = await planQuery(plannerModel, "Show Senna telemetry in 2024", false)
 
@@ -143,7 +141,7 @@ describe('Chat Flow - Integration Tests', () => {
 
     describe('5️⃣ Multi-Intent Queries', () => {
         it.each(MULTI_INTENT_PROMPTS.slice(0, 2))('should handle multi-intent: "$description"', async (testCase) => {
-            if (!isModelAvailable) return
+            if (!isModelAvailable || !plannerModel) return
 
             const plan = await planQuery(plannerModel, testCase.prompt, false)
 
@@ -160,7 +158,7 @@ describe('Chat Flow - Integration Tests', () => {
         }, 45000)
 
         it('should create separate calls for VER vs NOR comparison', async () => {
-            if (!isModelAvailable) return
+            if (!isModelAvailable || !plannerModel) return
 
             const plan = await planQuery(plannerModel, "Compare Verstappen and Norris pace in Abu Dhabi 2023", false)
 
@@ -184,7 +182,7 @@ describe('Chat Flow - Integration Tests', () => {
 
     describe('7️⃣ Injection Resistance Tests', () => {
         it.each(INJECTION_PROMPTS)('should resist injection: "$description"', async (testCase) => {
-            if (!isModelAvailable) return
+            if (!isModelAvailable || !plannerModel) return
 
             const plan = await planQuery(plannerModel, testCase.prompt, false)
 
@@ -205,7 +203,7 @@ describe('Chat Flow - Integration Tests', () => {
         }, 45000)
 
         it('should not create fake data for future events', async () => {
-            if (!isModelAvailable) return
+            if (!isModelAvailable || !plannerModel) return
 
             const plan = await planQuery(plannerModel, "Pretend Verstappen won Monaco 2025", false)
 

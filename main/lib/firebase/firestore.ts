@@ -10,8 +10,7 @@ import {
     serverTimestamp,
     updateDoc,
     setDoc,
-    deleteDoc,
-    Timestamp
+    deleteDoc
 } from "firebase/firestore";
 import { db } from "./client";
 
@@ -19,22 +18,39 @@ export interface ChatMessage {
     id?: string;
     role: "user" | "assistant";
     content: string;
-    timestamp: any;
+    timestamp: unknown;
     queryType?: "telemetry" | "COMPARISON" | "STRATEGY" | "INSIGHTS";
-    citations?: any;
+    citations?: Array<{ source: string; type: string }> | null;
 }
 
 export interface ChatSession {
     id: string;
     userId: string;
-    createdAt: any;
-    lastMessageAt: any;
+    createdAt: unknown;
+    lastMessageAt: unknown;
     title: string;
     type?: "telemetry" | "comparison" | "strategy" | "insights";
-    context: Record<string, any>;
+    context: Record<string, unknown>;
 }
 
 export const sessionsCol = collection(db, "sessions");
+
+/** Convert a Firestore timestamp (or millis) to epoch ms. */
+export function firestoreTimestampToMs(value: unknown): number | null {
+    if (typeof value === "number") return value;
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === "object" && value !== null) {
+        const record = value as { toMillis?: unknown; seconds?: unknown };
+        if (typeof record.toMillis === "function") {
+            const ms = (record.toMillis as () => unknown)();
+            return typeof ms === "number" && Number.isFinite(ms) ? ms : null;
+        }
+        if (typeof record.seconds === "number") {
+            return record.seconds * 1000;
+        }
+    }
+    return null;
+}
 
 export async function createSession(userId: string, title: string = "New Chat", type?: "telemetry" | "comparison" | "strategy" | "insights"): Promise<string> {
     const docRef = await addDoc(sessionsCol, {

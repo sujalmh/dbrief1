@@ -15,7 +15,7 @@ import { Step } from "./planner";
 export interface ExecutionResult {
     step: number;
     tool: string;
-    args: any; // Input arguments used for the tool
+    args: unknown; // Input arguments used for the tool
     success: boolean;
     data?: unknown;
     error?: string;

@@ -293,7 +293,7 @@ function parseJsonResponse(content: string): { plan: unknown; reasoning?: string
         try {
             const plan = JSON.parse(jsonStr);
             return { plan, reasoning: reasoningText };
-        } catch (error) {
+        } catch {
             throw new Error(`Failed to parse plan JSON: ${jsonStr}`);
         }
     }
@@ -301,7 +301,7 @@ function parseJsonResponse(content: string): { plan: unknown; reasoning?: string
     // Fallback: try to parse entire content as JSON (old format)
     try {
         return { plan: JSON.parse(text) };
-    } catch (error) {
+    } catch {
         throw new Error(`Failed to parse planner response as JSON: ${content}`);
     }
 }

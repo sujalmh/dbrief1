@@ -1,8 +1,8 @@
 "use client"
 
 import { Brain, Globe, Database, Cpu, BarChart3, Sparkles, Zap } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 import { useChatStore } from "@/lib/store"
-import { cn } from "@/lib/utils"
 import {
     Tooltip,
     TooltipContent,
@@ -18,19 +18,36 @@ import {
     DropdownMenuRadioGroup,
     DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu"
+import { PROVIDERS, PROVIDER_MAP, getProviderMeta } from "@/lib/providers"
+
+const PROVIDER_ICONS: Record<string, LucideIcon> = {
+    gemini: Database,
+    openrouter: Globe,
+    huggingface: Cpu,
+    zen: Sparkles,
+    go: Zap,
+};
 
 export function ControlPanel() {
     const { settings, updateSettings } = useChatStore()
 
     // Helper to get current provider icon
-    const ProviderIcon =
-        {
-            gemini: Database,
-            openrouter: Globe,
-            huggingface: Cpu,
-            zen: Sparkles,
-            go: Zap,
-        }[settings.provider] || Database
+    const ProviderIcon = PROVIDER_ICONS[settings.provider] || Database
+    const activeProvider = getProviderMeta(settings.provider)
+
+    // Switching provider also applies its default model so the selection
+    // never goes stale; the menu stays open so the user can pick another one.
+    const handleProviderChange = (v: string) => {
+        updateSettings({
+            provider: v,
+            model: PROVIDER_MAP[v as keyof typeof PROVIDER_MAP]?.defaultModel ?? settings.model,
+        });
+    };
+
+    // Keep the menu open when a provider is picked so the model can be
+    // chosen in the same interaction (Radix closes the menu on select
+    // unless the event is prevented).
+    const keepOpenOnSelect = (e: Event) => e.preventDefault();
 
     return (
         <div className="flex items-center justify-between w-full pt-2">
@@ -136,23 +153,13 @@ export function ControlPanel() {
                     </DropdownMenuLabel>
                     <DropdownMenuRadioGroup
                         value={settings.provider}
-                        onValueChange={(v) => updateSettings({ provider: v })}
+                        onValueChange={handleProviderChange}
                     >
-                        <DropdownMenuRadioItem value="gemini">
-                            Gemini
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="openrouter">
-                            OpenRouter
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="huggingface">
-                            HuggingFace
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="zen">
-                            OpenCode Zen (free)
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="go">
-                            OpenCode Go
-                        </DropdownMenuRadioItem>
+                        {PROVIDERS.map((p) => (
+                            <DropdownMenuRadioItem key={p.id} value={p.id} onSelect={keepOpenOnSelect}>
+                                {p.menuLabel}
+                            </DropdownMenuRadioItem>
+                        ))}
                     </DropdownMenuRadioGroup>
 
                     <DropdownMenuSeparator />
@@ -164,81 +171,11 @@ export function ControlPanel() {
                         value={settings.model}
                         onValueChange={(v) => updateSettings({ model: v })}
                     >
-                        {settings.provider === "gemini" && (
-                            <>
-                                <DropdownMenuRadioItem value="gemini-2.0-flash">
-                                    Gemini 2.0 Flash
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="gemini-2.0-flash-thinking-exp">
-                                    Gemini 2.0 Thinking
-                                </DropdownMenuRadioItem>
-                            </>
-                        )}
-
-                        {settings.provider === "openrouter" && (
-                            <>
-                                <DropdownMenuRadioItem value="poolside/laguna-m.1:free">
-                                    Poolside Laguna M.1 (Free)
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="nvidia/nemotron-3-ultra-550b-a55b:free">
-                                    NVIDIA: Nemotron 3 Ultra (free)
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="cohere/north-mini-code:free">
-                                    Cohere: North Mini Code (free)
-                                </DropdownMenuRadioItem>
-                            </>
-                        )}
-
-                        {settings.provider === "huggingface" && (
-                            <>
-                                <DropdownMenuRadioItem value="mistralai/Mistral-7B-Instruct-v0.3">
-                                    Mistral 7B
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="mistralai/Mixtral-8x7B-Instruct-v0.1">
-                                    Mixtral 8x7B
-                                </DropdownMenuRadioItem>
-                            </>
-                        )}
-
-                        {settings.provider === "zen" && (
-                            <>
-                                <DropdownMenuRadioItem value="nemotron-3-ultra-free">
-                                    Nemotron 3 Ultra (Free)
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="nemotron-3.5-lightning-free">
-                                    Nemotron 3.5 Lightning (Free)
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="mimo-v2.5-free">
-                                    MiMo V2.5 (Free)
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="ling-3.0-flash-fin-free">
-                                    Ling 3.0 Flash Fin (Free)
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="big-pickle">
-                                    Big Pickle (Free)
-                                </DropdownMenuRadioItem>
-                            </>
-                        )}
-
-                        {settings.provider === "go" && (
-                            <>
-                                <DropdownMenuRadioItem value="kimi-k2.7-code">
-                                    Kimi K2.7 Code
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="kimi-k3">
-                                    Kimi K3
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="mimo-v2.5">
-                                    MiMo V2.5
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="glm-5.3-flash">
-                                    GLM 5.3 Flash
-                                </DropdownMenuRadioItem>
-                                <DropdownMenuRadioItem value="deepseek-v4-flash">
-                                    DeepSeek V4 Flash
-                                </DropdownMenuRadioItem>
-                            </>
-                        )}
+                        {activeProvider?.models.map((m) => (
+                            <DropdownMenuRadioItem key={m.id} value={m.id}>
+                                {m.label}
+                            </DropdownMenuRadioItem>
+                        ))}
                     </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
             </DropdownMenu>

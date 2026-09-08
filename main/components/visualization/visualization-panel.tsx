@@ -13,16 +13,49 @@ import {
 } from "@/components/ui/tooltip"
 
 import type { LapDataPoint, TelemetryDataPoint, ComparisonDataPoint } from "@/lib/visualization/data-parser"
+import type { ApiCorner } from "./chart-types"
 import { useMediaQuery } from "@/lib/hooks/use-media-query"
 
-// Chart Item Interface
-interface ChartItem {
-    id: string
-    type: 'lap_times' | 'telemetry' | 'comparison'
-    data: any
-    title: string
-    description?: string
+// A raw data row from a tool result (mixed snake_case / PascalCase keys)
+type DataRow = Record<string, unknown>;
+
+// Payload shapes forwarded by the executor for chartable tools
+interface VisualizationPayload {
+    driver?: string;
+    laps?: DataRow[];
+    data?: DataRow[];
+    results?: DataRow[];
+    corners?: ApiCorner[];
+    session_name?: string;
 }
+
+interface VisualizationInputItem {
+    tool?: string;
+    success?: boolean;
+    args?: Record<string, unknown>;
+    data?: VisualizationPayload | null;
+    error?: string | null;
+}
+
+/** First string value found for any of the keys (numbers stringified). */
+function rowText(row: DataRow, ...keys: string[]): string {
+    for (const key of keys) {
+        const value = row[key];
+        if (typeof value === "string" && value) return value;
+        if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+    return "";
+}
+
+function asText(value: unknown): string {
+    return typeof value === "string" ? value : "";
+}
+
+// Chart Item (discriminated union so renderers narrow `data` correctly)
+type ChartItem =
+    | { id: string; type: 'lap_times'; data: LapDataPoint[]; title: string; description?: string }
+    | { id: string; type: 'telemetry'; data: { telemetry: TelemetryDataPoint[]; corners: ApiCorner[] }; title: string; description?: string }
+    | { id: string; type: 'comparison'; data: ComparisonDataPoint[]; title: string; description?: string };
 
 export function VisualizationPanel() {
     const { settings, visualizationData, visualizationWidth, updateVisualizationWidth, isVisualizationCollapsed, toggleVisualizationCollapse } = useChatStore()
@@ -87,26 +120,25 @@ export function VisualizationPanel() {
             return chartItems
         }
 
-        console.log("[VizPanel] Raw Visualization Data:", visualizationData)
-
         // Use Maps for deduplication per chart type
-        const lapsByDriver = new Map<string, { data: LapDataPoint[], args: any }>()
-        const telemetryByDriver = new Map<string, { data: TelemetryDataPoint[], corners: any[], args: any }>()
-        const comparisonBySession = new Map<string, { data: ComparisonDataPoint[], args: any }>()
+        const lapsByDriver = new Map<string, { data: LapDataPoint[], args: Record<string, unknown> | undefined }>()
+        const telemetryByDriver = new Map<string, { data: TelemetryDataPoint[], corners: ApiCorner[], args: Record<string, unknown> | undefined }>()
+        const comparisonBySession = new Map<string, { data: ComparisonDataPoint[], args: Record<string, unknown> | undefined }>()
 
         // First pass: Collect and deduplicate data
-        for (const result of visualizationData) {
-            if (!result.success || !result.data) continue
+        for (const result of (visualizationData ?? []) as VisualizationInputItem[]) {
+            const payload = result.data
+            if (!result.success || !payload) continue
 
             // Handle laps data
-            if (result.tool === 'get_laps' && result.data.laps) {
-                const driver = result.data.driver || result.args?.driver_number || 'Unknown'
+            if (result.tool === 'get_laps' && payload.laps) {
+                const driver = payload.driver || asText(result.args?.driver_number) || 'Unknown'
                 const lapMap = new Map<string, LapDataPoint>()
 
-                for (const lap of result.data.laps) {
-                    const lapNumber = parseInt(lap.lap_number || lap.LapNumber || '0')
-                    const lapTime = parseLapTime(lap.lap_time || lap.LapTime || '0')
-                    const driverCode = lap.driver || lap.Driver || driver
+                for (const lap of payload.laps) {
+                    const lapNumber = parseInt(rowText(lap, 'lap_number', 'LapNumber') || '0')
+                    const lapTime = parseLapTime(rowText(lap, 'lap_time', 'LapTime') || '0')
+                    const driverCode = rowText(lap, 'driver', 'Driver') || driver
 
                     if (!isNaN(lapNumber) && !isNaN(lapTime) && lapTime > 0) {
                         const key = `${driverCode}-${lapNumber}`
@@ -115,7 +147,7 @@ export function VisualizationPanel() {
                                 lap: lapNumber,
                                 time: lapTime,
                                 driver: driverCode,
-                                compound: lap.compound || lap.Compound
+                                compound: rowText(lap, 'compound', 'Compound') || undefined
                             })
                         }
                     }
@@ -129,30 +161,30 @@ export function VisualizationPanel() {
             }
 
             // Handle telemetry data
-            if (result.tool === 'get_telemetry' && result.data.data) {
-                const driver = result.data.driver || result.args?.driver_number || 'Unknown'
+            if (result.tool === 'get_telemetry' && payload.data) {
+                const driver = payload.driver || asText(result.args?.driver_number) || 'Unknown'
                 const telemetryMap = new Map<string, TelemetryDataPoint>()
 
-                for (const point of result.data.data) {
-                    const getVal = (k1: string, k2: string) => point[k1] !== undefined ? point[k1] : point[k2]
-                    const distance = parseFloat(getVal('Distance', 'distance') || '0')
+                for (const point of payload.data) {
+                    const distance = parseFloat(rowText(point, 'Distance', 'distance') || '0')
 
                     if (!isNaN(distance)) {
                         const key = `${driver}-${distance.toFixed(1)}`
                         if (!telemetryMap.has(key)) {
-                            const parseTelemetryValue = (val: any) => {
+                            const parseTelemetryValue = (val: unknown) => {
                                 if (val === true) return 100
                                 if (val === false) return 0
                                 if (val === null || val === undefined) return 0
-                                return parseFloat(val) || 0
+                                if (typeof val === "number") return Number.isFinite(val) ? val : 0
+                                return parseFloat(String(val)) || 0
                             }
 
                             telemetryMap.set(key, {
                                 distance,
-                                speed: parseTelemetryValue(getVal('Speed', 'speed')),
-                                throttle: parseTelemetryValue(getVal('Throttle', 'throttle')),
-                                brake: parseTelemetryValue(getVal('Brake', 'brake')),
-                                gear: parseInt(getVal('nGear', 'gear') || '0') || 0,
+                                speed: parseTelemetryValue(point['Speed'] ?? point['speed']),
+                                throttle: parseTelemetryValue(point['Throttle'] ?? point['throttle']),
+                                brake: parseTelemetryValue(point['Brake'] ?? point['brake']),
+                                gear: parseInt(rowText(point, 'nGear', 'gear') || '0') || 0,
                                 driver
                             })
                         }
@@ -162,23 +194,26 @@ export function VisualizationPanel() {
                 if (telemetryMap.size > 0) {
                     const existing = telemetryByDriver.get(driver) || {
                         data: [] as TelemetryDataPoint[],
-                        corners: result.data?.corners || [],
+                        corners: payload.corners || [],
                         args: result.args
                     }
                     existing.data.push(...Array.from(telemetryMap.values()))
-                    if (result.data?.corners && result.data.corners.length > 0) {
-                        existing.corners = result.data.corners
+                    if (payload.corners && payload.corners.length > 0) {
+                        existing.corners = payload.corners
                     }
                     telemetryByDriver.set(driver, existing)
                 }
             }
 
             // Handle comparison data (qualifying/race results)
-            if ((result.tool === 'get_qualifying' || result.tool === 'get_race') && result.data.results) {
-                let season = result.args?.year?.toString()
+            if ((result.tool === 'get_qualifying' || result.tool === 'get_race') && payload.results) {
+                const yearArg = result.args?.year
+                let season = (typeof yearArg === "string" || typeof yearArg === "number")
+                    ? String(yearArg)
+                    : undefined
 
                 if (!season) {
-                    const sessionName = result.data.session_name || ''
+                    const sessionName = payload.session_name || ''
                     const yearMatch = sessionName.match(/\b(20\d{2})\b/)
                     season = yearMatch ? yearMatch[1] : undefined
                 }
@@ -190,11 +225,12 @@ export function VisualizationPanel() {
                 const sessionLabel = season ? `${season} (${sessionType})` : sessionType
                 const comparisonMap = new Map<string, ComparisonDataPoint>()
 
-                for (const r of result.data.results) {
-                    const driver = r.driver || r.Driver || r.Abbreviation || 'Unknown'
-                    const timeOrPos = r.time || r.Time || r.q3 || r.q2 || r.q1 || '0'
-                    const value = r.position || r.Position ? parseInt(r.position || r.Position) : parseLapTime(timeOrPos)
-                    const label = r.team || r.TeamName || ''
+                for (const r of payload.results) {
+                    const driver = rowText(r, 'driver', 'Driver', 'Abbreviation') || 'Unknown'
+                    const timeOrPos = rowText(r, 'time', 'Time', 'q3', 'q2', 'q1') || '0'
+                    const posText = rowText(r, 'position', 'Position')
+                    const value = posText ? parseInt(posText) : parseLapTime(timeOrPos)
+                    const label = rowText(r, 'team', 'TeamName')
 
                     if (!isNaN(value)) {
                         const key = `${driver}-${sessionLabel}-${value}`
@@ -242,7 +278,7 @@ export function VisualizationPanel() {
 
         // Create Telemetry charts (one per driver)
         telemetryByDriver.forEach((telemetryInfo, driver) => {
-            const lapNumber = telemetryInfo.args?.lap_number || 'N/A'
+            const lapNumber = String(telemetryInfo.args?.lap_number || 'N/A')
             const title = `Telemetry: ${driver} - Lap ${lapNumber}`
 
             chartItems.push({
@@ -268,7 +304,6 @@ export function VisualizationPanel() {
             })
         })
 
-        console.log("[VizPanel] Generated Charts:", chartItems)
         return chartItems
     }, [visualizationData, hasData])
 

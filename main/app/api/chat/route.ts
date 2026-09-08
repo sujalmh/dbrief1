@@ -20,17 +20,16 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import type { StructuredTool } from "@langchain/core/tools";
 
 import { getPlannerModel, getResponderModel, Provider } from "@/lib/llm";
-import { planQuery, streamPlanQuery, createFallbackPlan, Plan } from "@/lib/planner";
+import { streamPlanQuery, createFallbackPlan, Plan } from "@/lib/planner";
 import { executeSteps, aggregateContext } from "@/lib/executor";
 import { f1Tools } from "@/lib/tools/fastf1";
 import { getSearchTools } from "@/lib/tools/search";
-import { getVisualizationTools } from "@/lib/tools/visualization";
 import { getRegulationTools } from "@/lib/tools/regulation";
 import { getSimulationTools } from "@/lib/tools/simulation";
-import { adminAuth, adminDb } from "@/lib/firebase/admin";
-import { FieldValue } from "firebase-admin/firestore";
+import { adminAuth } from "@/lib/firebase/admin";
 
 // =============================================================================
 // Request Validation
@@ -76,59 +75,6 @@ const RESPONDER_SYSTEM_PROMPT = `You are an expert Formula 1 AI assistant with d
 - Use tables for comparisons when appropriate
 - Bold important information
 - Keep responses focused and relevant`;
-
-// =============================================================================
-// Streaming Helpers
-// =============================================================================
-
-/**
- * Create a streaming response from LLM output
- */
-async function createStreamingResponse(
-    model: ReturnType<typeof getResponderModel> extends Promise<infer T> ? T : never,
-    messages: (SystemMessage | HumanMessage)[]
-): Promise<Response> {
-    const encoder = new TextEncoder();
-
-    const stream = new ReadableStream({
-        async start(controller) {
-            try {
-                // Use streaming if available
-                const response = await model.stream(messages);
-
-                for await (const chunk of response) {
-                    const content =
-                        typeof chunk.content === "string"
-                            ? chunk.content
-                            : JSON.stringify(chunk.content);
-
-                    if (content) {
-                        // Send as SSE data
-                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`));
-                    }
-                }
-
-                // Send done signal
-                controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-                controller.close();
-            } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : "Streaming failed";
-                controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify({ error: errorMessage })}\n\n`)
-                );
-                controller.close();
-            }
-        },
-    });
-
-    return new Response(stream, {
-        headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-        },
-    });
-}
 
 // =============================================================================
 // Main API Handler
@@ -182,7 +128,7 @@ export async function POST(request: NextRequest) {
                     }
                 };
 
-                const sendEvent = (event: string, data: any) => {
+                const sendEvent = (event: string, data: unknown) => {
                     if (controllerClosed) return;
                     try {
                         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ event, data })}\n\n`));
@@ -230,7 +176,7 @@ export async function POST(request: NextRequest) {
                     sendEvent("plan", { steps: plan.steps });
 
                     // 3. Execute Plan with mode-specific tools
-                    let tools: Record<string, any>;
+                    let tools: Record<string, StructuredTool>;
 
                     if (deepResearchMode) {
                         // Deep Research Mode: All agents enabled
@@ -278,11 +224,11 @@ export async function POST(request: NextRequest) {
                                     const data = typeof result.data === 'string' ? JSON.parse(result.data) : result.data;
 
                                     if (data.retrieved_documents && Array.isArray(data.retrieved_documents)) {
-                                        data.retrieved_documents.forEach((doc: any) => {
-                                            if (doc.source) {
+                                        data.retrieved_documents.forEach((doc: { source?: unknown; doc_type?: unknown }) => {
+                                            if (typeof doc.source === "string" && doc.source) {
                                                 citations.push({
                                                     source: doc.source,
-                                                    type: doc.doc_type || "regulation"
+                                                    type: typeof doc.doc_type === "string" ? doc.doc_type : "regulation"
                                                 });
                                             }
                                         });
@@ -319,13 +265,11 @@ Please answer the user's question based on the F1 data provided above.`;
                     ];
 
                     // Stream Response
-                    let assistantContent = "";
                     const response = await responderModel.stream(messages);
 
                     for await (const chunk of response) {
                         const content = typeof chunk.content === "string" ? chunk.content : JSON.stringify(chunk.content);
                         if (content) {
-                            assistantContent += content;
                             sendEvent("token", { content });
                         }
                     }

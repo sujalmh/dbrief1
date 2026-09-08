@@ -19,7 +19,27 @@ export interface Message {
         source: string
         type: string
     }[]
-    visualizationData?: any
+    visualizationData?: VisualizationResultItem[]
+}
+
+/** A single tool result forwarded to the visualization layer. */
+export interface VisualizationResultItem {
+    tool: string
+    args?: Record<string, unknown>
+    success: boolean
+    data?: unknown
+    error?: string | null
+}
+
+/** A persisted chat session (mirrors the Firestore document). */
+export interface StoredSession {
+    id: string
+    userId?: string
+    title?: string
+    type?: string
+    createdAt?: unknown
+    lastMessageAt?: unknown
+    context?: Record<string, unknown>
 }
 
 interface Settings {
@@ -38,7 +58,7 @@ export interface GraphHistoryItem {
     id: string
     name: string
     type: 'lap_times' | 'telemetry' | 'comparison'
-    data: any
+    data: unknown
     timestamp: number
 }
 
@@ -47,7 +67,7 @@ interface ChatStore {
     isLoading: boolean
     input: string
     settings: Settings
-    visualizationData: any | null
+    visualizationData: VisualizationResultItem[] | null
     graphHistory: GraphHistoryItem[]
 
     activeMessageId: string | null
@@ -55,8 +75,8 @@ interface ChatStore {
 
     currentSessionId: string | null
     setCurrentSessionId: (id: string | null) => void
-    sessions: any[]
-    setSessions: (sessions: any[]) => void
+    sessions: StoredSession[]
+    setSessions: (sessions: StoredSession[]) => void
 
     isSettingsOpen: boolean
     setSettingsOpen: (isOpen: boolean) => void
@@ -77,10 +97,10 @@ interface ChatStore {
     updateMessage: (id: string, content: string, isError?: boolean) => void
     updateMessageSteps: (id: string, steps: Message['steps']) => void
     updateMessageReasoning: (id: string, reasoning: string) => void
-    updateMessageVisualization: (id: string, data: any) => void
+    updateMessageVisualization: (id: string, data: VisualizationResultItem[] | undefined) => void
     updateMessageCitations: (id: string, citations: { source: string; type: string }[]) => void
-    setVisualizationData: (data: any) => void
-    addGraphToHistory: (name: string, type: GraphHistoryItem['type'], data: any) => void
+    setVisualizationData: (data: VisualizationResultItem[] | null) => void
+    addGraphToHistory: (name: string, type: GraphHistoryItem['type'], data: unknown) => void
     removeGraphFromHistory: (id: string) => void
     clearMessages: () => void
     deleteMessage: (id: string) => void

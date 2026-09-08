@@ -53,6 +53,7 @@ export function LoginPage() {
                         {isLoading ? (
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         ) : (
+                            // eslint-disable-next-line @next/next/no-img-element -- 20px remote favicon; next/image buys nothing here
                             <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5 mr-3" />
                         )}
                         CONTINUE WITH GOOGLE

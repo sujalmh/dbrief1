@@ -25,8 +25,9 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
 const VOYAGE_API_URL = "https://ai.mongodb.com/v1/embeddings";
 const VOYAGE_RERANK_URL = "https://ai.mongodb.com/v1/rerank";
-const EMBEDDING_MODEL = "voyage-4";
-const EMBEDDING_DIM = 1024;
+export const EMBEDDING_MODEL = "voyage-4";
+/** voyage-4 default output dimension (must match the Qdrant collection). */
+export const EMBEDDING_DIM = 1024;
 const RERANK_MODEL = "rerank-3";
 const MAX_SUBQUERIES = 5;
 const MIN_SUBQUERIES = 2;
@@ -488,7 +489,17 @@ export function deduplicateAndRank(results: RetrievedDocument[][]): Document[] {
     });
 
     // Return top N results, stripped of ranking metadata
-    return ranked.slice(0, TOP_N_RESULTS).map(({ frequency, originalOrder, ...doc }) => doc);
+    return ranked.slice(0, TOP_N_RESULTS).map((doc) => ({
+        source: doc.source,
+        title: doc.title,
+        url: doc.url,
+        doc_type: doc.doc_type,
+        section: doc.section,
+        event: doc.event,
+        season: doc.season,
+        published_on: doc.published_on,
+        content: doc.content,
+    }));
 }
 
 // =============================================================================

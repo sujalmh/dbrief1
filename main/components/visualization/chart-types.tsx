@@ -69,8 +69,32 @@ function formatLapTime(seconds: number): string {
 }
 
 // Helper: Custom tooltip content
-function CustomTooltip({ active, payload, label, type }: any) {
+interface TooltipEntry {
+    name?: string;
+    value?: string | number;
+    color?: string;
+}
+
+interface TooltipContentProps {
+    active?: boolean;
+    payload?: TooltipEntry[];
+    label?: string | number;
+    type?: string;
+}
+
+/** Corner marker from the F1 API (Number/Distance/Letter fields). */
+export interface ApiCorner {
+    Number?: number;
+    Distance?: number;
+    Letter?: string;
+}
+
+function CustomTooltip({ active, payload, label, type }: TooltipContentProps) {
     if (!active || !payload || !payload.length) return null
+
+    const entryName = (entry: TooltipEntry) => entry.name ?? ""
+    const isSpeed = (entry: TooltipEntry) => entryName(entry).includes('Speed')
+    const isPercent = (entry: TooltipEntry) => entryName(entry).includes('Throttle') || entryName(entry).includes('Brake')
 
     return (
         <div className="rounded-lg border border-border bg-background/95 p-3 shadow-lg backdrop-blur">
@@ -79,7 +103,7 @@ function CustomTooltip({ active, payload, label, type }: any) {
                     type === 'lap' ? `Lap ${label}` : label}
             </p>
             <div className="space-y-1">
-                {payload.map((entry: any, i: number) => (
+                {payload.map((entry, i: number) => (
                     <div key={i} className="flex items-center gap-2 text-xs">
                         <div
                             className="w-3 h-3 rounded-full"
@@ -87,13 +111,13 @@ function CustomTooltip({ active, payload, label, type }: any) {
                         />
                         <span className="text-muted-foreground">{entry.name}:</span>
                         <span className="font-medium text-foreground">
-                            {type === 'lap' && entry.name.includes('Time')
-                                ? formatLapTime(entry.value)
+                            {type === 'lap' && entryName(entry).includes('Time')
+                                ? (typeof entry.value === 'number' ? formatLapTime(entry.value) : entry.value)
                                 : typeof entry.value === 'number'
-                                    ? entry.value.toFixed(entry.name.includes('Speed') ? 0 : 1)
+                                    ? entry.value.toFixed(isSpeed(entry) ? 0 : 1)
                                     : entry.value}
-                            {entry.name.includes('Speed') && ' km/h'}
-                            {(entry.name.includes('Throttle') || entry.name.includes('Brake')) && '%'}
+                            {isSpeed(entry) && ' km/h'}
+                            {isPercent(entry) && '%'}
                         </span>
                     </div>
                 ))}
@@ -125,8 +149,8 @@ export function LapTimesChart({ data, title }: LapTimesChartProps) {
         // Restructure data for multi-driver comparison
         // Group by lap number
         const laps = [...new Set(data.map(d => d.lap))].sort((a, b) => a - b)
-        const chartData = laps.map(lap => {
-            const point: any = { lap }
+        const chartData: Record<string, number>[] = laps.map(lap => {
+            const point: Record<string, number> = { lap }
             drivers.forEach(driver => {
                 const lapData = data.find(d => d.lap === lap && d.driver === driver)
                 if (lapData) point[driver] = lapData.time
@@ -208,8 +232,8 @@ export function LapTimesChart({ data, title }: LapTimesChartProps) {
                         name={`${driverName} Time`}
                         stroke={F1_COLORS.red}
                         strokeWidth={2}
-                        dot={(props: any) => {
-                            const compound = data.find(d => d.lap === props.payload.lap)?.compound
+                        dot={(props) => {
+                            const compound = data.find(d => d.lap === props.payload?.lap)?.compound
                             const compoundColor = compound === 'SOFT' ? F1_COLORS.red :
                                 compound === 'MEDIUM' ? F1_COLORS.yellow :
                                     compound === 'HARD' ? F1_COLORS.silver : F1_COLORS.red
@@ -247,24 +271,32 @@ export function ComparisonChart({ data, title }: ComparisonChartProps) {
     const hasMultipleSeasons = seasons.length > 1
 
     // 2. Prepare Chart Data
-    let chartData: any[] = []
+    interface ComparisonRow {
+        driver: string;
+        label?: string;
+        value?: number;
+        delta?: number;
+        color?: string;
+        [season: string]: string | number | undefined;
+    }
+    let chartData: ComparisonRow[] = []
     let bars: React.ReactNode[] = []
 
     if (hasMultipleSeasons) {
         // GROUPED BAR CHART LOGIC
         // Transform: [{driver: VER, season: 2022, value: 1}, {driver: VER, season: 2023, value: 1}]
         // To: [{driver: VER, 2022: 1, 2023: 1}]
-        
-        const grouped = new Map<string, any>()
-        
+
+        const grouped = new Map<string, ComparisonRow>()
+
         data.forEach(d => {
             if (!grouped.has(d.driver)) {
                 grouped.set(d.driver, { driver: d.driver, label: d.label })
             }
             const entry = grouped.get(d.driver)
-            if (d.season) {
-                entry[d.season] = d.value
-            } else {
+            if (d.season && entry) {
+                entry[String(d.season)] = d.value
+            } else if (entry) {
                 entry['value'] = d.value // Fallback
             }
         })
@@ -345,14 +377,14 @@ export function ComparisonChart({ data, title }: ComparisonChartProps) {
                                     <p className="font-bold text-sm mb-1">{d.driver}</p>
                                     {d.label && <p className="text-xs text-muted-foreground mb-2">{d.label}</p>}
                                     <div className="space-y-1 text-xs">
-                                        {payload.map((p: any) => (
-                                             <div key={p.name} className="flex justify-between gap-4 items-center">
+                                        {payload.map((p: TooltipEntry) => (
+                                              <div key={p.name} className="flex justify-between gap-4 items-center">
                                                 <span className="flex items-center gap-1">
                                                     <div className="w-2 h-2 rounded-full" style={{backgroundColor: p.color}}></div>
                                                     <span className="text-muted-foreground">{p.name}:</span>
                                                 </span>
                                                 <span className="font-medium">
-                                                    {p.name === 'Value' || !isNaN(Number(p.name)) ? formatLapTime(p.value) : p.value}
+                                                    {p.name === 'Value' || !isNaN(Number(p.name)) ? (typeof p.value === 'number' ? formatLapTime(p.value) : p.value) : p.value}
                                                 </span>
                                             </div>
                                         ))}
@@ -377,7 +409,7 @@ interface TelemetryChartProps {
     data: TelemetryDataPoint[]
     title?: string
     circuit?: string
-    corners?: any[]
+    corners?: ApiCorner[]
 }
 
 export function TelemetryChart({ data, title, circuit, corners: apiCorners }: TelemetryChartProps) {
@@ -402,8 +434,8 @@ export function TelemetryChart({ data, title, circuit, corners: apiCorners }: Te
         corners = apiCorners
             .filter(c => c.Distance !== undefined && c.Distance <= maxDistance)
             .map(c => ({
-                corner: c.Number,
-                distance: c.Distance,
+                corner: c.Number ?? 0,
+                distance: c.Distance ?? 0,
                 name: c.Letter
             }))
     }
@@ -419,7 +451,11 @@ export function TelemetryChart({ data, title, circuit, corners: apiCorners }: Te
     // For multi-driver, restructure data
     if (hasMultipleDrivers) {
         // Group by distance (rounded to nearest 10m for alignment)
-        const distanceGroups = new Map<number, any>()
+        interface TelemetryRow {
+            distance: number;
+            [driverChannel: string]: number;
+        }
+        const distanceGroups = new Map<number, TelemetryRow>()
 
         data.forEach(point => {
             const roundedDist = Math.round(point.distance / 10) * 10
@@ -433,10 +469,6 @@ export function TelemetryChart({ data, title, circuit, corners: apiCorners }: Te
                 if (point.gear !== undefined) group[`${point.driver}_gear`] = point.gear
                 if (point.brake !== undefined) {
                     group[`${point.driver}_brake`] = point.brake
-                    // Log first few detections of non-zero brake to confirm data presence
-                    if (point.brake > 0 && Math.random() < 0.01) {
-                         console.log("[VizDebug] Found brake data:", point.driver, point.brake, roundedDist)
-                    }
                 }
             }
         })

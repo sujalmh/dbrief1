@@ -2,7 +2,9 @@
 
 import React from "react";
 import { Plus, MessageSquare, LogOut, User as UserIcon, PanelLeft, Trash2 } from "lucide-react";
-import { useChatStore } from "@/lib/store";
+import { useChatStore } from "@/lib/store"
+import type { StoredSession } from "@/lib/store"
+import { firestoreTimestampToMs } from "@/lib/firebase/firestore";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { createSession, getSessions, getSessionMessages, deleteSession } from "@/lib/firebase/firestore";
 import { cn } from "@/lib/utils";
@@ -14,7 +16,6 @@ export function Sidebar() {
         setCurrentSessionId,
         setSessions,
         setMessages,
-        setLoading,
         isSidebarOpen,
         setSidebarOpen
     } = useChatStore();
@@ -57,7 +58,7 @@ export function Sidebar() {
             id: m.id!,
             role: m.role,
             content: m.content,
-            timestamp: m.timestamp?.toMillis() || Date.now(),
+            timestamp: firestoreTimestampToMs(m.timestamp) ?? Date.now(),
             // Map other fields if necessary
         })));
     };
@@ -99,30 +100,14 @@ export function Sidebar() {
     const [nowMs, setNowMs] = React.useState(() => Date.now());
 
     React.useEffect(() => {
-        const intervalId = window.setInterval(() => setNowMs(Date.now()), 1000);
+        const intervalId = window.setInterval(() => setNowMs(Date.now()), 30000);
         return () => window.clearInterval(intervalId);
     }, []);
 
-    const getSessionTimeMs = (session: any): number | null => {
-        const source = session?.lastMessageAt ?? session?.createdAt;
-        if (!source) return null;
+    const getSessionTimeMs = (session: StoredSession): number | null =>
+        firestoreTimestampToMs(session?.lastMessageAt ?? session?.createdAt);
 
-        if (typeof source === "number") return source;
-        if (source instanceof Date) return source.getTime();
-
-        if (typeof source?.toMillis === "function") {
-            const ms = source.toMillis();
-            return Number.isFinite(ms) ? ms : null;
-        }
-
-        if (typeof source?.seconds === "number") {
-            return source.seconds * 1000;
-        }
-
-        return null;
-    };
-
-    const formatSessionDelta = (session: any, isActive: boolean): string => {
+    const formatSessionDelta = (session: StoredSession, isActive: boolean): string => {
         const sessionMs = getSessionTimeMs(session);
 
         if (isActive) {
@@ -277,7 +262,8 @@ export function Sidebar() {
                     !isSidebarOpen && "justify-center"
                 )}>
                     {user?.photoURL ? (
-                        <img src={user.photoURL} alt="User" className="h-8 w-8 rounded-full border border-sidebar-border shrink-0" />
+                        // eslint-disable-next-line @next/next/no-img-element -- user avatar from arbitrary OAuth domains; unsuitable for next/image without wildcard remotePatterns
+                            <img src={user.photoURL} alt="User" className="h-8 w-8 rounded-full border border-sidebar-border shrink-0" />
                     ) : (
                         <div className="h-8 w-8 rounded-full bg-sidebar-accent flex items-center justify-center border border-sidebar-border shrink-0 text-foreground">
                             <UserIcon className="h-4 w-4" />

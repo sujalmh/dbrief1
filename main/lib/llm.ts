@@ -9,12 +9,18 @@
 
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { PROVIDER_MAP } from "./providers";
+
+export type { Provider } from "./providers";
+import type { Provider } from "./providers";
 
 // =============================================================================
 // Types
 // =============================================================================
 
-export type Provider = "gemini" | "openrouter" | "huggingface" | "zen" | "go";
+// =============================================================================
+// Model Mappings (single source of truth: lib/providers.ts)
+// =============================================================================
 
 export interface ModelConfig {
     provider: Provider;
@@ -31,30 +37,8 @@ export interface ModelConfig {
 }
 
 // =============================================================================
-// Model Mappings
+// Model Mappings (single source of truth: lib/providers.ts)
 // =============================================================================
-
-/**
- * Default cheap models for the planner (fast, low-cost)
- */
-const PLANNER_MODELS: Record<Provider, string> = {
-    gemini: "gemini-2.0-flash",
-    openrouter: "nvidia/nemotron-3-ultra-550b-a55b:free",
-    huggingface: "mistralai/Mistral-7B-Instruct-v0.3",
-    zen: "nemotron-3-ultra-free",
-    go: "mimo-v2.5",
-};
-
-/**
- * Reasoning-capable models for complex analysis
- */
-const REASONING_MODELS: Record<Provider, string> = {
-    gemini: "gemini-2.0-flash-thinking-exp",
-    openrouter: "nvidia/nemotron-3-ultra-550b-a55b:free",
-    huggingface: "mistralai/Mixtral-8x7B-Instruct-v0.1",
-    zen: "mimo-v2.5-free",
-    go: "kimi-k2.7-code",
-};
 
 // =============================================================================
 // OpenCode Zen / Go (OpenAI-compatible gateways)
@@ -66,22 +50,10 @@ const REASONING_MODELS: Record<Provider, string> = {
  * Note: muse-spark-1.3-contributor-free is excluded — it only serves the
  * /responses endpoint, which LangChain ChatOpenAI does not speak.
  */
-export const ZEN_FREE_MODELS = [
-    "nemotron-3-ultra-free",
-    "nemotron-3.5-lightning-free",
-    "mimo-v2.5-free",
-    "ling-3.0-flash-fin-free",
-    "big-pickle",
-] as const;
+export const ZEN_FREE_MODELS: string[] = PROVIDER_MAP.zen.models.map((m) => m.id);
 
 /** Curated Go coding models (chat/completions endpoint, requires Go subscription). */
-export const GO_MODELS = [
-    "kimi-k2.7-code",
-    "kimi-k3",
-    "mimo-v2.5",
-    "glm-5.3-flash",
-    "deepseek-v4-flash",
-] as const;
+export const GO_MODELS: string[] = PROVIDER_MAP.go.models.map((m) => m.id);
 
 export const ZEN_BASE_URL = "https://opencode.ai/zen/v1";
 export const GO_BASE_URL = "https://opencode.ai/zen/go/v1";
@@ -123,7 +95,7 @@ function createGeminiModel(
     maxTokens: number = 4096,
     userApiKey?: string
 ): BaseChatModel {
-    const apiKey = userApiKey || process.env.GOOGLE_AI_API_KEY;
+    const apiKey = userApiKey || process.env[PROVIDER_MAP.gemini.envKey];
     if (!apiKey) {
         throw new Error("API key is required. Please provide it in Settings.");
     }
@@ -146,7 +118,7 @@ async function createOpenRouterModel(
     maxTokens: number = 4096,
     userApiKey?: string
 ): Promise<BaseChatModel> {
-    const apiKey = userApiKey || process.env.OPENROUTER_API_KEY;
+    const apiKey = userApiKey || process.env[PROVIDER_MAP.openrouter.envKey];
     if (!apiKey) {
         throw new Error("API key is required. Please provide it in Settings.");
     }
@@ -177,7 +149,7 @@ async function createZenModel(
     userApiKey?: string,
     sessionId?: string
 ): Promise<BaseChatModel> {
-    const apiKey = userApiKey || process.env.OPENCODE_ZEN_API_KEY;
+    const apiKey = userApiKey || process.env[PROVIDER_MAP.zen.envKey];
     if (!apiKey) {
         throw new Error("API key is required. Add it in Settings or set OPENCODE_ZEN_API_KEY.");
     }
@@ -208,7 +180,7 @@ async function createGoModel(
     userApiKey?: string,
     sessionId?: string
 ): Promise<BaseChatModel> {
-    const apiKey = userApiKey || process.env.OPENCODE_GO_API_KEY;
+    const apiKey = userApiKey || process.env[PROVIDER_MAP.go.envKey];
     if (!apiKey) {
         throw new Error("API key is required. Add it in Settings or set OPENCODE_GO_API_KEY.");
     }
@@ -235,7 +207,7 @@ async function createHuggingFaceModel(
     maxTokens: number = 4096,
     userApiKey?: string
 ): Promise<BaseChatModel> {
-    const apiKey = userApiKey || process.env.HUGGINGFACE_API_KEY;
+    const apiKey = userApiKey || process.env[PROVIDER_MAP.huggingface.envKey];
     if (!apiKey) {
         throw new Error("API key is required. Please provide it in Settings.");
     }
@@ -300,7 +272,7 @@ export async function getChatModel(config: ModelConfig, apiKey?: string): Promis
  * @returns LangChain chat model for planning
  */
 export async function getPlannerModel(provider: Provider, apiKey?: string, sessionId?: string): Promise<BaseChatModel> {
-    const model = PLANNER_MODELS[provider];
+    const model = PROVIDER_MAP[provider].plannerModel;
 
     return getChatModel({
         provider,
@@ -329,7 +301,7 @@ export async function getResponderModel(
     sessionId?: string
 ): Promise<BaseChatModel> {
     // If reasoning is enabled, use the reasoning model for this provider
-    const selectedModel = reasoning ? REASONING_MODELS[provider] : model;
+    const selectedModel = reasoning ? PROVIDER_MAP[provider].reasoningModel : model;
 
     return getChatModel({
         provider,
@@ -345,18 +317,5 @@ export async function getResponderModel(
  * Check if API key is configured for a provider
  */
 export function isProviderConfigured(provider: Provider): boolean {
-    switch (provider) {
-        case "gemini":
-            return !!process.env.GOOGLE_AI_API_KEY;
-        case "openrouter":
-            return !!process.env.OPENROUTER_API_KEY;
-        case "huggingface":
-            return !!process.env.HUGGINGFACE_API_KEY;
-        case "zen":
-            return !!process.env.OPENCODE_ZEN_API_KEY;
-        case "go":
-            return !!process.env.OPENCODE_GO_API_KEY;
-        default:
-            return false;
-    }
+    return !!process.env[PROVIDER_MAP[provider].envKey];
 }

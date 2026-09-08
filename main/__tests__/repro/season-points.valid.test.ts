@@ -8,9 +8,10 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import { planQuery } from '@/lib/planner'
 import { createTestPlannerModel } from '../utils/llm-client'
 import { assertPlanContainsTool, assertPlanArgs } from '../utils/test-helpers'
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 
 describe('Verification: Season Points Success', () => {
-    let plannerModel: any
+    let plannerModel: BaseChatModel | undefined
 
     beforeAll(() => {
         try {

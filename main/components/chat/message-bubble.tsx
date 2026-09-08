@@ -198,7 +198,7 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
 
     // Memoize the visualization button click handler
     const handleShowChart = useCallback(() => {
-        useChatStore.getState().setVisualizationData(message.visualizationData)
+        useChatStore.getState().setVisualizationData(message.visualizationData ?? null)
     }, [message.visualizationData])
 
     const ActionsToolbar = (

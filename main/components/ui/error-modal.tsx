@@ -3,7 +3,6 @@
 import * as React from "react"
 import { AlertTriangle, X } from "lucide-react"
 import { useChatStore } from "@/lib/store"
-import { cn } from "@/lib/utils"
 import { AnimatePresence, motion } from "framer-motion"
 
 export function ErrorModal() {

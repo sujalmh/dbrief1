@@ -13,10 +13,8 @@ import { executeSteps, aggregateContext } from '@/lib/executor'
 import { createTestPlannerModel } from '../utils/llm-client'
 import {
     scoreResponseQuality,
-    assertResponseContains,
     assertResponseNotContains,
     validatePlanSchema,
-    assertPlanContainsTool,
     createMockToolRegistry,
     type QualityScore,
 } from '../utils/test-helpers'
@@ -42,7 +40,7 @@ afterAll(() => {
 
     const categories = [...new Set(scoreLog.map(s => s.category))]
     let totalPassed = 0
-    let totalTests = scoreLog.length
+    const totalTests = scoreLog.length
 
     for (const cat of categories) {
         const catScores = scoreLog.filter(s => s.category === cat)

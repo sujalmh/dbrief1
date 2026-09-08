@@ -27,25 +27,31 @@ export function Header() {
 
     // Derive context from the active message
     const context = useMemo(() => {
-        const data = activeMessage?.visualizationData
+        const results = activeMessage?.visualizationData
         const currentSession = sessions.find(s => s.id === currentSessionId)
 
         // Use session title if available, otherwise "NEW CHAT"
-        let sessionString = currentSession?.title ? currentSession.title.toUpperCase() : "NEW CHAT"
+        const sessionString = currentSession?.title ? currentSession.title.toUpperCase() : "NEW CHAT"
         let mode = "Telemetry" // Default
 
-        if (data) {
-            // Heuristic: check data title for overrides, but prefer session title for main context
-            // If data has specific session info like "Q3 - Saudi Arabia", we might want to prioritize that contextually
-            // But for the main "Badge", the user asked to replace "2023 SEASON OVERVIEW" which acts as the page title.
-            // So sticking to session title is safer for "smart title" request.
-
-            // Keep mode detection
-            const title = (data.title || "").toLowerCase()
-            if (title.includes("strategy") || title.includes("pit")) mode = "Strategy"
-            else if (title.includes("compare") || title.includes("gap") || title.includes("vs")) mode = "Comparison"
-            else if (title.includes("weather") || title.includes("track")) mode = "Insights"
-            else mode = "Telemetry"
+        // Detect mode from the first successful tool result
+        const firstResult = results?.find(r => r.success)
+        if (firstResult) {
+            const toolModes: Record<string, string> = {
+                get_telemetry: "Telemetry",
+                get_laps: "Telemetry",
+                get_fastest_lap: "Telemetry",
+                get_car_data: "Telemetry",
+                get_qualifying: "Comparison",
+                get_race: "Comparison",
+                get_tyres: "Strategy",
+                get_stints: "Strategy",
+                get_weather: "Insights",
+                get_race_control: "Insights",
+                get_track_status: "Insights",
+                retrieve_regulations: "Insights",
+            }
+            mode = toolModes[firstResult.tool] ?? mode
         }
 
         // If the session has a type, use that to override the mode

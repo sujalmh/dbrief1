@@ -1,8 +1,30 @@
 "use client"
 
 import { useChatStore } from "@/lib/store"
+import type { Message, VisualizationResultItem } from "@/lib/store"
 import { useAuth } from "@/lib/firebase/auth-context"
 import { createSession } from "@/lib/firebase/firestore"
+
+/** Shape of `{ event, data }` SSE payloads sent by /api/chat. */
+interface ChatStreamEventData {
+    token?: string
+    steps?: Array<{ description?: string; tool?: string }>
+    step?: number | string
+    status?: "pending" | "running" | "success" | "failed"
+    additional?: string
+    citations?: Array<{ source: string; type: string }>
+    content?: string
+    data?: VisualizationResultItem[]
+    title?: string
+    type?: string
+    message?: string
+}
+
+interface ChatStreamEvent {
+    event?: string
+    data?: ChatStreamEventData
+    content?: string
+}
 
 export function useChatHandler() {
     const {
@@ -39,7 +61,7 @@ export function useChatHandler() {
         // For a true "Retry", usually we delete the last assistant message and reuse the last user message.
         // My implementation plan said: "regenerate the last assistant response by using the previous user message".
 
-        let userMsgId = Date.now().toString()
+        const userMsgId = Date.now().toString()
         let effectiveSessionId = currentSessionId
 
         // 1. Create session if it doesn't exist and user is logged in
@@ -131,7 +153,7 @@ export function useChatHandler() {
             const reader = response.body.getReader()
             const decoder = new TextDecoder()
             let assistantContent = ""
-            let currentSteps: any[] = []
+            let currentSteps: NonNullable<Message["steps"]> = []
             let updateFrameId: number | null = null
             let buffer = ""
             let done = false
@@ -185,30 +207,34 @@ export function useChatHandler() {
                         }
 
                         try {
-                            const parsed = JSON.parse(content)
+                            const parsed = JSON.parse(content) as ChatStreamEvent
 
                             if (parsed.event && parsed.data) {
                                 const { event, data } = parsed
+                                if (!data) continue
                                 switch (event) {
                                     case "reasoning":
+                                        if (data.token === undefined) break
                                         const currentMsg = useChatStore.getState().messages.find(m => m.id === assistantMsgId)
                                         const currentReasoning = currentMsg?.reasoning || ""
                                         updateMessageReasoning(assistantMsgId, currentReasoning + data.token)
                                         break
-                                    case "plan":
-                                        currentSteps = data.steps.map((s: any) => ({
+                                    case "plan": {
+                                        const steps: NonNullable<Message["steps"]> = (data.steps ?? []).map((s) => ({
                                             description: s.description || `Execute ${s.tool || "tool"}`,
                                             tool: s.tool || "",
                                             status: "pending" as const
                                         }))
+                                        currentSteps = steps
                                         updateMessageSteps(assistantMsgId, currentSteps)
                                         break
-                                    case "step_update":
-                                        const stepIndex = (typeof data.step === 'number' ? data.step : parseInt(data.step)) - 1
+                                    }
+                                    case "step_update": {
+                                        const stepIndex = (typeof data.step === 'number' ? data.step : parseInt(data.step ?? "")) - 1
                                         if (stepIndex >= 0 && stepIndex < currentSteps.length) {
                                             const updatedStep = {
                                                 ...currentSteps[stepIndex],
-                                                status: data.status,
+                                                status: data.status ?? currentSteps[stepIndex].status,
                                                 result: data.additional
                                             }
                                             currentSteps[stepIndex] = updatedStep
@@ -216,20 +242,22 @@ export function useChatHandler() {
                                             // Sub-query expansion logic for retrieval tool
                                             if (updatedStep.tool === "retrieve_regulations" && data.additional) {
                                                 try {
-                                                    const result = JSON.parse(data.additional)
-                                                    if (result.used_subqueries && Array.isArray(result.used_subqueries)) {
+                                                    const retrieval = JSON.parse(data.additional) as { used_subqueries?: unknown }
+                                                    if (Array.isArray(retrieval.used_subqueries)) {
                                                         // Insert sub-queries as completed steps immediately after the main retrieval step
-                                                        const subSteps = result.used_subqueries.map((sq: string) => ({
-                                                            description: `Sub-query: "${sq}"`,
-                                                            tool: "rag_subquery",
-                                                            status: "success" as const,
-                                                            result: "Completed"
-                                                        }))
+                                                        const subSteps = retrieval.used_subqueries
+                                                            .filter((sq): sq is string => typeof sq === "string")
+                                                            .map((sq) => ({
+                                                                description: `Sub-query: "${sq}"`,
+                                                                tool: "rag_subquery",
+                                                                status: "success" as const,
+                                                                result: "Completed"
+                                                            }))
 
                                                         // Insert after current index
                                                         currentSteps.splice(stepIndex + 1, 0, ...subSteps)
                                                     }
-                                                } catch (e) {
+                                                } catch {
                                                     // Ignore parsing errors
                                                 }
                                             }
@@ -237,20 +265,23 @@ export function useChatHandler() {
                                             updateMessageSteps(assistantMsgId, [...currentSteps])
                                         }
                                         break
+                                    }
                                     case "citations":
-                                        updateMessageCitations(assistantMsgId, data.citations)
+                                        if (data.citations) {
+                                            updateMessageCitations(assistantMsgId, data.citations)
+                                        }
                                         break
                                     case "token":
-                                        assistantContent += data.content
+                                        assistantContent += data.content ?? ""
                                         scheduleUpdate()
                                         break
                                     case "visualization":
-                                        useChatStore.getState().setVisualizationData(data.data)
+                                        useChatStore.getState().setVisualizationData(data.data ?? null)
                                         updateMessageVisualization(assistantMsgId, data.data)
                                         break
                                     case "metadata":
                                         // Update session title and type in the store
-                                        if (effectiveSessionId) {
+                                        if (effectiveSessionId && data.title) {
                                             const currentSessions = useChatStore.getState().sessions;
                                             const updatedSessions = currentSessions.map(s =>
                                                 s.id === effectiveSessionId
@@ -262,14 +293,14 @@ export function useChatHandler() {
                                             // Persist metadata to Firestore (Client SDK)
                                             if (user) {
                                                 import("@/lib/firebase/firestore").then(({ updateSessionMetadata }) => {
-                                                    updateSessionMetadata(effectiveSessionId!, data.title, data.type)
+                                                    updateSessionMetadata(effectiveSessionId!, data.title as string, (data.type ?? "insights") as "telemetry" | "comparison" | "strategy" | "insights")
                                                         .catch(err => console.error("Error updating session metadata:", err));
                                                 });
                                             }
                                         }
                                         break
                                     case "error":
-                                        setError(data.message)
+                                        setError(data.message ?? "Unknown error")
                                         updateMessage(assistantMsgId, "", true)
                                         return
                                 }
@@ -277,7 +308,7 @@ export function useChatHandler() {
                                 assistantContent += parsed.content
                                 scheduleUpdate()
                             }
-                        } catch (e) {
+                        } catch {
                             // skip malformed
                         }
                     }

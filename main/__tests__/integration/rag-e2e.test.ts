@@ -7,10 +7,11 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { ragRetrieve } from "@/lib/agents/regulationRetriever";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { getPlannerModel } from "@/lib/llm";
 
 describe("RAG Retrieval - End-to-End Test", () => {
-    let plannerModel: any;
+    let plannerModel: BaseChatModel | undefined;
 
     beforeAll(async () => {
         // Use the planner model for sub-query generation

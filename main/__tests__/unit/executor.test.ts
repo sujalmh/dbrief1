@@ -4,7 +4,7 @@
  * Tests for step execution, timeout handling, and error aggregation
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { executeSteps, aggregateContext, simplifyContext, ExecutionContext } from '@/lib/executor'
 import { Step } from '@/lib/planner'
 import { StructuredTool } from '@langchain/core/tools'

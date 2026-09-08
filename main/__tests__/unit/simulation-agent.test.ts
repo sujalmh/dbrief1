@@ -296,7 +296,7 @@ describe("Simulation Loop", () => {
 // =============================================================================
 
 describe("Metric Value Generation", () => {
-    const random = () => 0.5; // Deterministic for testing
+    // Deterministic for testing (seeded model below)
 
     it("should generate positive time values", () => {
         for (let i = 0; i < 100; i++) {
@@ -579,7 +579,7 @@ describe("runSimulation (integration)", () => {
             iterations: 100,
         };
 
-        expect(() => runSimulation(invalidRequest as any)).toThrow();
+        expect(() => runSimulation(invalidRequest as unknown as Parameters<typeof runSimulation>[0])).toThrow();
     });
 
     it("should complete 10000 iterations quickly (<500ms)", () => {

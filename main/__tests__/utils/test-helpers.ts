@@ -5,12 +5,13 @@
  */
 
 import { Plan, Step } from '@/lib/planner'
+import { tool, type StructuredTool } from '@langchain/core/tools'
+import { z } from 'zod'
 import {
     TOOL_SCHEMAS,
     VALID_YEARS,
     VALID_DRIVER_CODES,
-    VALID_SESSIONS,
-    VALID_GP_NAMES
+    VALID_SESSIONS
 } from '../fixtures/golden-outputs'
 
 // =============================================================================
@@ -128,7 +129,6 @@ export function validatePlanSchema(plan: Plan): { valid: boolean; errors: string
  */
 export function assertNoHallucination(
     response: string,
-    validDrivers: string[] = VALID_DRIVER_CODES,
     validYear: number = 2024
 ): { hasHallucination: boolean; issues: string[] } {
     const issues: string[] = []
@@ -394,10 +394,7 @@ export function assertResponseNotContains(text: string, blacklist: string[]): vo
  * Create mock F1 API tools that return realistic data without requiring the FastAPI server.
  * These are tool-level mocks (not LLM mocks).
  */
-export function createMockToolRegistry(): Record<string, any> {
-    const { tool } = require('@langchain/core/tools')
-    const { z } = require('zod')
-
+export function createMockToolRegistry(): Record<string, StructuredTool> {
     const mockTool = (name: string, response: unknown) => tool(
         async () => JSON.stringify(response),
         { name, description: `Mock ${name}`, schema: z.object({}).passthrough() }

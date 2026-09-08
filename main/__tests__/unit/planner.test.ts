@@ -6,11 +6,11 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest'
-import { planQuery, createFallbackPlan, PlanSchema } from '@/lib/planner'
+import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
+import { planQuery, createFallbackPlan, type Plan } from '@/lib/planner'
 import { createTestPlannerModel } from '../utils/llm-client'
 import {
     assertPlanContainsTool,
-    assertPlanArgs,
     validatePlanSchema
 } from '../utils/test-helpers'
 
@@ -19,7 +19,7 @@ import {
 // =============================================================================
 
 describe('Planner - Real LLM Tests', () => {
-    let plannerModel: any
+    let plannerModel: BaseChatModel
 
     beforeAll(() => {
         plannerModel = createTestPlannerModel()
@@ -164,14 +164,14 @@ describe('Planner - Real LLM Tests', () => {
         };
 
         it('should allow > 5 steps when deep research mode is enabled', async () => {
-            const plan = await planQuery(stubLLM as any, "Perform complex analysis", false, true)
+            const plan = await planQuery(stubLLM as unknown as BaseChatModel, "Perform complex analysis", false, true)
 
             expect(plan.steps.length).toBe(10)
             expect(plan.steps[9].description).toBe("Step 10")
         })
 
         it('should cap at 5 steps when deep research mode is disabled', async () => {
-            const plan = await planQuery(stubLLM as any, "Perform complex analysis", false, false)
+            const plan = await planQuery(stubLLM as unknown as BaseChatModel, "Perform complex analysis", false, false)
 
             expect(plan.steps.length).toBe(5)
             expect(plan.steps[4].description).toBe("Step 5")
@@ -289,7 +289,7 @@ describe('Plan Schema Validation', () => {
             reasoning: 'test'
         }
 
-        const result = validatePlanSchema(plan as any)
+        const result = validatePlanSchema(plan as unknown as Plan)
         expect(result.valid).toBe(false)
         expect(result.errors).toContain('Missing required arg "gp" for tool "get_laps"')
     })
@@ -300,7 +300,7 @@ describe('Plan Schema Validation', () => {
             reasoning: 'test'
         }
 
-        const result = validatePlanSchema(plan as any)
+        const result = validatePlanSchema(plan as unknown as Plan)
         expect(result.valid).toBe(true)
     })
 
@@ -310,7 +310,7 @@ describe('Plan Schema Validation', () => {
             reasoning: 'test'
         }
 
-        const result = validatePlanSchema(plan as any)
+        const result = validatePlanSchema(plan as unknown as Plan)
         expect(result.valid).toBe(true)
     })
 })

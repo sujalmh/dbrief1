@@ -32,6 +32,40 @@ export interface ComparisonDataPoint {
 
 export type ChartDataType = 'lap_times' | 'telemetry' | 'comparison' | 'weather' | 'unknown'
 
+/** A loose JSON object row (tool payloads mix snake_case and PascalCase keys). */
+export type DataRow = Record<string, unknown>;
+
+const asRow = (value: unknown): DataRow | null =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+        ? (value as DataRow)
+        : null;
+
+/** First usable value for any of the keys (numbers stringified). */
+function rowText(row: DataRow, ...keys: string[]): string {
+    for (const key of keys) {
+        const value = row[key];
+        if (typeof value === "string" && value) return value;
+        if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+    return "";
+}
+
+/** Parse an unknown value with parseFloat/parseInt, or undefined when absent. */
+function numOrUndefined(value: unknown, parse: (v: string) => number): number | undefined {
+    if (value === undefined || value === null || value === "") return undefined;
+    const parsed = parse(String(value));
+    return isNaN(parsed) ? undefined : parsed;
+}
+
+/** First value for any of the keys, or undefined. */
+function rowValue(row: DataRow, ...keys: string[]): unknown {
+    for (const key of keys) {
+        const value = row[key];
+        if (value !== undefined && value !== null && value !== "") return value;
+    }
+    return undefined;
+}
+
 /**
  * Detect the type of F1 data in the content
  */
@@ -72,8 +106,8 @@ export function detectDataType(content: string): ChartDataType {
 /**
  * Extract JSON blocks from markdown content
  */
-function extractJsonBlocks(content: string): any[] {
-    const jsonBlocks: any[] = []
+function extractJsonBlocks(content: string): unknown[] {
+    const jsonBlocks: unknown[] = []
 
     // First, try to extract from markdown code blocks
     const codeBlockRegex = /```(?:json)?\s*\n([\s\S]*?)\n```/g
@@ -124,32 +158,38 @@ export function extractLapTimes(content: string): LapDataPoint[] {
         // Handle array of laps
         if (Array.isArray(block)) {
             for (const item of block) {
-                const lapNumber = item.lap_number !== undefined ? item.lap_number : item.LapNumber;
-                const lapTime = item.lap_time !== undefined ? item.lap_time : item.LapTime;
+                const row = asRow(item);
+                if (!row) continue;
+                const lapNumber = rowValue(row, 'lap_number', 'LapNumber');
+                const lapTime = rowValue(row, 'lap_time', 'LapTime');
 
                 if (lapNumber !== undefined && lapTime !== undefined) {
                     lapData.push({
-                        lap: parseInt(lapNumber),
-                        time: parseLapTime(lapTime),
-                        driver: item.driver || item.Driver || undefined,
-                        compound: item.compound || item.Compound || undefined
+                        lap: parseInt(String(lapNumber)),
+                        time: parseLapTime(typeof lapTime === "number" ? lapTime : String(lapTime)),
+                        driver: rowText(row, 'driver', 'Driver') || undefined,
+                        compound: rowText(row, 'compound', 'Compound') || undefined
                     })
                 }
             }
         }
 
         // Handle laps object
-        if (block.laps && Array.isArray(block.laps)) {
-            for (const lap of block.laps) {
-                const lapNumber = lap.lap_number !== undefined ? lap.lap_number : lap.LapNumber;
-                const lapTime = lap.lap_time !== undefined ? lap.lap_time : lap.LapTime;
+        const lapsRow = asRow(block);
+        const laps = lapsRow?.['laps'];
+        if (Array.isArray(laps)) {
+            for (const entry of laps) {
+                const lap = asRow(entry);
+                if (!lap) continue;
+                const lapNumber = rowValue(lap, 'lap_number', 'LapNumber');
+                const lapTime = rowValue(lap, 'lap_time', 'LapTime');
 
                 if (lapNumber !== undefined && lapTime !== undefined) {
                     lapData.push({
-                        lap: parseInt(lapNumber),
-                        time: parseLapTime(lapTime),
-                        driver: lap.driver || lap.Driver || undefined,
-                        compound: lap.compound || lap.Compound || undefined
+                        lap: parseInt(String(lapNumber)),
+                        time: parseLapTime(typeof lapTime === "number" ? lapTime : String(lapTime)),
+                        driver: rowText(lap, 'driver', 'Driver') || undefined,
+                        compound: rowText(lap, 'compound', 'Compound') || undefined
                     })
                 }
             }
@@ -168,21 +208,25 @@ export function extractTelemetry(content: string): TelemetryDataPoint[] {
 
     for (const block of jsonBlocks) {
         // Handle telemetry data array
-        if (block.data && Array.isArray(block.data)) {
-            for (const point of block.data) {
+        const row = asRow(block);
+        const points = row?.['data'];
+        if (Array.isArray(points)) {
+            for (const entry of points) {
+                const point = asRow(entry);
+                if (!point) continue;
                 // Support both snake_case and PascalCase
-                const getVal = (key1: string, key2: string) =>
-                    point[key1] !== undefined ? point[key1] : point[key2];
+                const getVal = (key1: string, key2: string): unknown =>
+                    rowValue(point, key1, key2);
 
                 telemetryData.push({
-                    distance: parseFloat(getVal('Distance', 'distance') || 0),
-                    speed: getVal('Speed', 'speed') !== undefined ? parseFloat(getVal('Speed', 'speed')) : undefined,
-                    throttle: getVal('Throttle', 'throttle') !== undefined ? parseFloat(getVal('Throttle', 'throttle')) : undefined,
-                    brake: getVal('Brake', 'brake') !== undefined ? parseFloat(getVal('Brake', 'brake')) : undefined,
-                    gear: getVal('nGear', 'gear') !== undefined ? parseInt(getVal('nGear', 'gear')) : undefined,
-                    rpm: getVal('RPM', 'rpm') !== undefined ? parseInt(getVal('RPM', 'rpm')) : undefined,
-                    drs: getVal('DRS', 'drs') !== undefined ? parseInt(getVal('DRS', 'drs')) : undefined,
-                    driver: point.driver || point.Driver || undefined
+                    distance: parseFloat(rowText(point, 'Distance', 'distance') || '0'),
+                    speed: numOrUndefined(getVal('Speed', 'speed'), parseFloat),
+                    throttle: numOrUndefined(getVal('Throttle', 'throttle'), parseFloat),
+                    brake: numOrUndefined(getVal('Brake', 'brake'), parseFloat),
+                    gear: numOrUndefined(getVal('nGear', 'gear'), parseInt),
+                    rpm: numOrUndefined(getVal('RPM', 'rpm'), parseInt),
+                    drs: numOrUndefined(getVal('DRS', 'drs'), parseInt),
+                    driver: rowText(point, 'driver', 'Driver') || undefined
                 })
             }
         }
@@ -206,35 +250,44 @@ export function extractComparison(content: string): ComparisonDataPoint[] {
 
     for (const block of jsonBlocks) {
         // Handle results array
-        if (block.results && Array.isArray(block.results)) {
-            for (const result of block.results) {
-                const driver = result.driver || result.Driver;
-                const time = result.time || result.Time;
-                const position = result.position || result.Position;
+        const row = asRow(block);
+        const results = row?.['results'];
+        if (Array.isArray(results)) {
+            for (const entry of results) {
+                const result = asRow(entry);
+                if (!result) continue;
+                const driver = rowText(result, 'driver', 'Driver');
+                const time = rowText(result, 'time', 'Time');
+                const position = rowText(result, 'position', 'Position');
 
                 if (driver && (time || position)) {
                     comparisonData.push({
                         driver: driver,
                         value: time ? parseLapTime(time) : parseInt(position),
-                        label: result.q3 || result.q2 || result.q1 || undefined
+                        label: rowText(result, 'q3', 'q2', 'q1') || undefined
                     })
                 }
             }
         }
 
         // Handle direct array of driver data
-        if (Array.isArray(block) && block.length > 0 && (block[0].driver || block[0].Driver)) {
-            for (const item of block) {
-                const driver = item.driver || item.Driver;
-                const time = item.time || item.lap_time || item.Time;
-                const position = item.position || item.Position;
+        if (Array.isArray(block) && block.length > 0) {
+            const first = asRow(block[0]);
+            if (first && (first['driver'] || first['Driver'])) {
+                for (const entry of block) {
+                    const item = asRow(entry);
+                    if (!item) continue;
+                    const driver = rowText(item, 'driver', 'Driver');
+                    const time = rowText(item, 'time', 'lap_time', 'Time');
+                    const position = rowText(item, 'position', 'Position');
 
-                if (driver && (time || position)) {
-                    comparisonData.push({
-                        driver: driver,
-                        value: time ? parseLapTime(time) : parseInt(position),
-                        label: item.compound || item.Compound || undefined
-                    })
+                    if (driver && (time || position)) {
+                        comparisonData.push({
+                            driver: driver,
+                            value: time ? parseLapTime(time) : parseInt(position),
+                            label: rowText(item, 'compound', 'Compound') || undefined
+                        })
+                    }
                 }
             }
         }

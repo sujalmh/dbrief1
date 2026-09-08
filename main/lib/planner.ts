@@ -108,38 +108,99 @@ Rules:
    - Step 2: Run simulation with base_value/variance informed by the fetched data
    This ensures simulations are based on REAL data, not guessed parameters.
 
-**OUTPUT FORMAT**:
-First, output your reasoning as plain text explaining your thought process.
-Then, output the JSON plan on a new line starting with "PLAN:".
+**OUTPUT FORMAT (single call does both jobs)**:
+Output ONLY a single JSON object — no markdown fences, no extra text.
+Decide first: can this be answered WITHOUT any tool?
 
-Example output:
-I need to compare two drivers' lap times. This requires fetching data for each driver separately. Monaco 2024 is a recent race with full telemetry available. I'll use get_fastest_lap for both VER and HAM in qualifying session for efficiency.
+- Plain conversation (greetings, thanks, goodbyes, capability questions,
+  anything answerable without F1 data):
+  {"needs_plan": false, "reply": "<short warm reply, max 2 sentences>"}
 
-PLAN: {"steps": [{"description": "Get fastest lap for Verstappen", "tool": "get_fastest_lap", "args": {"year": 2024, "gp": "Monaco", "session": "Q", "driver": "VER"}}, {"description": "Get fastest lap for Hamilton", "tool": "get_fastest_lap", "args": {"year": 2024, "gp": "Monaco", "session": "Q", "driver": "HAM"}}], "reasoning": "Using get_fastest_lap for token efficiency."}
+- Anything needing F1 data, tools, or analysis:
+  {"needs_plan": true, "reasoning": "<one-line plan rationale>", "steps": [...]}
 
-Example 2: "Compare telemetry between Lando and Oscar in Abu Dhabi 2023 race"
-The user wants telemetry comparison between two McLaren drivers. I need to get telemetry for both NOR and PIA. Since they want race data, I'll use session="R" and fetch the fastest lap for each driver.
+Example A (conversational):
+Input: "Hey! How can you help with F1?"
+Output: {"needs_plan": false, "reply": "Hey! 🏎️ I can pull race results, compare drivers, analyze telemetry, explain regulations, or run what-if simulations — what are you curious about?"}
 
-PLAN: {"steps": [{"description": "Get telemetry for Norris", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "NOR", "lap": "fastest"}}, {"description": "Get telemetry for Piastri", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "PIA", "lap": "fastest"}}], "reasoning": "Using get_telemetry for visualization comparison."}
+Example B (data):
+Input: "Compare telemetry between Lando and Oscar in Abu Dhabi 2023 race"
+Output: {"needs_plan": true, "reasoning": "Race telemetry comparison needs one call per driver.", "steps": [{"description": "Get telemetry for Norris", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "NOR", "lap": "fastest"}}, {"description": "Get telemetry for Piastri", "tool": "get_telemetry", "args": {"year": 2023, "gp": "Abu Dhabi", "session": "R", "driver": "PIA", "lap": "fastest"}}]}
 
-Example 3: "What if Abu Dhabi 2021 didn't end under safety car?"
-This is a data-driven counterfactual. First I need to fetch the actual lap times around lap 53 (when SC was deployed) to see the real gap. Then simulate what would have happened without the SC.
-
-PLAN: {"steps": [{"description": "Get HAM laps before safety car", "tool": "get_laps", "args": {"year": 2021, "gp": "Abu Dhabi", "session": "R", "driver": "HAM", "lap_start": 50, "lap_end": 55}}, {"description": "Get VER laps before safety car", "tool": "get_laps", "args": {"year": 2021, "gp": "Abu Dhabi", "session": "R", "driver": "VER", "lap_start": 50, "lap_end": 55}}, {"description": "Simulate race finish without SC", "tool": "run_simulation", "args": {"scenario_id": "abu-dhabi-21-no-sc", "horizon": "race", "metric": "gap", "base_value": 12.0, "variance": 2.0, "iterations": 1000}}], "reasoning": "Fetching real lap data to ground simulation. HAM had ~12s lead before SC."}
-
-Example 4: "Show telemetry for Lando and Oscar in Monaco 2024"
-The user wants to see telemetry for two drivers separately. Using "show" indicates they want individual visualizations for each driver, not a single comparison. I'll fetch telemetry for both NOR and PIA separately, which will create two distinct charts.
-
-PLAN: {"steps": [{"description": "Get telemetry for Norris", "tool": "get_telemetry", "args": {"year": 2024, "gp": "Monaco", "session": "Q", "driver": "NOR", "lap": "fastest"}}, {"description": "Get telemetry for Piastri", "tool": "get_telemetry", "args": {"year": 2024, "gp": "Monaco", "session": "Q", "driver": "PIA", "lap": "fastest"}}], "reasoning": "Separate telemetry calls create individual charts in the visualization carousel."}
-
-Example 5: "Compare qualifying results for Monaco 2024"
-The user wants a comparison of all drivers in qualifying. A single call to get_qualifying will return all results, and the frontend will create a comparison chart showing all drivers.
-
-PLAN: {"steps": [{"description": "Get qualifying results", "tool": "get_qualifying", "args": {"year": 2024, "gp": "Monaco"}}], "reasoning": "Single qualifying call provides comparison data for all drivers in one chart."}`;
+Example C (what-if):
+Input: "What if Abu Dhabi 2021 didn't end under safety car?"
+Output: {"needs_plan": true, "reasoning": "Counterfactual needs real lap data first, then a grounded simulation.", "steps": [{"description": "Get HAM laps before safety car", "tool": "get_laps", "args": {"year": 2021, "gp": "Abu Dhabi", "session": "R", "driver": "HAM", "lap_start": 50, "lap_end": 55}}, {"description": "Get VER laps before safety car", "tool": "get_laps", "args": {"year": 2021, "gp": "Abu Dhabi", "session": "R", "driver": "VER", "lap_start": 50, "lap_end": 55}}, {"description": "Simulate race finish without SC", "tool": "run_simulation", "args": {"scenario_id": "abu-dhabi-21-no-sc", "horizon": "race", "metric": "gap", "base_value": 12.0, "variance": 2.0, "iterations": 1000}}]}`;
 
 // =============================================================================
-// Shared Planner Helpers
+// Conversational Detection + Shared Planner Helpers
 // =============================================================================
+
+// =============================================================================
+// Decide + Plan (single model call)
+// =============================================================================
+
+/**
+ * Result of the single decide-and-plan model call. Conversational messages
+ * resolve to a direct reply with no tools; data questions resolve to a plan.
+ */
+export interface PlanDecision {
+    needsPlan: boolean;
+    plan: Plan;
+    /** Direct reply — only set when needsPlan is false. */
+    reply?: string;
+}
+
+/**
+ * Resolve a raw parsed model response into a PlanDecision.
+ * Accepts both the new shape ({needs_plan, steps?, reply?, reasoning?})
+ * and the legacy shape ({steps, reasoning?}, with or without a PLAN: prefix
+ * handled upstream) so existing stubs and callers keep working.
+ */
+function resolveDecision(
+    parsed: unknown,
+    extractedReasoning: string | undefined,
+    webSearchEnabled: boolean,
+    deepResearchMode: boolean
+): PlanDecision {
+    if (typeof parsed !== "object" || parsed === null) {
+        throw new Error(`Failed to parse planner response as JSON`);
+    }
+    const obj = parsed as Record<string, unknown>;
+
+    // Legacy shape: bare {steps, reasoning?} implies a plan is needed.
+    if (!("needs_plan" in obj)) {
+        return {
+            needsPlan: true,
+            plan: validateAndFilterPlan(parsed, extractedReasoning, webSearchEnabled, deepResearchMode),
+        };
+    }
+
+    if (obj.needs_plan === false) {
+        const reply = typeof obj.reply === "string" && obj.reply.trim() ? obj.reply : "Hey! 🏎️ How can I help you with F1 today?";
+        return {
+            needsPlan: false,
+            plan: {
+                steps: [],
+                reasoning: typeof obj.reasoning === "string" ? obj.reasoning : "Conversational message — no tools needed",
+            },
+            reply,
+        };
+    }
+
+    if (obj.needs_plan === true) {
+        return {
+            needsPlan: true,
+            plan: validateAndFilterPlan(
+                { steps: obj.steps ?? [], reasoning: obj.reasoning },
+                extractedReasoning,
+                webSearchEnabled,
+                deepResearchMode
+            ),
+        };
+    }
+
+    throw new Error(`Failed to parse planner response: invalid needs_plan value`);
+}
 
 /**
  * Build the full system prompt with date, web-search flag, and deep-research overrides.
@@ -198,15 +259,23 @@ function validateAndFilterPlan(
 // Planner Functions
 // =============================================================================
 
+function responseToText(response: { content: unknown }): string {
+    return typeof response.content === "string"
+        ? response.content
+        : JSON.stringify(response.content);
+}
+
 /**
- * Plan execution steps for a user query
+ * Decide AND plan in a SINGLE model call.
+ * Conversational messages come back with a direct reply (no tools, no
+ * second call); data questions come back with an execution plan.
  */
-export async function planQuery(
+export async function decidePlan(
     model: BaseChatModel,
     message: string,
     webSearchEnabled: boolean = false,
     deepResearchMode: boolean = false
-): Promise<Plan> {
+): Promise<PlanDecision> {
     const systemPrompt = buildPlannerPrompt(webSearchEnabled, deepResearchMode);
 
     const messages = [
@@ -215,60 +284,45 @@ export async function planQuery(
     ];
 
     const response = await model.invoke(messages);
+    const { plan: parsed, reasoning } = parseJsonResponse(responseToText(response));
 
-    const content =
-        typeof response.content === "string"
-            ? response.content
-            : JSON.stringify(response.content);
-
-    const { plan: parsedPlan, reasoning } = parseJsonResponse(content);
-
-    return validateAndFilterPlan(parsedPlan, reasoning, webSearchEnabled, deepResearchMode);
+    return resolveDecision(parsed, reasoning, webSearchEnabled, deepResearchMode);
 }
 
 /**
- * Stream planning with reasoning trace
+ * Plan execution steps for a user query.
+ * Thin wrapper over decidePlan for callers that only want the plan.
+ */
+export async function planQuery(
+    model: BaseChatModel,
+    message: string,
+    webSearchEnabled: boolean = false,
+    deepResearchMode: boolean = false
+): Promise<Plan> {
+    return (await decidePlan(model, message, webSearchEnabled, deepResearchMode)).plan;
+}
+
+/**
+ * Stream planning with reasoning trace.
+ * Buffers the single decide-and-plan call, then resolves like planQuery.
+ * (The onReasoningToken hook is kept for API compatibility but no longer
+ * receives per-token planning output, since the new format is pure JSON.)
  */
 export async function streamPlanQuery(
     model: BaseChatModel,
     message: string,
     webSearchEnabled: boolean = false,
     deepResearchMode: boolean = false,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     onReasoningToken?: (token: string) => void
 ): Promise<Plan> {
-    const systemPrompt = buildPlannerPrompt(webSearchEnabled, deepResearchMode);
-
-    const messages = [
-        new SystemMessage(systemPrompt),
-        new HumanMessage(message),
-    ];
-
-    let fullContent = "";
-    const stream = await model.stream(messages);
-
-    for await (const chunk of stream) {
-        const content =
-            typeof chunk.content === "string"
-                ? chunk.content
-                : JSON.stringify(chunk.content);
-
-        if (content) {
-            fullContent += content;
-
-            if (onReasoningToken && !fullContent.includes('PLAN:')) {
-                onReasoningToken(content);
-            }
-        }
-    }
-
-    const { plan: parsedPlan, reasoning } = parseJsonResponse(fullContent);
-
-    return validateAndFilterPlan(parsedPlan, reasoning, webSearchEnabled, deepResearchMode);
+    return (await decidePlan(model, message, webSearchEnabled, deepResearchMode)).plan;
 }
 
 /**
- * Parse JSON from LLM response, handling markdown code blocks and reasoning prefix
- * New format: "reasoning text\n\nPLAN: {json}"
+ * Parse JSON from LLM response, handling markdown code blocks and the
+ * legacy "reasoning text\n\nPLAN: {json}" prefix.
+ * Returns the raw parsed value plus any extracted reasoning prefix.
  */
 function parseJsonResponse(content: string): { plan: unknown; reasoning?: string } {
     // Remove markdown code block if present

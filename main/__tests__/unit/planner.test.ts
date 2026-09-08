@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { planQuery, createFallbackPlan, type Plan } from '@/lib/planner'
+import { planQuery, createFallbackPlan, decidePlan, type Plan } from '@/lib/planner'
 import { createTestPlannerModel } from '../utils/llm-client'
 import {
     assertPlanContainsTool,
@@ -313,4 +313,79 @@ describe('Plan Schema Validation', () => {
         const result = validatePlanSchema(plan as unknown as Plan)
         expect(result.valid).toBe(true)
     })
+})
+
+// =============================================================================
+// decidePlan: single decide-and-plan call (offline, stubbed LLM)
+// =============================================================================
+
+describe('decidePlan', () => {
+    const stubModel = (content: string) =>
+        ({ invoke: async () => ({ content }) }) as unknown as BaseChatModel;
+
+    it('returns a direct reply with no plan for conversational input', async () => {
+        const model = stubModel(
+            JSON.stringify({ needs_plan: false, reply: 'Hey! 🏎️ How can I help?' })
+        );
+
+        const decision = await decidePlan(model, 'hey');
+
+        expect(decision.needsPlan).toBe(false);
+        expect(decision.reply).toBe('Hey! 🏎️ How can I help?');
+        expect(decision.plan.steps).toEqual([]);
+    });
+
+    it('returns a plan for data questions', async () => {
+        const model = stubModel(
+            JSON.stringify({
+                needs_plan: true,
+                reasoning: 'test',
+                steps: [
+                    { description: 'Get race', tool: 'get_race', args: { year: 2024, gp: 'Monaco' } },
+                ],
+            })
+        );
+
+        const decision = await decidePlan(model, 'Who won Monaco 2024?');
+
+        expect(decision.needsPlan).toBe(true);
+        expect(decision.reply).toBeUndefined();
+        expect(decision.plan.steps).toHaveLength(1);
+        expect(decision.plan.steps[0].tool).toBe('get_race');
+    });
+
+    it('accepts the legacy bare-steps shape as a plan', async () => {
+        const model = stubModel(
+            JSON.stringify({
+                steps: [{ description: 'Get race', tool: 'get_race', args: { year: 2024, gp: 'Monaco' } }],
+                reasoning: 'legacy',
+            })
+        );
+
+        const decision = await decidePlan(model, 'Who won Monaco 2024?');
+
+        expect(decision.needsPlan).toBe(true);
+        expect(decision.plan.steps).toHaveLength(1);
+    });
+
+    it('filters web_search when disabled and caps steps', async () => {
+        const steps = Array.from({ length: 8 }, (_, i) => ({
+            description: `Step ${i + 1}`,
+            tool: i % 2 === 0 ? 'get_race' : 'web_search',
+            args: { year: 2024, gp: 'Monaco', ...(i % 2 === 0 ? {} : { query: 'x' }) },
+        }));
+        const model = stubModel(JSON.stringify({ needs_plan: true, reasoning: 't', steps }));
+
+        const decision = await decidePlan(model, 'news?', false, false);
+
+        expect(decision.needsPlan).toBe(true);
+        expect(decision.plan.steps.every((s) => s.tool !== 'web_search')).toBe(true);
+        expect(decision.plan.steps.length).toBeLessThanOrEqual(5);
+    });
+
+    it('throws on non-JSON responses instead of inventing a plan', async () => {
+        const model = stubModel('Hey! 🏎️ How can I help you with F1 today?');
+
+        await expect(decidePlan(model, 'hey')).rejects.toThrow();
+    });
 })

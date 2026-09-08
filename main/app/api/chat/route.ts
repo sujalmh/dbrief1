@@ -23,7 +23,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { StructuredTool } from "@langchain/core/tools";
 
 import { getPlannerModel, getResponderModel, Provider } from "@/lib/llm";
-import { streamPlanQuery, createFallbackPlan, Plan } from "@/lib/planner";
+import { decidePlan, createFallbackPlan, Plan } from "@/lib/planner";
 import { executeSteps, aggregateContext } from "@/lib/executor";
 import { f1Tools } from "@/lib/tools/fastf1";
 import { getSearchTools } from "@/lib/tools/search";
@@ -138,11 +138,11 @@ export async function POST(request: NextRequest) {
                 };
 
                 try {
-                    // 1. Initialize Models
-                    let plannerModel, responderModel;
+                    // 1. Initialize the cheap planner model. The responder is
+                    // created lazily later — conversational messages never need it.
+                    let plannerModel;
                     try {
                         plannerModel = await getPlannerModel(provider as Provider, apiKey, sessionId);
-                        responderModel = await getResponderModel(provider as Provider, model, deepResearchMode, apiKey, sessionId);
                     } catch (error) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
@@ -151,22 +151,24 @@ export async function POST(request: NextRequest) {
                         return;
                     }
 
-                    // 2. Plan Query with Streaming Reasoning
-                    let plan: Plan;
-                    try {
-                        // In Deep Research Mode, force web search to be enabled
-                        const effectiveWebSearch = deepResearchMode ? true : web_search;
+                    // 2. Decide + plan in a SINGLE model call.
+                    // needs_plan=false carries a direct reply (greetings, thanks,
+                    // capability questions) — streamed back with no tool calls
+                    // and no second LLM call. needs_plan=true carries steps.
+                    // In Deep Research Mode, force web search to be enabled.
+                    const effectiveWebSearch = deepResearchMode ? true : web_search;
 
-                        plan = await streamPlanQuery(
+                    let plan: Plan;
+                    let directReply: string | undefined;
+                    try {
+                        const decision = await decidePlan(
                             plannerModel,
                             message,
                             effectiveWebSearch,
-                            deepResearchMode,
-                            (token) => {
-                                // Stream reasoning tokens to frontend
-                                sendEvent("reasoning", { token });
-                            }
+                            deepResearchMode
                         );
+                        plan = decision.plan;
+                        directReply = decision.needsPlan ? undefined : decision.reply;
                     } catch (error) {
                         console.error("[Planner] Error:", error);
                         plan = createFallbackPlan(message);
@@ -174,6 +176,26 @@ export async function POST(request: NextRequest) {
 
                     // Send plan to frontend
                     sendEvent("plan", { steps: plan.steps });
+
+                    // 2b. Fast path: conversational reply, no tools, no responder call.
+                    if (directReply !== undefined) {
+                        sendEvent("token", { content: directReply });
+                        sendEvent("done", {});
+
+                        // Generate Session Metadata (if first message)
+                        if (isFirstMessage && sessionId) {
+                            try {
+                                const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
+                                const metadata = await generateSessionMetadata(message, provider, model, apiKey, sessionId);
+                                sendEvent("metadata", metadata);
+                            } catch (error) {
+                                console.error("Error generating session metadata:", error);
+                            }
+                        }
+
+                        safeClose();
+                        return;
+                    }
 
                     // 3. Execute Plan with mode-specific tools
                     let tools: Record<string, StructuredTool>;
@@ -192,6 +214,18 @@ export async function POST(request: NextRequest) {
                             ...f1Tools,
                             ...getRegulationTools(),
                         };
+                    }
+
+                    // Responder is only needed for tool-backed questions.
+                    let responderModel;
+                    try {
+                        responderModel = await getResponderModel(provider as Provider, model, deepResearchMode, apiKey, sessionId);
+                    } catch (error) {
+                        const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
+                        console.error("[API] Model initialization error:", errorMessage);
+                        sendEvent("error", { message: errorMessage });
+                        safeClose();
+                        return;
                     }
 
                     const executionContext = await executeSteps(

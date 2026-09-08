@@ -47,12 +47,13 @@ export interface ModelConfig {
 
 /**
  * Free Zen models (chat/completions endpoint, $0/1M tokens).
- * Note: muse-spark-1.3-contributor-free is excluded — it only serves the
- * /responses endpoint, which LangChain ChatOpenAI does not speak.
+ * Note: muse-spark-1.3-contributor-free is excluded — like its Go
+ * sibling it only serves the /responses endpoint; use the Go provider
+ * entry (which sets responsesApi) if you need the Contributor tier.
  */
 export const ZEN_FREE_MODELS: string[] = PROVIDER_MAP.zen.models.map((m) => m.id);
 
-/** Curated Go coding models (chat/completions endpoint, requires Go subscription). */
+/** Curated Go models, cheapest-first (requires Go subscription). */
 export const GO_MODELS: string[] = PROVIDER_MAP.go.models.map((m) => m.id);
 
 export const ZEN_BASE_URL = "https://opencode.ai/zen/v1";
@@ -68,6 +69,28 @@ export const GO_BASE_URL = "https://opencode.ai/zen/go/v1";
  */
 export const OPENCODE_USER_AGENT = "f1-ai-chatbot/1.0";
 export const OPENCODE_SESSION_HEADER = "x-opencode-session";
+
+/**
+ * Extract plain text from a LangChain message content value.
+ * Chat-completions models return a string; responses-API models return an
+ * array of content blocks like {type: "text", text: "..."}.
+ */
+export function chatContentToText(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+        return content
+            .map((block) => {
+                if (typeof block === "string") return block;
+                if (block && typeof block === "object") {
+                    const text = (block as Record<string, unknown>).text;
+                    if (typeof text === "string") return text;
+                }
+                return "";
+            })
+            .join("");
+    }
+    return JSON.stringify(content);
+}
 
 /**
  * Build the extra headers for OpenCode gateway requests.
@@ -147,7 +170,8 @@ async function createZenModel(
     temperature: number = 0.7,
     maxTokens: number = 4096,
     userApiKey?: string,
-    sessionId?: string
+    sessionId?: string,
+    responsesApi: boolean = false
 ): Promise<BaseChatModel> {
     const apiKey = userApiKey || process.env[PROVIDER_MAP.zen.envKey];
     if (!apiKey) {
@@ -161,6 +185,7 @@ async function createZenModel(
         apiKey,
         temperature,
         maxTokens,
+        useResponsesApi: responsesApi,
         configuration: {
             baseURL: ZEN_BASE_URL,
             defaultHeaders: buildOpenCodeHeaders(sessionId),
@@ -178,7 +203,8 @@ async function createGoModel(
     temperature: number = 0.7,
     maxTokens: number = 4096,
     userApiKey?: string,
-    sessionId?: string
+    sessionId?: string,
+    responsesApi: boolean = false
 ): Promise<BaseChatModel> {
     const apiKey = userApiKey || process.env[PROVIDER_MAP.go.envKey];
     if (!apiKey) {
@@ -192,6 +218,7 @@ async function createGoModel(
         apiKey,
         temperature,
         maxTokens,
+        useResponsesApi: responsesApi,
         configuration: {
             baseURL: GO_BASE_URL,
             defaultHeaders: buildOpenCodeHeaders(sessionId),
@@ -240,6 +267,10 @@ async function createHuggingFaceModel(
  */
 export async function getChatModel(config: ModelConfig, apiKey?: string): Promise<BaseChatModel> {
     const { provider, model, temperature = 0.7, maxTokens = 4096, sessionId } = config;
+    // Responses-only models (flagged in providers.ts) need LangChain's
+    // responses API instead of chat/completions.
+    const responsesApi =
+        PROVIDER_MAP[provider].models.find((m) => m.id === model)?.responsesApi ?? false;
 
     switch (provider) {
         case "gemini":
@@ -252,10 +283,10 @@ export async function getChatModel(config: ModelConfig, apiKey?: string): Promis
             return await createHuggingFaceModel(model, temperature, maxTokens, apiKey);
 
         case "zen":
-            return await createZenModel(model, temperature, maxTokens, apiKey, sessionId);
+            return await createZenModel(model, temperature, maxTokens, apiKey, sessionId, responsesApi);
 
         case "go":
-            return await createGoModel(model, temperature, maxTokens, apiKey, sessionId);
+            return await createGoModel(model, temperature, maxTokens, apiKey, sessionId, responsesApi);
 
         default:
             throw new Error(`Unsupported provider: ${provider}`);

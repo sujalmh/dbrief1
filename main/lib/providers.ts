@@ -14,6 +14,12 @@ export type Provider = "gemini" | "openrouter" | "huggingface" | "zen" | "go";
 export interface ProviderModel {
     id: string;
     label: string;
+    /**
+     * True for models that only serve the /responses endpoint
+     * (e.g. Muse Spark Contributor). The factory enables LangChain's
+     * responses API for these. See: https://opencode.ai/docs/go/#endpoints
+     */
+    responsesApi?: boolean;
 }
 
 export interface ProviderMeta {
@@ -97,11 +103,14 @@ export const PROVIDERS: ProviderMeta[] = [
         label: "Go",
         menuLabel: "OpenCode Go",
         models: [
-            { id: "kimi-k2.7-code", label: "Kimi K2.7 Code" },
-            { id: "kimi-k3", label: "Kimi K3" },
+            // Ordered cheapest-first (Go allowance); Contributor is
+            // responses-only. See: https://opencode.ai/docs/go/#usage-limits
+            { id: "muse-spark-1.3-contributor", label: "Muse Spark 1.3 Contributor (Cheapest)", responsesApi: true },
             { id: "mimo-v2.5", label: "MiMo V2.5" },
-            { id: "glm-5.3-flash", label: "GLM 5.3 Flash" },
+            { id: "longcat-2.0", label: "LongCat 2.0" },
             { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+            { id: "glm-5.3-flash", label: "GLM 5.3 Flash" },
+            { id: "kimi-k2.7-code", label: "Kimi K2.7 Code" },
         ],
         defaultModel: "mimo-v2.5",
         plannerModel: "mimo-v2.5",

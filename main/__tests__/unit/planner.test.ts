@@ -276,6 +276,12 @@ describe('Fallback Plan Generation', () => {
         const plan = createFallbackPlan("Events in 2022")
         expect(plan.steps[0].args.year).toBe(2022)
     })
+
+    it('should route penalty questions to stewards decisions', () => {
+        const plan = createFallbackPlan("who got the first penalty in 2024")
+        expect(plan.steps[0].tool).toBe("retrieve_regulations")
+        expect(plan.steps[0].args).toMatchObject({ season: 2024, doc_type: "decision" })
+    })
 })
 
 // =============================================================================

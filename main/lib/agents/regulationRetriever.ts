@@ -18,6 +18,7 @@
 import { z } from "zod";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { chatContentToText } from "../llm";
 
 // =============================================================================
 // Configuration
@@ -142,9 +143,7 @@ export async function generateSubQueries(
         ];
 
         const response = await model.invoke(messages);
-        const content = typeof response.content === "string"
-            ? response.content
-            : JSON.stringify(response.content);
+        const content = chatContentToText(response.content);
 
         // Parse JSON array from response
         const parsed = JSON.parse(content.trim());

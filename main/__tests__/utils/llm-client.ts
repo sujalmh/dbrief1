@@ -1,24 +1,30 @@
 /**
  * LLM Test Client for F1 Chatbot Testing
  * =======================================
- * Uses GLM 4.5 Air via OpenRouter (free tier) for testing
+ * Uses the cheapest OpenCode Go model (Muse Spark 1.3 Contributor:
+ * $0.10/1M in, $0.20/1M out — highest request allowance on Go).
+ * It only serves the /responses endpoint, so the client enables
+ * LangChain's responses API. Key: OPENCODE_GO_API_KEY in
+ * main/.env.local or the repo-root .env.
+ * See: https://opencode.ai/docs/go/#usage-limits
  */
 
 import { ChatOpenAI } from "@langchain/openai"
 import { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { config } from 'dotenv'
 
-// Load environment variables
+// Load environment variables (repo-root .env is the fallback for local dev)
 config({ path: '.env.local' })
+config({ path: '../.env' })
 
 // =============================================================================
 // Configuration
 // =============================================================================
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
+const GO_API_KEY = process.env.OPENCODE_GO_API_KEY
 
-if (!OPENROUTER_API_KEY) {
-    console.warn('⚠️  OPENROUTER_API_KEY not found in .env.local - LLM tests will fail')
+if (!GO_API_KEY) {
+    console.warn('⚠️  OPENCODE_GO_API_KEY not found in .env.local - LLM tests will fail')
 }
 
 // =============================================================================
@@ -26,23 +32,29 @@ if (!OPENROUTER_API_KEY) {
 // =============================================================================
 
 /**
- * Create a GLM 4.5 Air model via OpenRouter for testing.
- * This model uses internal reasoning tokens, so maxTokens must be high enough
- * to accommodate both reasoning and content output.
+ * Create the cheapest Go model for testing.
+ * maxTokens stays high to accommodate reasoning + content output.
  */
 export function createTestModel(temperature: number = 0): BaseChatModel {
-    if (!OPENROUTER_API_KEY) {
-        throw new Error('OPENROUTER_API_KEY is required in .env.local')
+    if (!GO_API_KEY) {
+        throw new Error('OPENCODE_GO_API_KEY is required in .env.local')
     }
 
     return new ChatOpenAI({
-        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
-        apiKey: OPENROUTER_API_KEY,
+        model: 'muse-spark-1.3-contributor',
+        apiKey: GO_API_KEY,
         temperature,
         maxTokens: 16384,
         timeout: 90000,
+        useResponsesApi: true,
         configuration: {
-            baseURL: 'https://openrouter.ai/api/v1',
+            baseURL: 'https://opencode.ai/zen/go/v1',
+            // Required by Go: own user agent + stable per-conversation session
+            // for routing and prompt caching. See: https://opencode.ai/docs/go/
+            defaultHeaders: {
+                'User-Agent': 'f1-ai-chatbot/1.0',
+                'x-opencode-session': 'f1-local-tests',
+            },
         },
     })
 }

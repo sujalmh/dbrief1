@@ -22,7 +22,7 @@ import { z } from "zod";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { StructuredTool } from "@langchain/core/tools";
 
-import { getPlannerModel, getResponderModel, Provider } from "@/lib/llm";
+import { getPlannerModel, getResponderModel, chatContentToText, Provider } from "@/lib/llm";
 import { decidePlan, createFallbackPlan, Plan } from "@/lib/planner";
 import { executeSteps, aggregateContext } from "@/lib/executor";
 import { f1Tools } from "@/lib/tools/fastf1";
@@ -302,7 +302,7 @@ Please answer the user's question based on the F1 data provided above.`;
                     const response = await responderModel.stream(messages);
 
                     for await (const chunk of response) {
-                        const content = typeof chunk.content === "string" ? chunk.content : JSON.stringify(chunk.content);
+                        const content = chatContentToText(chunk.content);
                         if (content) {
                             sendEvent("token", { content });
                         }

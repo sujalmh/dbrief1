@@ -8,6 +8,7 @@
 import { z } from "zod";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { chatContentToText } from "./llm";
 
 // =============================================================================
 // Schemas
@@ -107,6 +108,11 @@ Rules:
    - Step 1: Fetch relevant historical data (get_laps, get_race, etc.) to ground the simulation
    - Step 2: Run simulation with base_value/variance informed by the fetched data
    This ensures simulations are based on REAL data, not guessed parameters.
+10. **PENALTIES / STEWARDS' DECISIONS**: Queries about penalties, fines, disqualifications,
+    investigations, protests, or appeals MUST use retrieve_regulations with doc_type="decision".
+    Results/telemetry endpoints contain NO penalty data — never use get_events, get_race,
+    or get_results for these. Use season=<year from query>; include event only when the
+    user names a Grand Prix; leave section as "Sporting" (it is ignored for decisions).
 
 **OUTPUT FORMAT (single call does both jobs)**:
 Output ONLY a single JSON object — no markdown fences, no extra text.
@@ -129,7 +135,11 @@ Output: {"needs_plan": true, "reasoning": "Race telemetry comparison needs one c
 
 Example C (what-if):
 Input: "What if Abu Dhabi 2021 didn't end under safety car?"
-Output: {"needs_plan": true, "reasoning": "Counterfactual needs real lap data first, then a grounded simulation.", "steps": [{"description": "Get HAM laps before safety car", "tool": "get_laps", "args": {"year": 2021, "gp": "Abu Dhabi", "session": "R", "driver": "HAM", "lap_start": 50, "lap_end": 55}}, {"description": "Get VER laps before safety car", "tool": "get_laps", "args": {"year": 2021, "gp": "Abu Dhabi", "session": "R", "driver": "VER", "lap_start": 50, "lap_end": 55}}, {"description": "Simulate race finish without SC", "tool": "run_simulation", "args": {"scenario_id": "abu-dhabi-21-no-sc", "horizon": "race", "metric": "gap", "base_value": 12.0, "variance": 2.0, "iterations": 1000}}]}`;
+Output: {"needs_plan": true, "reasoning": "Counterfactual needs real lap data first, then a grounded simulation.", "steps": [{"description": "Get HAM laps before safety car", "tool": "get_laps", "args": {"year": 2021, "gp": "Abu Dhabi", "session": "R", "driver": "HAM", "lap_start": 50, "lap_end": 55}}, {"description": "Get VER laps before safety car", "tool": "get_laps", "args": {"year": 2021, "gp": "Abu Dhabi", "session": "R", "driver": "VER", "lap_start": 50, "lap_end": 55}}, {"description": "Simulate race finish without SC", "tool": "run_simulation", "args": {"scenario_id": "abu-dhabi-21-no-sc", "horizon": "race", "metric": "gap", "base_value": 12.0, "variance": 2.0, "iterations": 1000}}]}
+
+Example D (penalty / stewards' decision):
+Input: "Who got the first penalty in 2024?"
+Output: {"needs_plan": true, "reasoning": "Penalty question needs stewards' decision documents, not results.", "steps": [{"description": "Search 2024 stewards' decisions for penalties", "tool": "retrieve_regulations", "args": {"query": "penalty", "season": 2024, "section": "Sporting", "doc_type": "decision"}}]}`;
 
 // =============================================================================
 // Conversational Detection + Shared Planner Helpers
@@ -260,9 +270,9 @@ function validateAndFilterPlan(
 // =============================================================================
 
 function responseToText(response: { content: unknown }): string {
-    return typeof response.content === "string"
-        ? response.content
-        : JSON.stringify(response.content);
+    // Handles both string content (chat/completions) and content blocks
+    // (responses API) via the shared helper.
+    return chatContentToText(response.content);
 }
 
 /**
@@ -443,6 +453,13 @@ export function createFallbackPlan(message: string): Plan {
         return {
             steps: [{ description: `Get driver standings for ${year}`, tool: "get_driver_standings", args: { year } }],
             reasoning: "Fallback: detected standings/points query",
+        };
+    }
+
+    if (lowerMessage.includes("penalt") || lowerMessage.includes("steward") || lowerMessage.includes("disqualif") || lowerMessage.includes("investigat") || lowerMessage.includes("protest") || lowerMessage.includes("appeal") || lowerMessage.includes("fine ")) {
+        return {
+            steps: [{ description: `Search ${year} stewards' decisions`, tool: "retrieve_regulations", args: { query: message.slice(0, 200), season: year, section: "Sporting", doc_type: "decision" } }],
+            reasoning: "Fallback: detected penalty/decision query",
         };
     }
 

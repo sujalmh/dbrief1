@@ -58,7 +58,7 @@ async function testRAGDirect() {
 
         try {
             // Test with sub-query generation
-            const plannerModel = await getPlannerModel("openrouter");
+            const plannerModel = await getPlannerModel("go");
             const result = await ragRetrieve(
                 {
                     query: testCase.query,
@@ -117,7 +117,7 @@ async function testPlannerIntegration() {
     console.log(`📝 User Query: "${regulationQuery}"\n`);
 
     try {
-        const plannerModel = await getPlannerModel("openrouter");
+        const plannerModel = await getPlannerModel("go");
         const plan = await planQuery(plannerModel, regulationQuery, false);
 
         console.log("✅ Plan Generated:");
@@ -158,7 +158,7 @@ async function main() {
         "EMBEDDINGS_API_KEY",
         "QDRANT_URL",
         "QDRANT_API_KEY",
-        "OPENROUTER_API_KEY",
+        "OPENCODE_GO_API_KEY",
     ];
 
     console.log("\n🔧 Environment Check:");

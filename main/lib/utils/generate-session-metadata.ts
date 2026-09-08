@@ -1,4 +1,4 @@
-import { getChatModel, Provider } from "@/lib/llm";
+import { getChatModel, chatContentToText, Provider } from "@/lib/llm";
 
 export interface SessionMetadata {
     title: string;
@@ -42,7 +42,7 @@ Respond ONLY with valid JSON in this exact format:
 
     try {
         const response = await llm.invoke(prompt);
-        const content = response.content.toString();
+        const content = chatContentToText(response.content);
 
         // Extract JSON from the response
         const jsonMatch = content.match(/\{[\s\S]*\}/);

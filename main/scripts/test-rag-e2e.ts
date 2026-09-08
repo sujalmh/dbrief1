@@ -19,29 +19,29 @@ const TEST_CASES = [
     {
         name: "Race Stoppage Points Query",
         query: "If a race is stopped after 2 laps behind the Safety Car, are full points awarded?",
-        year: 2025,
-        type: "sporting" as const,
+        season: 2025,
+        section: "Sporting" as const,
         expectedKeywords: ["points", "safety car", "race", "stopped", "75%"],
     },
     {
         name: "DRS Activation Rules",
         query: "When can DRS be activated in a race and what are the restrictions?",
-        year: 2025,
-        type: "sporting" as const,
+        season: 2025,
+        section: "Sporting" as const,
         expectedKeywords: ["DRS", "lap", "activation", "zone"],
     },
     {
         name: "Power Unit Technical Specs",
         query: "What are the technical specifications for the 2026 F1 power unit?",
-        year: 2026,
-        type: "technical" as const,
+        season: 2026,
+        section: "Technical" as const,
         expectedKeywords: ["power unit", "MGU", "electric", "battery"],
     },
     {
         name: "Pit Stop Regulations",
         query: "What are the safety regulations for pit stops during the race?",
-        year: 2025,
-        type: "sporting" as const,
+        season: 2025,
+        section: "Sporting" as const,
         expectedKeywords: ["pit", "stop", "safety", "crew"],
     },
 ];
@@ -54,7 +54,7 @@ async function testRAGDirect() {
     for (const testCase of TEST_CASES) {
         console.log(`\n📝 Test Case: ${testCase.name}`);
         console.log(`   Query: "${testCase.query}"`);
-        console.log(`   Year: ${testCase.year}, Type: ${testCase.type}\n`);
+        console.log(`   Season: ${testCase.season}, Section: ${testCase.section}\n`);
 
         try {
             // Test with sub-query generation
@@ -62,8 +62,8 @@ async function testRAGDirect() {
             const result = await ragRetrieve(
                 {
                     query: testCase.query,
-                    year: testCase.year,
-                    type: testCase.type,
+                    season: testCase.season,
+                    section: testCase.section,
                 },
                 plannerModel
             );
@@ -81,7 +81,7 @@ async function testRAGDirect() {
             result.retrieved_documents.slice(0, 3).forEach((doc, i) => {
                 console.log(`      ${i + 1}. Source: ${doc.source}`);
                 console.log(`         Preview: ${doc.content.substring(0, 100)}...`);
-                console.log(`         Type: ${doc.type}, Date: ${doc.date || "N/A"}\n`);
+                console.log(`         Type: ${doc.doc_type} / ${doc.section || "n/a"}, Published: ${doc.published_on || "N/A"}\n`);
             });
 
             // Validate keywords
@@ -155,7 +155,7 @@ async function main() {
 
     // Check environment
     const requiredEnvVars = [
-        "OPENAI_API_KEY",
+        "EMBEDDINGS_API_KEY",
         "QDRANT_URL",
         "QDRANT_API_KEY",
         "OPENROUTER_API_KEY",

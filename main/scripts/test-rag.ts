@@ -20,29 +20,29 @@ async function main() {
 
     // Check environment
     console.log("🔧 Environment Check:");
-    console.log("   ✓ OPENAI_API_KEY:", process.env.OPENAI_API_KEY ? "✅ Set" : "❌ Missing");
+    console.log("   ✓ EMBEDDINGS_API_KEY:", process.env.EMBEDDINGS_API_KEY ? "✅ Set" : "❌ Missing");
     console.log("   ✓ QDRANT_URL:", process.env.QDRANT_URL ? "✅ Set" : "❌ Missing");
     console.log("   ✓ QDRANT_API_KEY:", process.env.QDRANT_API_KEY ? "✅ Set" : "❌ Missing");
     console.log("\n");
 
-    if (!process.env.OPENAI_API_KEY || !process.env.QDRANT_URL || !process.env.QDRANT_API_KEY) {
+    if (!process.env.EMBEDDINGS_API_KEY || !process.env.QDRANT_URL || !process.env.QDRANT_API_KEY) {
         console.error("❌ Missing required environment variables. Check .env.local");
         process.exit(1);
     }
 
     // Test query
     const query = "If a race is stopped after 2 laps behind the Safety Car, are points awarded?";
-    const year = 2025;
-    const type = "sporting";
+    const season = 2025;
+    const section = "Sporting";
 
     console.log("📝 Query:", query);
-    console.log("📅 Year:", year);
-    console.log("📋 Type:", type);
+    console.log("📅 Season:", season);
+    console.log("📋 Section:", section);
     console.log("\n⏳ Processing...\n");
 
     try {
         // Execute RAG retrieval (without model, will use only original query)
-        const result = await ragRetrieve({ query, year, type });
+        const result = await ragRetrieve({ query, season, section });
 
         // Display results
         console.log("✅ RAG Retrieval Complete!\n");
@@ -67,8 +67,8 @@ async function main() {
             result.retrieved_documents.forEach((doc, i) => {
                 console.log(`   📄 Document ${i + 1}:`);
                 console.log(`      Source: ${doc.source}`);
-                console.log(`      Type: ${doc.type}`);
-                console.log(`      Date: ${doc.date || "N/A"}`);
+                console.log(`      Type: ${doc.doc_type} / ${doc.section || "n/a"}`);
+                console.log(`      Published: ${doc.published_on || "N/A"}`);
                 console.log(`      Content Preview: ${doc.content.substring(0, 200)}...`);
                 console.log("\n");
             });

@@ -54,7 +54,7 @@ Available Tools (FastAPI):
 - get_tyres(year, gp, session, driver?): Tyre strategies.
 
 - get_driver_standings(year, driver?): Final driver standings (points, wins).
-- retrieve_regulations(query, year, type): Search FIA regulation documents (sporting, technical, financial). Returns relevant regulation chunks with source citations.
+- retrieve_regulations(query, season, section, doc_type?, event?): Search FIA regulations + stewards' decisions (section: Sporting, Technical, Financial; doc_type: regulation or decision; event e.g. "Austrian Grand Prix" for decisions). Returns relevant chunks with source citations.
 - web_search(query): For news/current events ONLY.
 
 Simulation Tool:

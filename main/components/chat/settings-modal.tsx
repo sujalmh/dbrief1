@@ -43,14 +43,14 @@ export function SettingsModal() {
                         </Label>
                         <div className="relative group">
                             <div className="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-[var(--f1-purple)] to-[var(--f1-purple)] opacity-20 group-hover:opacity-40 transition duration-500 blur-sm"></div>
-                            <Input
-                                id="apiKey"
-                                type="password"
-                                value={settings.apiKey}
-                                onChange={(e) => updateSettings({ apiKey: e.target.value })}
-                                className="relative bg-background border-muted/40 focus-visible:ring-1 focus-visible:ring-[var(--f1-purple)] focus-visible:border-[var(--f1-purple)]/50 transition-all font-mono text-sm"
-                                placeholder="sk-..."
-                            />
+                                <Input
+                                    id="apiKey"
+                                    type="password"
+                                    value={settings.apiKey}
+                                    onChange={(e) => updateSettings({ apiKey: e.target.value })}
+                                    className="relative bg-background border-muted/40 focus-visible:ring-1 focus-visible:ring-[var(--f1-purple)] focus-visible:border-[var(--f1-purple)]/50 transition-all font-mono text-sm"
+                                    placeholder="Paste provider key, or set it via env var"
+                                />
                         </div>
                     </div>
 
@@ -69,6 +69,8 @@ export function SettingsModal() {
                                     <SelectItem value="gemini">Gemini</SelectItem>
                                     <SelectItem value="openrouter">OpenRouter</SelectItem>
                                     <SelectItem value="huggingface">HuggingFace</SelectItem>
+                                    <SelectItem value="zen">OpenCode Zen (free models)</SelectItem>
+                                    <SelectItem value="go">OpenCode Go</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -99,6 +101,24 @@ export function SettingsModal() {
                                         <>
                                             <SelectItem value="mistralai/Mistral-7B-Instruct-v0.3">Mistral 7B</SelectItem>
                                             <SelectItem value="mistralai/Mixtral-8x7B-Instruct-v0.1">Mixtral 8x7B</SelectItem>
+                                        </>
+                                    )}
+                                    {settings.provider === 'zen' && (
+                                        <>
+                                            <SelectItem value="nemotron-3-ultra-free">Nemotron 3 Ultra (Free)</SelectItem>
+                                            <SelectItem value="nemotron-3.5-lightning-free">Nemotron 3.5 Lightning (Free)</SelectItem>
+                                            <SelectItem value="mimo-v2.5-free">MiMo V2.5 (Free)</SelectItem>
+                                            <SelectItem value="ling-3.0-flash-fin-free">Ling 3.0 Flash Fin (Free)</SelectItem>
+                                            <SelectItem value="big-pickle">Big Pickle (Free)</SelectItem>
+                                        </>
+                                    )}
+                                    {settings.provider === 'go' && (
+                                        <>
+                                            <SelectItem value="kimi-k2.7-code">Kimi K2.7 Code</SelectItem>
+                                            <SelectItem value="kimi-k3">Kimi K3</SelectItem>
+                                            <SelectItem value="mimo-v2.5">MiMo V2.5</SelectItem>
+                                            <SelectItem value="glm-5.3-flash">GLM 5.3 Flash</SelectItem>
+                                            <SelectItem value="deepseek-v4-flash">DeepSeek V4 Flash</SelectItem>
                                         </>
                                     )}
                                 </SelectContent>

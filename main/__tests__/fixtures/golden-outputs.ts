@@ -64,7 +64,7 @@ export const TOOL_SCHEMAS = {
     },
     retrieve_regulations: {
         required: ['query'],
-        optional: ['year', 'type']
+        optional: ['season', 'section', 'doc_type', 'event']
     },
     web_search: {
         required: ['query'],

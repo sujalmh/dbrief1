@@ -4,3 +4,5 @@ cache/
 .pytest_cache/
 temp_pdfs/
 .env
+.vercel
+.env*

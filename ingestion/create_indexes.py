@@ -1,8 +1,9 @@
 """
-Create Payload Indexes in Qdrant
-=================================
-Qdrant requires indexes on payload fields used in filters.
-This script creates indexes for 'year' and 'type' fields.
+Create Qdrant Collection + Payload Indexes
+===========================================
+Matches the live fia_documents schema:
+- 1024-dim voyage-4 vectors, Cosine distance
+- Payload: doc_type, season, section, event, doc_number, ...
 """
 
 import os
@@ -15,7 +16,7 @@ load_dotenv(dotenv_path="main/.env.local")
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 COLLECTION_NAME = "fia_documents"
-VECTOR_SIZE = 1536
+VECTOR_SIZE = 1024
 
 print(f"Connecting to Qdrant at {QDRANT_URL}...")
 
@@ -40,43 +41,28 @@ try:
         print(f"Collection '{COLLECTION_NAME}' already exists.")
 except Exception as e:
     print(f"❌ Error checking/creating collection: {e}")
-    # We might want to exit if collection creation fails, but let's try indexing anyway
-    
+
 print(f"\nCreating payload indexes for collection '{COLLECTION_NAME}'...")
 
-# Create index for 'year' field (integer)
-try:
-    client.create_payload_index(
-        collection_name=COLLECTION_NAME,
-        field_name="year",
-        field_schema="integer",
-    )
-    print("✅ Created index for 'year' (integer)")
-except Exception as e:
-    # If it already exists, Qdrant client might not throw, or throws specific error
-    print(f"⚠️  Index for 'year' might already exist or failed: {e}")
+# Payload indexes used by the RAG retriever's filters
+INDEXES = [
+    ("season", "integer"),    # season == year filter
+    ("section", "keyword"),   # Sporting / Technical / Financial (+ variants)
+    ("doc_type", "keyword"),  # regulation | decision
+    ("event", "keyword"),     # Grand Prix event name (decisions)
+    ("doc_number", "keyword"),
+]
 
-# Create index for 'type' field (keyword/string)
-try:
-    client.create_payload_index(
-        collection_name=COLLECTION_NAME,
-        field_name="type",
-        field_schema="keyword",
-    )
-    print("✅ Created index for 'type' (keyword)")
-except Exception as e:
-    print(f"⚠️  Index for 'type' might already exist or failed: {e}")
-
-# Create index for 'source' field (keyword/string) - Needed for duplication check
-try:
-    client.create_payload_index(
-        collection_name=COLLECTION_NAME,
-        field_name="source",
-        field_schema="keyword",
-    )
-    print("✅ Created index for 'source' (keyword)")
-except Exception as e:
-    print(f"⚠️  Index for 'source' might already exist or failed: {e}")
+for field_name, field_schema in INDEXES:
+    try:
+        client.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name=field_name,
+            field_schema=field_schema,
+        )
+        print(f"✅ Created index for '{field_name}' ({field_schema})")
+    except Exception as e:
+        print(f"⚠️  Index for '{field_name}' might already exist or failed: {e}")
 
 print("\n✅ Payload indexes check/creation complete!")
-print("\nYou can now run queries with filters on 'year' and 'type'.")
+print("\nYou can now run queries filtered on season, section, doc_type, and event.")

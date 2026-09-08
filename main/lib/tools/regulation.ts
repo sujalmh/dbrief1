@@ -2,59 +2,68 @@
  * Regulation Retrieval Tool
  * =========================
  * LangChain tool wrapper for the regulation retriever agent.
- * Exposes RAG retrieval as a structured tool for the planner.
+ * Exposes RAG retrieval over FIA regulations + decisions as a structured
+ * tool for the planner.
  */
 
 import { z } from "zod";
 import { tool, StructuredTool } from "@langchain/core/tools";
-import { ragRetrieve, RagInputSchema } from "@/lib/agents/regulationRetriever";
+import { ragRetrieve } from "@/lib/agents/regulationRetriever";
 
 // =============================================================================
 // Tool Definition
 // =============================================================================
 
 /**
- * Regulation retrieval tool for FIA documents
- * Retrieves relevant regulation chunks from Qdrant vector store
+ * Regulation/decision retrieval tool for FIA documents
+ * Retrieves relevant document chunks from the Qdrant vector store
  */
 export const regulationRetrieveTool = tool(
-    async ({ query, year, type }) => {
+    async ({ query, season, section, doc_type, event }) => {
         try {
-            const result = await ragRetrieve({ query, year, type });
+            const result = await ragRetrieve({ query, season, section, doc_type, event });
             return JSON.stringify(result);
         } catch (error) {
             return JSON.stringify({
                 error: true,
                 message: error instanceof Error ? error.message : "Retrieval failed",
                 query,
-                year,
-                type,
+                season,
+                section,
             });
         }
     },
     {
         name: "retrieve_regulations",
-        description: `Retrieve FIA Formula 1 regulation documents from the vector store.
-Use this tool when the user asks about F1 rules, regulations, or official FIA documents.
-This tool performs semantic search to find relevant regulation chunks.
+        description: `Retrieve FIA Formula 1 documents (regulations and stewards' decisions) from the vector store.
+Use this tool when the user asks about F1 rules, regulations, or official FIA documents/decisions.
+This tool performs semantic search to find relevant document chunks.
 
-The query should describe what regulation information is needed.
-Year and type must be provided by the planner - do NOT infer them.
+Season and section must be provided by the planner - do NOT infer them.
+Use doc_type "decision" with an event name for race-specific stewards' documents.
 
-Returns an array of relevant document chunks with source, date, type, and content.`,
+Returns an array of relevant document chunks with source, title, url, doc_type, section, event, and content.`,
         schema: z.object({
             query: z
                 .string()
                 .describe("The regulation question or topic to search for"),
-            year: z
+            season: z
                 .number()
                 .int()
                 .min(1950)
                 .max(2100)
-                .describe("The regulation year (e.g., 2025)"),
-            type: z
-                .enum(["sporting", "technical", "financial", "other"])
-                .describe("The regulation type: sporting, technical, financial, or other"),
+                .describe("The season year (e.g., 2025)"),
+            section: z
+                .enum(["Sporting", "Technical", "Financial"])
+                .describe("The regulation section: Sporting, Technical, or Financial"),
+            doc_type: z
+                .enum(["regulation", "decision"])
+                .default("regulation")
+                .describe("Document type: regulation (rules) or decision (event stewards' documents)"),
+            event: z
+                .string()
+                .optional()
+                .describe("Grand Prix event name, e.g. 'Austrian Grand Prix' (mainly for decisions)"),
         }),
     }
 );

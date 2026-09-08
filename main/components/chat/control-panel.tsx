@@ -1,6 +1,6 @@
 "use client"
 
-import { Brain, Globe, Database, Cpu, BarChart3 } from "lucide-react"
+import { Brain, Globe, Database, Cpu, BarChart3, Sparkles, Zap } from "lucide-react"
 import { useChatStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import {
@@ -28,6 +28,8 @@ export function ControlPanel() {
             gemini: Database,
             openrouter: Globe,
             huggingface: Cpu,
+            zen: Sparkles,
+            go: Zap,
         }[settings.provider] || Database
 
     return (
@@ -145,6 +147,12 @@ export function ControlPanel() {
                         <DropdownMenuRadioItem value="huggingface">
                             HuggingFace
                         </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="zen">
+                            OpenCode Zen (free)
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="go">
+                            OpenCode Go
+                        </DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
 
                     <DropdownMenuSeparator />
@@ -188,6 +196,46 @@ export function ControlPanel() {
                                 </DropdownMenuRadioItem>
                                 <DropdownMenuRadioItem value="mistralai/Mixtral-8x7B-Instruct-v0.1">
                                     Mixtral 8x7B
+                                </DropdownMenuRadioItem>
+                            </>
+                        )}
+
+                        {settings.provider === "zen" && (
+                            <>
+                                <DropdownMenuRadioItem value="nemotron-3-ultra-free">
+                                    Nemotron 3 Ultra (Free)
+                                </DropdownMenuRadioItem>
+                                <DropdownMenuRadioItem value="nemotron-3.5-lightning-free">
+                                    Nemotron 3.5 Lightning (Free)
+                                </DropdownMenuRadioItem>
+                                <DropdownMenuRadioItem value="mimo-v2.5-free">
+                                    MiMo V2.5 (Free)
+                                </DropdownMenuRadioItem>
+                                <DropdownMenuRadioItem value="ling-3.0-flash-fin-free">
+                                    Ling 3.0 Flash Fin (Free)
+                                </DropdownMenuRadioItem>
+                                <DropdownMenuRadioItem value="big-pickle">
+                                    Big Pickle (Free)
+                                </DropdownMenuRadioItem>
+                            </>
+                        )}
+
+                        {settings.provider === "go" && (
+                            <>
+                                <DropdownMenuRadioItem value="kimi-k2.7-code">
+                                    Kimi K2.7 Code
+                                </DropdownMenuRadioItem>
+                                <DropdownMenuRadioItem value="kimi-k3">
+                                    Kimi K3
+                                </DropdownMenuRadioItem>
+                                <DropdownMenuRadioItem value="mimo-v2.5">
+                                    MiMo V2.5
+                                </DropdownMenuRadioItem>
+                                <DropdownMenuRadioItem value="glm-5.3-flash">
+                                    GLM 5.3 Flash
+                                </DropdownMenuRadioItem>
+                                <DropdownMenuRadioItem value="deepseek-v4-flash">
+                                    DeepSeek V4 Flash
                                 </DropdownMenuRadioItem>
                             </>
                         )}

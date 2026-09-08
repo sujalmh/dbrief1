@@ -425,7 +425,7 @@ export function createMockToolRegistry(): Record<string, any> {
         get_race_control: mockTool('get_race_control', { messages: [{ time: '14:30', category: 'Flag', message: 'GREEN FLAG' }] }),
         get_tyres: mockTool('get_tyres', { stints: [{ driver: 'VER', compound: 'MEDIUM', start_lap: 1, end_lap: 20 }, { driver: 'VER', compound: 'HARD', start_lap: 21, end_lap: 55 }] }),
         get_driver_standings: mockTool('get_driver_standings', { standings: [{ position: 1, driver: 'VER', points: 575, wins: 19 }] }),
-        retrieve_regulations: mockTool('retrieve_regulations', { retrieved_documents: [{ source: 'fia_2025_sporting.pdf', type: 'sporting', content: 'Safety car procedures...' }], used_subqueries: ['safety car rules'] }),
+        retrieve_regulations: mockTool('retrieve_regulations', { retrieved_documents: [{ source: 'fia_2025_sporting.pdf', title: 'Sporting Regulations', url: null, doc_type: 'regulation', section: 'Sporting', event: null, season: 2025, published_on: null, content: 'Safety car procedures...' }], used_subqueries: ['safety car rules'] }),
         run_simulation: mockTool('run_simulation', { results: { raw_values: [1, 2, 3], statistics: { mean: 2, min: 1, max: 3 } }, visualization: { type: 'histogram', data: { buckets: [] } }, summary: { scenario_id: 'test', description: 'Simulation complete', key_metrics: { mean: 2 } } }),
         web_search: mockTool('web_search', { results: [{ title: 'F1 News', url: 'https://example.com', snippet: 'Latest F1 news...' }] }),
     }

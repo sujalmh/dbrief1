@@ -1,9 +1,13 @@
 /**
  * Regulation Retriever Agent
  * ==========================
- * RAG retrieval module for FIA regulation documents.
+ * RAG retrieval module for FIA documents (regulations + decisions).
  * Accepts queries from the planner, generates sub-queries,
- * performs vector search in Qdrant, and returns structured evidence.
+ * performs vector search in Qdrant, reranks, and returns structured evidence.
+ *
+ * Qdrant collection: fia_documents (1024-dim voyage-4 vectors, Cosine)
+ * Payload: doc_type (regulation|decision), season, section, event,
+ *          title, filename, url, published_on, header, text, chunk_index, ...
  *
  * This module is:
  * - Server-side only
@@ -19,13 +23,34 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 // Configuration
 // =============================================================================
 
-const OPENAI_API_URL = "https://api.openai.com/v1/embeddings";
-const EMBEDDING_MODEL = "text-embedding-3-small";
-const EMBEDDING_DIM = 1536;
+const VOYAGE_API_URL = "https://ai.mongodb.com/v1/embeddings";
+const VOYAGE_RERANK_URL = "https://ai.mongodb.com/v1/rerank";
+const EMBEDDING_MODEL = "voyage-4";
+const EMBEDDING_DIM = 1024;
+const RERANK_MODEL = "rerank-3";
 const MAX_SUBQUERIES = 5;
 const MIN_SUBQUERIES = 2;
-const DEFAULT_MATCH_COUNT = 5;
+const DEFAULT_MATCH_COUNT = 10;
 const TOP_N_RESULTS = 5;
+
+/**
+ * Section filter values map to every known `section` payload variant in
+ * Qdrant (e.g. "Section C [Technical]"). Qdrant `match.any` is exact-match,
+ * so all variants must be listed.
+ */
+const SECTION_VARIANTS: Record<string, string[]> = {
+    Sporting: ["Sporting", "Section B [Sporting]"],
+    Technical: ["Technical", "Section C [Technical]"],
+    Financial: [
+        "Financial",
+        "Section D [Financial - F1 Teams]",
+        "Section D [Financial Regulations - F1 Teams]",
+        "Section E [Financial – PU Manufacturers]",
+        "Section E [Financial Regulations - Power Unit Manufacturers]",
+        "Section E [Financial - Power Unit Manufacturers]",
+        "Section E [Financial - PU Manufacturers]",
+    ],
+};
 
 // =============================================================================
 // Zod Schemas
@@ -33,17 +58,24 @@ const TOP_N_RESULTS = 5;
 
 export const RagInputSchema = z.object({
     query: z.string().min(1, "Query is required"),
-    year: z.number().int().min(1950).max(2100),
-    type: z.enum(["sporting", "technical", "financial", "other"]),
+    season: z.number().int().min(1950).max(2100),
+    section: z.enum(["Sporting", "Technical", "Financial"]),
+    doc_type: z.enum(["regulation", "decision"]).default("regulation"),
+    event: z.string().min(1).optional().describe("Grand Prix event name, e.g. 'Austrian Grand Prix' (mainly for decisions)"),
 });
 
-export type RagInput = z.infer<typeof RagInputSchema>;
+export type RagInput = z.input<typeof RagInputSchema>;
 
 export const DocumentSchema = z.object({
-    source: z.string(),
-    date: z.string().nullable(),
-    type: z.string(),
-    content: z.string(),
+    source: z.string().describe("Source filename"),
+    title: z.string().describe("Document short title"),
+    url: z.string().nullable().describe("Source URL"),
+    doc_type: z.string().describe("regulation or decision"),
+    section: z.string().nullable(),
+    event: z.string().nullable(),
+    season: z.number(),
+    published_on: z.string().nullable(),
+    content: z.string().describe("Chunk text"),
 });
 
 export type Document = z.infer<typeof DocumentSchema>;
@@ -58,10 +90,15 @@ export type RagOutput = z.infer<typeof RagOutputSchema>;
 // Internal type for document representation
 interface RetrievedDocument {
     id: number | string;
-    year: number;
-    type: string;
+    season: number;
+    doc_type: string;
+    section: string | null;
+    event: string | null;
     source: string;
-    date: string | null;
+    title: string;
+    url: string | null;
+    published_on: string | null;
+    chunk_index: number | null;
     content: string;
     similarity?: number;
 }
@@ -139,20 +176,20 @@ export async function generateSubQueries(
 // =============================================================================
 
 /**
- * Generate an embedding for a text using OpenAI's embedding API
+ * Generate an embedding for a text using MongoDB Voyage AI (voyage-4)
  *
  * @param text - The text to embed
- * @returns Embedding vector of dimension 1536
+ * @returns Embedding vector of dimension 1024
  */
 export async function embedQuery(text: string): Promise<number[]> {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.EMBEDDINGS_API_KEY;
 
     if (!apiKey) {
-        throw new Error("OPENAI_API_KEY environment variable is not set");
+        throw new Error("EMBEDDINGS_API_KEY environment variable is not set");
     }
 
     try {
-        const response = await fetch(OPENAI_API_URL, {
+        const response = await fetch(VOYAGE_API_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -161,19 +198,20 @@ export async function embedQuery(text: string): Promise<number[]> {
             body: JSON.stringify({
                 input: text,
                 model: EMBEDDING_MODEL,
+                input_type: "query",
             }),
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
+            throw new Error(`Voyage API error: ${response.status} - ${errorText}`);
         }
 
         const data = await response.json();
         const embedding = data.data?.[0]?.embedding;
 
         if (!embedding || !Array.isArray(embedding)) {
-            throw new Error("Invalid embedding response from OpenAI");
+            throw new Error("Invalid embedding response from Voyage");
         }
 
         return embedding;
@@ -191,11 +229,18 @@ interface QdrantPoint {
     id: number;
     score: number;
     payload: {
-        year: number;
-        type: string;
-        source: string;
-        date: string | null;
-        content: string;
+        doc_type: string;
+        season: number;
+        section?: string | null;
+        event?: string | null;
+        title?: string | null;
+        short_title?: string | null;
+        filename?: string | null;
+        url?: string | null;
+        source_url?: string | null;
+        published_on?: string | null;
+        text?: string | null;
+        chunk_index?: number | null;
     };
 }
 
@@ -203,19 +248,24 @@ interface QdrantSearchResponse {
     result: QdrantPoint[];
 }
 
+export interface RetrievalFilters {
+    season: number;
+    section: keyof typeof SECTION_VARIANTS;
+    doc_type?: string;
+    event?: string;
+}
+
 /**
  * Retrieve documents from Qdrant using vector similarity search
  *
- * @param embedding - The query embedding vector
- * @param year - The regulation year to filter by
- * @param type - The regulation type to filter by
- * @param matchCount - Number of results to return (default: 5)
+ * @param embedding - The query embedding vector (voyage-4, 1024-dim)
+ * @param filters - Payload filters (season, section, doc_type, event)
+ * @param matchCount - Number of results to return per query (default: 10)
  * @returns Array of matching documents
  */
 export async function retrieveFromQdrant(
     embedding: number[],
-    year: number,
-    type: string,
+    filters: RetrievalFilters,
     matchCount: number = DEFAULT_MATCH_COUNT
 ): Promise<RetrievedDocument[]> {
     const qdrantUrl = process.env.QDRANT_URL;
@@ -225,9 +275,27 @@ export async function retrieveFromQdrant(
         throw new Error("Missing Qdrant credentials (QDRANT_URL or QDRANT_API_KEY)");
     }
 
+    const { season, section, doc_type = "regulation", event } = filters;
+
     try {
         // Qdrant search endpoint
         const searchUrl = `${qdrantUrl}/collections/fia_documents/points/search`;
+
+        const must: Record<string, unknown>[] = [
+            { key: "season", match: { value: season } },
+            { key: "doc_type", match: { value: doc_type } },
+        ];
+
+        // Decisions rarely carry a section payload — applying the filter
+        // would exclude them, so only filter section for regulations.
+        const sectionVariants = SECTION_VARIANTS[section];
+        if (doc_type === "regulation" && sectionVariants) {
+            must.push({ key: "section", match: { any: sectionVariants } });
+        }
+
+        if (event) {
+            must.push({ key: "event", match: { value: event } });
+        }
 
         const response = await fetch(searchUrl, {
             method: "POST",
@@ -237,12 +305,7 @@ export async function retrieveFromQdrant(
             },
             body: JSON.stringify({
                 vector: embedding,
-                filter: {
-                    must: [
-                        { key: "year", match: { value: year } },
-                        { key: "type", match: { value: type } },
-                    ],
-                },
+                filter: { must },
                 limit: matchCount,
                 with_payload: true,
             }),
@@ -263,15 +326,104 @@ export async function retrieveFromQdrant(
         // Map Qdrant response to internal document format
         return data.result.map((point) => ({
             id: point.id,
-            year: point.payload.year,
-            type: point.payload.type,
-            source: point.payload.source,
-            date: point.payload.date,
-            content: point.payload.content,
+            season: point.payload.season,
+            doc_type: point.payload.doc_type,
+            section: point.payload.section ?? null,
+            event: point.payload.event ?? null,
+            source: point.payload.filename ?? "unknown",
+            title: point.payload.short_title ?? point.payload.title ?? "untitled",
+            url: point.payload.source_url ?? point.payload.url ?? null,
+            published_on: point.payload.published_on ?? null,
+            chunk_index: point.payload.chunk_index ?? null,
+            content: point.payload.text ?? "",
             similarity: point.score,
         }));
     } catch (error) {
         console.error("[Retrieve] Qdrant retrieval failed:", error);
+        throw error;
+    }
+}
+
+// =============================================================================
+// Voyage Reranking (rerank-3)
+// =============================================================================
+
+interface RerankResultItem {
+    index: number;
+    relevance_score: number;
+    document?: string;
+}
+
+interface RerankResponse {
+    object: string;
+    data?: RerankResultItem[];
+    results?: RerankResultItem[];
+    model: string;
+}
+
+/**
+ * Rerank candidate documents against the original query using Voyage rerank-3.
+ *
+ * @param query - The original user query
+ * @param documents - Deduplicated candidate documents
+ * @param topK - Number of top documents to return (default: TOP_N_RESULTS)
+ * @returns Reranked documents, ordered by relevance (descending)
+ */
+export async function rerankDocuments(
+    query: string,
+    documents: Document[],
+    topK: number = TOP_N_RESULTS
+): Promise<Document[]> {
+    if (documents.length === 0) {
+        return [];
+    }
+
+    const apiKey = process.env.EMBEDDINGS_API_KEY;
+
+    if (!apiKey) {
+        throw new Error("EMBEDDINGS_API_KEY environment variable is not set");
+    }
+
+    try {
+        const response = await fetch(VOYAGE_RERANK_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                query,
+                documents: documents.map((doc) => doc.content),
+                model: RERANK_MODEL,
+                top_k: Math.min(topK, documents.length),
+                return_documents: false,
+                truncation: true,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Voyage rerank error: ${response.status} - ${errorText}`);
+        }
+
+        const data: RerankResponse = await response.json();
+        const results = data.data ?? data.results;
+
+        if (!Array.isArray(results)) {
+            throw new Error("Invalid rerank response from Voyage");
+        }
+
+        return results
+            .filter(
+                (item) =>
+                    typeof item.index === "number" &&
+                    item.index >= 0 &&
+                    item.index < documents.length
+            )
+            .slice(0, topK)
+            .map((item) => documents[item.index]);
+    } catch (error) {
+        console.error("[Rerank] Reranking failed:", error);
         throw error;
     }
 }
@@ -297,8 +449,10 @@ export function deduplicateAndRank(results: RetrievedDocument[][]): Document[] {
 
     results.forEach((docs, subQueryIndex) => {
         docs.forEach((doc, docIndex) => {
-            // Create unique key from source + content
-            const key = `${doc.source}::${doc.content}`;
+            // Unique key from filename + chunk index (falls back to content)
+            const key = doc.chunk_index !== null && doc.chunk_index !== undefined
+                ? `${doc.source}::${doc.chunk_index}`
+                : `${doc.source}::${doc.content}`;
 
             if (documentMap.has(key)) {
                 // Increment frequency for duplicates
@@ -310,8 +464,13 @@ export function deduplicateAndRank(results: RetrievedDocument[][]): Document[] {
                 // Add new document
                 documentMap.set(key, {
                     source: doc.source,
-                    date: doc.date,
-                    type: doc.type,
+                    title: doc.title,
+                    url: doc.url,
+                    doc_type: doc.doc_type,
+                    section: doc.section,
+                    event: doc.event,
+                    season: doc.season,
+                    published_on: doc.published_on,
                     content: doc.content,
                     frequency: 1,
                     originalOrder: docIndex + subQueryIndex * 100, // Weight by sub-query order
@@ -341,11 +500,12 @@ export function deduplicateAndRank(results: RetrievedDocument[][]): Document[] {
  *
  * Orchestrates:
  * 1. Sub-query generation
- * 2. Embedding generation for each sub-query
+ * 2. Embedding generation for each sub-query (Voyage voyage-4)
  * 3. Vector search in Qdrant for each sub-query
- * 4. Deduplication and ranking of results
+ * 4. Deduplication of results
+ * 5. Reranking with Voyage rerank-3
  *
- * @param input - The RAG input containing query, year, and type
+ * @param input - The RAG input containing query, season, section, doc_type, event
  * @param model - Optional LLM model for sub-query generation (uses cheap model by default)
  * @returns Structured RAG output with retrieved documents and used sub-queries
  */
@@ -355,9 +515,9 @@ export async function ragRetrieve(
 ): Promise<RagOutput> {
     // Validate input
     const validatedInput = RagInputSchema.parse(input);
-    const { query, year, type } = validatedInput;
+    const { query, season, section, doc_type, event } = validatedInput;
 
-    console.log(`[RAG] Starting retrieval for: "${query}" (year: ${year}, type: ${type})`);
+    console.log(`[RAG] Starting retrieval for: "${query}" (season: ${season}, section: ${section}, doc_type: ${doc_type}${event ? `, event: ${event}` : ""})`);
 
     // Step 1: Generate sub-queries
     let subQueries: string[];
@@ -374,7 +534,7 @@ export async function ragRetrieve(
     const retrievalPromises = subQueries.map(async (subQuery) => {
         try {
             const embedding = await embedQuery(subQuery);
-            const documents = await retrieveFromQdrant(embedding, year, type);
+            const documents = await retrieveFromQdrant(embedding, { season, section, doc_type, event });
             return documents;
         } catch (error) {
             console.error(`[RAG] Retrieval failed for sub-query "${subQuery}":`, error);
@@ -384,13 +544,24 @@ export async function ragRetrieve(
 
     const allResults = await Promise.all(retrievalPromises);
 
-    // Step 4: Deduplicate and rank
+    // Step 4: Deduplicate
     const rankedDocuments = deduplicateAndRank(allResults);
 
-    console.log(`[RAG] Retrieved ${rankedDocuments.length} unique documents`);
+    // Step 5: Rerank with Voyage rerank-3 (fallback to vector order on failure)
+    let finalDocuments = rankedDocuments;
+    if (rankedDocuments.length > 0) {
+        try {
+            finalDocuments = await rerankDocuments(query, rankedDocuments, TOP_N_RESULTS);
+        } catch (error) {
+            console.error(`[RAG] Reranking failed, using vector order:`, error);
+            finalDocuments = rankedDocuments;
+        }
+    }
+
+    console.log(`[RAG] Retrieved ${finalDocuments.length} unique documents`);
 
     return {
-        retrieved_documents: rankedDocuments,
+        retrieved_documents: finalDocuments,
         used_subqueries: subQueries,
     };
 }

@@ -2,7 +2,9 @@
  * LLM Model Selection and Initialization
  * =======================================
  * Provides model selection logic for the F1 AI Chatbot orchestrator.
- * Supports multiple providers: Gemini, OpenRouter, and Hugging Face.
+ * Supports multiple providers: Gemini, OpenRouter, Hugging Face,
+ * OpenCode Zen (incl. free models), and OpenCode Go.
+ * See: https://opencode.ai/docs/zen/ and https://opencode.ai/docs/go
  */
 
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
@@ -12,7 +14,7 @@ import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 // Types
 // =============================================================================
 
-export type Provider = "gemini" | "openrouter" | "huggingface";
+export type Provider = "gemini" | "openrouter" | "huggingface" | "zen" | "go";
 
 export interface ModelConfig {
     provider: Provider;
@@ -20,6 +22,12 @@ export interface ModelConfig {
     reasoning?: boolean;
     temperature?: number;
     maxTokens?: number;
+    /**
+     * Stable per-conversation ID. Sent as `x-opencode-session` to the
+     * OpenCode gateways for routing + prompt caching.
+     * See: https://opencode.ai/docs/go ("Where can I use it?")
+     */
+    sessionId?: string;
 }
 
 // =============================================================================
@@ -33,6 +41,8 @@ const PLANNER_MODELS: Record<Provider, string> = {
     gemini: "gemini-2.0-flash",
     openrouter: "nvidia/nemotron-3-ultra-550b-a55b:free",
     huggingface: "mistralai/Mistral-7B-Instruct-v0.3",
+    zen: "nemotron-3-ultra-free",
+    go: "mimo-v2.5",
 };
 
 /**
@@ -42,7 +52,63 @@ const REASONING_MODELS: Record<Provider, string> = {
     gemini: "gemini-2.0-flash-thinking-exp",
     openrouter: "nvidia/nemotron-3-ultra-550b-a55b:free",
     huggingface: "mistralai/Mixtral-8x7B-Instruct-v0.1",
+    zen: "mimo-v2.5-free",
+    go: "kimi-k2.7-code",
 };
+
+// =============================================================================
+// OpenCode Zen / Go (OpenAI-compatible gateways)
+// https://opencode.ai/docs/zen/ https://opencode.ai/docs/go
+// =============================================================================
+
+/**
+ * Free Zen models (chat/completions endpoint, $0/1M tokens).
+ * Note: muse-spark-1.3-contributor-free is excluded — it only serves the
+ * /responses endpoint, which LangChain ChatOpenAI does not speak.
+ */
+export const ZEN_FREE_MODELS = [
+    "nemotron-3-ultra-free",
+    "nemotron-3.5-lightning-free",
+    "mimo-v2.5-free",
+    "ling-3.0-flash-fin-free",
+    "big-pickle",
+] as const;
+
+/** Curated Go coding models (chat/completions endpoint, requires Go subscription). */
+export const GO_MODELS = [
+    "kimi-k2.7-code",
+    "kimi-k3",
+    "mimo-v2.5",
+    "glm-5.3-flash",
+    "deepseek-v4-flash",
+] as const;
+
+export const ZEN_BASE_URL = "https://opencode.ai/zen/v1";
+export const GO_BASE_URL = "https://opencode.ai/zen/go/v1";
+
+/**
+ * Client identification required by the OpenCode gateways.
+ * Go/Zen monitor traffic for abuse: clients must send typical coding-agent
+ * traffic, identify with their own user agent (not a generic SDK name),
+ * and send a stable per-conversation `x-opencode-session` header so
+ * requests can be routed + prompt-cached.
+ * See: https://opencode.ai/docs/go ("Where can I use it?")
+ */
+export const OPENCODE_USER_AGENT = "f1-ai-chatbot/1.0";
+export const OPENCODE_SESSION_HEADER = "x-opencode-session";
+
+/**
+ * Build the extra headers for OpenCode gateway requests.
+ */
+export function buildOpenCodeHeaders(sessionId?: string): Record<string, string> {
+    const headers: Record<string, string> = {
+        "User-Agent": OPENCODE_USER_AGENT,
+    };
+    if (sessionId) {
+        headers[OPENCODE_SESSION_HEADER] = sessionId;
+    }
+    return headers;
+}
 
 // =============================================================================
 // Model Factory Functions
@@ -100,6 +166,67 @@ async function createOpenRouterModel(
 }
 
 /**
+ * Create an OpenCode Zen chat model (OpenAI-compatible gateway).
+ * Free models available; key from settings or OPENCODE_ZEN_API_KEY.
+ * See: https://opencode.ai/docs/zen/
+ */
+async function createZenModel(
+    model: string,
+    temperature: number = 0.7,
+    maxTokens: number = 4096,
+    userApiKey?: string,
+    sessionId?: string
+): Promise<BaseChatModel> {
+    const apiKey = userApiKey || process.env.OPENCODE_ZEN_API_KEY;
+    if (!apiKey) {
+        throw new Error("API key is required. Add it in Settings or set OPENCODE_ZEN_API_KEY.");
+    }
+
+    const { ChatOpenAI } = await import("@langchain/openai");
+
+    return new ChatOpenAI({
+        model,
+        apiKey,
+        temperature,
+        maxTokens,
+        configuration: {
+            baseURL: ZEN_BASE_URL,
+            defaultHeaders: buildOpenCodeHeaders(sessionId),
+        },
+    });
+}
+
+/**
+ * Create an OpenCode Go chat model (OpenAI-compatible gateway).
+ * Requires a $10/mo Go subscription; key from settings or OPENCODE_GO_API_KEY.
+ * See: https://opencode.ai/docs/go
+ */
+async function createGoModel(
+    model: string,
+    temperature: number = 0.7,
+    maxTokens: number = 4096,
+    userApiKey?: string,
+    sessionId?: string
+): Promise<BaseChatModel> {
+    const apiKey = userApiKey || process.env.OPENCODE_GO_API_KEY;
+    if (!apiKey) {
+        throw new Error("API key is required. Add it in Settings or set OPENCODE_GO_API_KEY.");
+    }
+
+    const { ChatOpenAI } = await import("@langchain/openai");
+
+    return new ChatOpenAI({
+        model,
+        apiKey,
+        temperature,
+        maxTokens,
+        configuration: {
+            baseURL: GO_BASE_URL,
+            defaultHeaders: buildOpenCodeHeaders(sessionId),
+        },
+    });
+}
+/**
  * Create a Hugging Face chat model
  */
 async function createHuggingFaceModel(
@@ -140,7 +267,7 @@ async function createHuggingFaceModel(
  * @returns LangChain chat model instance
  */
 export async function getChatModel(config: ModelConfig, apiKey?: string): Promise<BaseChatModel> {
-    const { provider, model, temperature = 0.7, maxTokens = 4096 } = config;
+    const { provider, model, temperature = 0.7, maxTokens = 4096, sessionId } = config;
 
     switch (provider) {
         case "gemini":
@@ -151,6 +278,12 @@ export async function getChatModel(config: ModelConfig, apiKey?: string): Promis
 
         case "huggingface":
             return await createHuggingFaceModel(model, temperature, maxTokens, apiKey);
+
+        case "zen":
+            return await createZenModel(model, temperature, maxTokens, apiKey, sessionId);
+
+        case "go":
+            return await createGoModel(model, temperature, maxTokens, apiKey, sessionId);
 
         default:
             throw new Error(`Unsupported provider: ${provider}`);
@@ -163,9 +296,10 @@ export async function getChatModel(config: ModelConfig, apiKey?: string): Promis
  *
  * @param provider - The user's selected provider
  * @param apiKey - Optional API key from user settings
+ * @param sessionId - Optional stable per-conversation ID (x-opencode-session)
  * @returns LangChain chat model for planning
  */
-export async function getPlannerModel(provider: Provider, apiKey?: string): Promise<BaseChatModel> {
+export async function getPlannerModel(provider: Provider, apiKey?: string, sessionId?: string): Promise<BaseChatModel> {
     const model = PLANNER_MODELS[provider];
 
     return getChatModel({
@@ -173,6 +307,7 @@ export async function getPlannerModel(provider: Provider, apiKey?: string): Prom
         model,
         temperature: 0, // Deterministic for planning
         maxTokens: 2048,
+        sessionId,
     }, apiKey);
 }
 
@@ -183,13 +318,15 @@ export async function getPlannerModel(provider: Provider, apiKey?: string): Prom
  * @param model - The user's selected model (used if not reasoning)
  * @param reasoning - Whether to use a reasoning-capable model
  * @param apiKey - Optional API key from user settings
+ * @param sessionId - Optional stable per-conversation ID (x-opencode-session)
  * @returns LangChain chat model for response generation
  */
 export async function getResponderModel(
     provider: Provider,
     model: string,
     reasoning: boolean,
-    apiKey?: string
+    apiKey?: string,
+    sessionId?: string
 ): Promise<BaseChatModel> {
     // If reasoning is enabled, use the reasoning model for this provider
     const selectedModel = reasoning ? REASONING_MODELS[provider] : model;
@@ -200,6 +337,7 @@ export async function getResponderModel(
         reasoning,
         temperature: reasoning ? 0.3 : 0.7, // Lower temp for reasoning
         maxTokens: 8192, // Higher limit for detailed responses
+        sessionId,
     }, apiKey);
 }
 
@@ -214,6 +352,10 @@ export function isProviderConfigured(provider: Provider): boolean {
             return !!process.env.OPENROUTER_API_KEY;
         case "huggingface":
             return !!process.env.HUGGINGFACE_API_KEY;
+        case "zen":
+            return !!process.env.OPENCODE_ZEN_API_KEY;
+        case "go":
+            return !!process.env.OPENCODE_GO_API_KEY;
         default:
             return false;
     }

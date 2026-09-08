@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
     generateSubQueries,
     embedQuery,
+    rerankDocuments,
     deduplicateAndRank,
     ragRetrieve,
     RagInputSchema,
@@ -29,15 +30,37 @@ const createMockLLM = (subQueries: string[]) => ({
     }),
 });
 
-// Sample documents for testing
+// Sample documents for testing (mirrors Qdrant fia_documents payload)
 const createMockDocument = (id: number, content: string, source: string = "test.pdf") => ({
     id,
-    year: 2025,
-    type: "sporting",
+    season: 2025,
+    doc_type: "regulation",
+    section: "Sporting",
+    event: null,
     source,
-    date: "2024-10-17",
+    title: "Test Document",
+    url: "https://www.fia.com/test.pdf",
+    published_on: "2024-10-17",
+    chunk_index: id,
     content,
     similarity: 0.9 - id * 0.1,
+});
+
+const toQdrantPoint = (doc: ReturnType<typeof createMockDocument>) => ({
+    id: doc.id,
+    score: doc.similarity || 0.9,
+    payload: {
+        season: doc.season,
+        doc_type: doc.doc_type,
+        section: doc.section,
+        event: doc.event,
+        filename: doc.source,
+        short_title: doc.title,
+        source_url: doc.url,
+        published_on: doc.published_on,
+        chunk_index: doc.chunk_index,
+        text: doc.content,
+    },
 });
 
 // =============================================================================
@@ -49,8 +72,35 @@ describe("Schema Validation", () => {
         it("should accept valid input", () => {
             const input = {
                 query: "race stopped safety car points",
-                year: 2025,
-                type: "sporting",
+                season: 2025,
+                section: "Sporting",
+            };
+
+            const result = RagInputSchema.safeParse(input);
+            expect(result.success).toBe(true);
+        });
+
+        it("should default doc_type to regulation", () => {
+            const input = {
+                query: "race stopped safety car points",
+                season: 2025,
+                section: "Sporting",
+            };
+
+            const result = RagInputSchema.safeParse(input);
+            expect(result.success).toBe(true);
+            if (result.success) {
+                expect(result.data.doc_type).toBe("regulation");
+            }
+        });
+
+        it("should accept decision queries with an event", () => {
+            const input = {
+                query: "deleted lap times",
+                season: 2023,
+                section: "Sporting",
+                doc_type: "decision",
+                event: "Austrian Grand Prix",
             };
 
             const result = RagInputSchema.safeParse(input);
@@ -60,41 +110,41 @@ describe("Schema Validation", () => {
         it("should reject empty query", () => {
             const input = {
                 query: "",
-                year: 2025,
-                type: "sporting",
+                season: 2025,
+                section: "Sporting",
             };
 
             const result = RagInputSchema.safeParse(input);
             expect(result.success).toBe(false);
         });
 
-        it("should reject invalid year", () => {
+        it("should reject invalid season", () => {
             const input = {
                 query: "test query",
-                year: 1800, // Too old
-                type: "sporting",
+                season: 1800, // Too old
+                section: "Sporting",
             };
 
             const result = RagInputSchema.safeParse(input);
             expect(result.success).toBe(false);
         });
 
-        it("should reject invalid type", () => {
+        it("should reject invalid section", () => {
             const input = {
                 query: "test query",
-                year: 2025,
-                type: "invalid",
+                season: 2025,
+                section: "invalid",
             };
 
             const result = RagInputSchema.safeParse(input);
             expect(result.success).toBe(false);
         });
 
-        it("should accept all valid types", () => {
-            const types = ["sporting", "technical", "financial", "other"];
+        it("should accept all valid sections", () => {
+            const sections = ["Sporting", "Technical", "Financial"];
 
-            types.forEach((type) => {
-                const input = { query: "test", year: 2025, type };
+            sections.forEach((section) => {
+                const input = { query: "test", season: 2025, section };
                 const result = RagInputSchema.safeParse(input);
                 expect(result.success).toBe(true);
             });
@@ -107,8 +157,13 @@ describe("Schema Validation", () => {
                 retrieved_documents: [
                     {
                         source: "fia_2025_sporting.pdf",
-                        date: "2024-10-17",
-                        type: "sporting",
+                        title: "Sporting Regulations",
+                        url: "https://www.fia.com/fia_2025_sporting.pdf",
+                        doc_type: "regulation",
+                        section: "Sporting",
+                        event: null,
+                        season: 2025,
+                        published_on: "2024-10-17",
                         content: "Race stopped content...",
                     },
                 ],
@@ -119,13 +174,18 @@ describe("Schema Validation", () => {
             expect(result.success).toBe(true);
         });
 
-        it("should accept null date", () => {
+        it("should accept null optionals", () => {
             const output = {
                 retrieved_documents: [
                     {
                         source: "test.pdf",
-                        date: null,
-                        type: "sporting",
+                        title: "Test",
+                        url: null,
+                        doc_type: "decision",
+                        section: null,
+                        event: "Austrian Grand Prix",
+                        season: 2023,
+                        published_on: null,
                         content: "content",
                     },
                 ],
@@ -207,7 +267,7 @@ describe("deduplicateAndRank", () => {
     it("should remove duplicate documents", () => {
         const doc1 = createMockDocument(1, "Content A");
         const doc2 = createMockDocument(2, "Content B");
-        const doc1Dup = createMockDocument(3, "Content A"); // Same content as doc1
+        const doc1Dup = { ...createMockDocument(3, "Content A"), chunk_index: 1 }; // Same chunk as doc1
 
         const results = [[doc1, doc2], [doc1Dup]];
         const ranked = deduplicateAndRank(results);
@@ -220,8 +280,8 @@ describe("deduplicateAndRank", () => {
     it("should rank by frequency (higher frequency first)", () => {
         const doc1 = createMockDocument(1, "Frequent content");
         const doc2 = createMockDocument(2, "Rare content");
-        const doc1Dup1 = createMockDocument(3, "Frequent content");
-        const doc1Dup2 = createMockDocument(4, "Frequent content");
+        const doc1Dup1 = { ...createMockDocument(3, "Frequent content"), chunk_index: 1 };
+        const doc1Dup2 = { ...createMockDocument(4, "Frequent content"), chunk_index: 1 };
 
         // doc1 appears 3 times, doc2 appears once
         const results = [[doc1], [doc1Dup1, doc2], [doc1Dup2]];
@@ -262,15 +322,25 @@ describe("deduplicateAndRank", () => {
         expect(ranked).toEqual([]);
     });
 
-    it("should deduplicate across different sources with same content", () => {
+    it("should deduplicate same chunk across sub-queries", () => {
         const doc1 = createMockDocument(1, "Same content", "source1.pdf");
-        const doc2 = createMockDocument(2, "Same content", "source1.pdf"); // Same source + content
+        const doc2 = { ...createMockDocument(2, "Same content", "source1.pdf"), chunk_index: 1 }; // Same chunk
         const doc3 = createMockDocument(3, "Same content", "source2.pdf"); // Different source
 
         const results = [[doc1, doc2], [doc3]];
         const ranked = deduplicateAndRank(results);
 
-        // Should have 2 documents (one from source1.pdf, one from source2.pdf)
+        // Should have 2 documents (one chunk from source1.pdf, one from source2.pdf)
+        expect(ranked.length).toBe(2);
+    });
+
+    it("should keep different chunks as separate documents", () => {
+        const doc1 = createMockDocument(1, "Same content", "source1.pdf");
+        const doc2 = createMockDocument(2, "Same content", "source1.pdf"); // Different chunk_index
+
+        const results = [[doc1, doc2]];
+        const ranked = deduplicateAndRank(results);
+
         expect(ranked.length).toBe(2);
     });
 
@@ -283,8 +353,8 @@ describe("deduplicateAndRank", () => {
         expect(ranked[0]).not.toHaveProperty("originalOrder");
         expect(ranked[0]).toHaveProperty("source");
         expect(ranked[0]).toHaveProperty("content");
-        expect(ranked[0]).toHaveProperty("type");
-        expect(ranked[0]).toHaveProperty("date");
+        expect(ranked[0]).toHaveProperty("doc_type");
+        expect(ranked[0]).toHaveProperty("season");
     });
 });
 
@@ -295,13 +365,13 @@ describe("deduplicateAndRank", () => {
 describe("embedQuery", () => {
     beforeEach(() => {
         vi.resetAllMocks();
-        process.env.OPENAI_API_KEY = "test-key";
+        process.env.EMBEDDINGS_API_KEY = "test-key";
         process.env.QDRANT_URL = "https://test.qdrant.io";
         process.env.QDRANT_API_KEY = "test-qdrant-key";
     });
 
-    it("should return embedding from OpenAI API", async () => {
-        const mockEmbedding = Array(1536).fill(0.1);
+    it("should return embedding from Voyage API", async () => {
+        const mockEmbedding = Array(1024).fill(0.1);
 
         mockFetch.mockResolvedValueOnce({
             ok: true,
@@ -314,13 +384,20 @@ describe("embedQuery", () => {
         const result = await embedQuery("test text");
 
         expect(result).toEqual(mockEmbedding);
-        expect(result.length).toBe(1536);
+        expect(result.length).toBe(1024);
+
+        // Should call Voyage embeddings endpoint with query input type
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe("https://ai.mongodb.com/v1/embeddings");
+        const body = JSON.parse(options.body);
+        expect(body.model).toBe("voyage-4");
+        expect(body.input_type).toBe("query");
     });
 
-    it("should throw if OPENAI_API_KEY is not set", async () => {
-        delete process.env.OPENAI_API_KEY;
+    it("should throw if EMBEDDINGS_API_KEY is not set", async () => {
+        delete process.env.EMBEDDINGS_API_KEY;
 
-        await expect(embedQuery("test")).rejects.toThrow("OPENAI_API_KEY");
+        await expect(embedQuery("test")).rejects.toThrow("EMBEDDINGS_API_KEY");
     });
 
     it("should throw on API error", async () => {
@@ -330,7 +407,108 @@ describe("embedQuery", () => {
             text: () => Promise.resolve("Unauthorized"),
         });
 
-        await expect(embedQuery("test")).rejects.toThrow("OpenAI API error");
+        await expect(embedQuery("test")).rejects.toThrow("Voyage API error");
+    });
+});
+
+// =============================================================================
+// Rerank Tests (with mocked fetch)
+// =============================================================================
+
+describe("rerankDocuments", () => {
+    beforeEach(() => {
+        vi.resetAllMocks();
+        process.env.EMBEDDINGS_API_KEY = "test-key";
+    });
+
+    const createDoc = (content: string, source = "test.pdf") => ({
+        source,
+        title: "Test Document",
+        url: "https://www.fia.com/test.pdf",
+        doc_type: "regulation",
+        section: "Sporting",
+        event: null,
+        season: 2025,
+        published_on: "2024-10-17",
+        content,
+    });
+
+    it("should return documents ordered by rerank relevance", async () => {
+        const docs = [createDoc("Content A"), createDoc("Content B"), createDoc("Content C")];
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    object: "list",
+                    data: [
+                        { index: 2, relevance_score: 0.9 },
+                        { index: 0, relevance_score: 0.5 },
+                        { index: 1, relevance_score: 0.1 },
+                    ],
+                    model: "rerank-3",
+                }),
+        });
+
+        const result = await rerankDocuments("test query", docs, 3);
+
+        expect(result.map((d) => d.content)).toEqual(["Content C", "Content A", "Content B"]);
+
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe("https://ai.mongodb.com/v1/rerank");
+        const body = JSON.parse(options.body);
+        expect(body.model).toBe("rerank-3");
+        expect(body.query).toBe("test query");
+        expect(body.documents).toEqual(["Content A", "Content B", "Content C"]);
+    });
+
+    it("should respect topK", async () => {
+        const docs = [createDoc("Content A"), createDoc("Content B")];
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    object: "list",
+                    data: [
+                        { index: 1, relevance_score: 0.9 },
+                        { index: 0, relevance_score: 0.5 },
+                    ],
+                    model: "rerank-3",
+                }),
+        });
+
+        const result = await rerankDocuments("test query", docs, 1);
+
+        expect(result.length).toBe(1);
+        expect(result[0].content).toBe("Content B");
+    });
+
+    it("should return empty array for empty input without calling API", async () => {
+        const result = await rerankDocuments("test query", [], 5);
+
+        expect(result).toEqual([]);
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("should throw if EMBEDDINGS_API_KEY is not set", async () => {
+        delete process.env.EMBEDDINGS_API_KEY;
+
+        await expect(rerankDocuments("q", [createDoc("Content A")])).rejects.toThrow(
+            "EMBEDDINGS_API_KEY"
+        );
+    });
+
+    it("should throw on API error", async () => {
+        mockFetch.mockResolvedValueOnce({
+            ok: false,
+            status: 401,
+            text: () => Promise.resolve("Unauthorized"),
+        });
+
+        await expect(rerankDocuments("q", [createDoc("Content A")])).rejects.toThrow(
+            "Voyage rerank error"
+        );
     });
 });
 
@@ -341,16 +519,16 @@ describe("embedQuery", () => {
 describe("ragRetrieve (integration)", () => {
     beforeEach(() => {
         vi.resetAllMocks();
-        process.env.OPENAI_API_KEY = "test-key";
+        process.env.EMBEDDINGS_API_KEY = "test-key";
         process.env.QDRANT_URL = "https://test.qdrant.io";
         process.env.QDRANT_API_KEY = "test-qdrant-key";
     });
 
     it("should return structured output for valid input", async () => {
-        const mockEmbedding = Array(1536).fill(0.1);
+        const mockEmbedding = Array(1024).fill(0.1);
         const mockDocuments = [createMockDocument(1, "Regulation content")];
 
-        // Mock OpenAI embedding
+        // Mock Voyage embedding
         mockFetch.mockResolvedValueOnce({
             ok: true,
             json: () =>
@@ -363,24 +541,24 @@ describe("ragRetrieve (integration)", () => {
         mockFetch.mockResolvedValueOnce({
             ok: true,
             json: () => Promise.resolve({
-                result: mockDocuments.map(doc => ({
-                    id: doc.id,
-                    score: doc.similarity || 0.9,
-                    payload: {
-                        year: doc.year,
-                        type: doc.type,
-                        source: doc.source,
-                        date: doc.date,
-                        content: doc.content
-                    }
-                }))
+                result: mockDocuments.map(toQdrantPoint)
+            }),
+        });
+
+        // Mock Voyage rerank-3
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({
+                object: "list",
+                data: [{ index: 0, relevance_score: 0.95 }],
+                model: "rerank-3",
             }),
         });
 
         const result = await ragRetrieve({
             query: "race stopped points",
-            year: 2025,
-            type: "sporting",
+            season: 2025,
+            section: "Sporting",
         });
 
         expect(result).toHaveProperty("retrieved_documents");
@@ -389,7 +567,7 @@ describe("ragRetrieve (integration)", () => {
     });
 
     it("should validate output matches schema", async () => {
-        const mockEmbedding = Array(1536).fill(0.1);
+        const mockEmbedding = Array(1024).fill(0.1);
         const mockDocuments = [
             createMockDocument(1, "Content 1"),
             createMockDocument(2, "Content 2"),
@@ -406,37 +584,112 @@ describe("ragRetrieve (integration)", () => {
         mockFetch.mockResolvedValueOnce({
             ok: true,
             json: () => Promise.resolve({
-                result: mockDocuments.map(doc => ({
-                    id: doc.id,
-                    score: doc.similarity || 0.9,
-                    payload: {
-                        year: doc.year,
-                        type: doc.type,
-                        source: doc.source,
-                        date: doc.date,
-                        content: doc.content
-                    }
-                }))
+                result: mockDocuments.map(toQdrantPoint)
+            }),
+        });
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({
+                object: "list",
+                data: [
+                    { index: 0, relevance_score: 0.9 },
+                    { index: 1, relevance_score: 0.8 },
+                ],
+                model: "rerank-3",
             }),
         });
 
         const result = await ragRetrieve({
             query: "test query",
-            year: 2025,
-            type: "sporting",
+            season: 2025,
+            section: "Sporting",
         });
 
         const validation = RagOutputSchema.safeParse(result);
         expect(validation.success).toBe(true);
     });
 
+    it("should fallback to vector order when rerank fails", async () => {
+        const mockEmbedding = Array(1024).fill(0.1);
+        const mockDocuments = [createMockDocument(1, "Regulation content")];
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    data: [{ embedding: mockEmbedding }],
+                }),
+        });
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({
+                result: mockDocuments.map(toQdrantPoint)
+            }),
+        });
+
+        // Rerank fails
+        mockFetch.mockResolvedValueOnce({
+            ok: false,
+            status: 500,
+            text: () => Promise.resolve("Server error"),
+        });
+
+        const result = await ragRetrieve({
+            query: "race stopped points",
+            season: 2025,
+            section: "Sporting",
+        });
+
+        expect(result.retrieved_documents.length).toBeGreaterThan(0);
+        expect(result.retrieved_documents[0].content).toBe("Regulation content");
+    });
+
     it("should throw for invalid input", async () => {
         await expect(
             ragRetrieve({
                 query: "",
-                year: 2025,
-                type: "sporting",
+                season: 2025,
+                section: "Sporting",
             })
         ).rejects.toThrow();
+    });
+
+    it("should send season/doc_type/section filters to Qdrant", async () => {
+        const mockEmbedding = Array(1024).fill(0.1);
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({ data: [{ embedding: mockEmbedding }] }),
+        });
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({ result: [] }),
+        });
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({ object: "list", data: [], model: "rerank-3" }),
+        });
+
+        await ragRetrieve({
+            query: "deleted lap times",
+            season: 2023,
+            section: "Sporting",
+            doc_type: "decision",
+            event: "Austrian Grand Prix",
+        });
+
+        const qdrantCall = mockFetch.mock.calls.find(([url]) =>
+            String(url).includes("/collections/fia_documents/points/search")
+        );
+        expect(qdrantCall).toBeDefined();
+        const body = JSON.parse(qdrantCall![1].body);
+        const must = body.filter.must;
+        expect(must).toContainEqual({ key: "season", match: { value: 2023 } });
+        expect(must).toContainEqual({ key: "doc_type", match: { value: "decision" } });
+        expect(must).toContainEqual({ key: "event", match: { value: "Austrian Grand Prix" } });
+        // Decisions carry no section payload — no section filter expected
+        expect(must.some((c: unknown) => (c as { key: string }).key === "section")).toBe(false);
     });
 });

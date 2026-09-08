@@ -9,7 +9,7 @@
  * Request body:
  * {
  *   "message": string,
- *   "provider": "gemini" | "openrouter" | "huggingface",
+ *   "provider": "gemini" | "openrouter" | "huggingface" | "zen" | "go",
  *   "model": string,
  *   "reasoning": boolean,
  *   "web_search": boolean,
@@ -38,7 +38,7 @@ import { FieldValue } from "firebase-admin/firestore";
 
 const ChatRequestSchema = z.object({
     message: z.string().min(1, "Message is required"),
-    provider: z.enum(["gemini", "openrouter", "huggingface"]).default("gemini"),
+    provider: z.enum(["gemini", "openrouter", "huggingface", "zen", "go"]).default("gemini"),
     model: z.string().default("gemini-2.0-flash"),
     apiKey: z.string().optional(),
     deepResearchMode: z.boolean().default(false),
@@ -195,8 +195,8 @@ export async function POST(request: NextRequest) {
                     // 1. Initialize Models
                     let plannerModel, responderModel;
                     try {
-                        plannerModel = await getPlannerModel(provider as Provider, apiKey);
-                        responderModel = await getResponderModel(provider as Provider, model, deepResearchMode, apiKey);
+                        plannerModel = await getPlannerModel(provider as Provider, apiKey, sessionId);
+                        responderModel = await getResponderModel(provider as Provider, model, deepResearchMode, apiKey, sessionId);
                     } catch (error) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
@@ -282,7 +282,7 @@ export async function POST(request: NextRequest) {
                                             if (doc.source) {
                                                 citations.push({
                                                     source: doc.source,
-                                                    type: doc.type || "regulation"
+                                                    type: doc.doc_type || "regulation"
                                                 });
                                             }
                                         });
@@ -336,7 +336,7 @@ Please answer the user's question based on the F1 data provided above.`;
                     if (isFirstMessage && sessionId) {
                         try {
                             const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
-                            const metadata = await generateSessionMetadata(message, provider, model, apiKey);
+                            const metadata = await generateSessionMetadata(message, provider, model, apiKey, sessionId);
 
                             // Emit metadata update event to client
                             // The client will handle persisting this to Firestore
@@ -385,7 +385,7 @@ export async function GET() {
                 description: "Send a chat message",
                 body: {
                     message: "string (required)",
-                    provider: "gemini | openrouter | huggingface (default: gemini)",
+                    provider: "gemini | openrouter | huggingface | zen | go (default: gemini)",
                     model: "string (default: gemini-2.0-flash)",
                     reasoning: "boolean (default: false)",
                     web_search: "boolean (default: false)",

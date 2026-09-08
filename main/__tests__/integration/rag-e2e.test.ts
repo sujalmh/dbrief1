@@ -29,20 +29,20 @@ describe("RAG Retrieval - End-to-End Test", () => {
 
         // Real regulation query
         const query = "If a race is stopped after 2 laps behind the Safety Car, are points awarded?";
-        const year = 2025;
-        const type = "sporting";
+        const season = 2025;
+        const section = "Sporting";
 
         console.log("\n========================================");
         console.log("🔍 RAG RETRIEVAL END-TO-END TEST");
         console.log("========================================\n");
         console.log("📝 Original Query:", query);
-        console.log("📅 Year:", year);
-        console.log("📋 Type:", type);
+        console.log("📅 Season:", season);
+        console.log("📋 Section:", section);
         console.log("\n");
 
         // Execute RAG retrieval with model for sub-query generation
         const result = await ragRetrieve(
-            { query, year, type },
+            { query, season, section },
             plannerModel
         );
 
@@ -58,8 +58,8 @@ describe("RAG Retrieval - End-to-End Test", () => {
         result.retrieved_documents.forEach((doc, i) => {
             console.log(`   Document ${i + 1}:`);
             console.log(`   └─ Source: ${doc.source}`);
-            console.log(`   └─ Type: ${doc.type}`);
-            console.log(`   └─ Date: ${doc.date || "N/A"}`);
+            console.log(`   └─ Type: ${doc.doc_type} / ${doc.section || "n/a"}`);
+            console.log(`   └─ Published: ${doc.published_on || "N/A"}`);
             console.log(`   └─ Content: ${doc.content.substring(0, 150)}...`);
             console.log("\n");
         });
@@ -75,7 +75,7 @@ describe("RAG Retrieval - End-to-End Test", () => {
         // Verify document structure
         result.retrieved_documents.forEach((doc) => {
             expect(doc).toHaveProperty("source");
-            expect(doc).toHaveProperty("type");
+            expect(doc).toHaveProperty("doc_type");
             expect(doc).toHaveProperty("content");
             expect(doc.content.length).toBeGreaterThan(0);
         });
@@ -83,8 +83,8 @@ describe("RAG Retrieval - End-to-End Test", () => {
 
     it("should work without LLM (fallback to original query)", async () => {
         const query = "minimum race distance for points";
-        const year = 2025;
-        const type = "sporting";
+        const season = 2025;
+        const section = "Sporting";
 
         console.log("\n========================================");
         console.log("🔍 RAG RETRIEVAL (No Sub-Query Generation)");
@@ -93,7 +93,7 @@ describe("RAG Retrieval - End-to-End Test", () => {
         console.log("\n");
 
         // Execute without providing a model (will use only the original query)
-        const result = await ragRetrieve({ query, year, type });
+        const result = await ragRetrieve({ query, season, section });
 
         console.log(`📚 Retrieved ${result.retrieved_documents.length} Documents\n`);
         console.log("========================================\n");

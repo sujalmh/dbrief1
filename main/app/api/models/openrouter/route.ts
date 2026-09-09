@@ -22,6 +22,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
+import { envInt, envStr } from "@/lib/config"
 
 interface OpenRouterModel {
     id: string
@@ -50,15 +51,15 @@ export async function GET(request: NextRequest) {
     const headers: Record<string, string> = {
         // Identify ourselves to OpenRouter per their attribution policy.
         // The site URL / app name are best-effort from env.
-        "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL || "https://f1.local",
-        "X-Title": process.env.NEXT_PUBLIC_APP_NAME || "F1 AI Chatbot",
+        "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL || envStr("OPENROUTER_REFERER_FALLBACK", "https://f1.local"),
+        "X-Title": process.env.NEXT_PUBLIC_APP_NAME || envStr("OPENROUTER_APP_NAME_FALLBACK", "F1 AI Chatbot"),
     }
     if (apiKey) {
         headers["Authorization"] = `Bearer ${apiKey}`
     }
 
     try {
-        const upstream = await fetch("https://openrouter.ai/api/v1/models", {
+        const upstream = await fetch(envStr("OPENROUTER_CATALOG_URL", "https://openrouter.ai/api/v1/models"), {
             method: "GET",
             headers,
             // Re-fetch on every request so newly released models show up.
@@ -109,8 +110,8 @@ export async function GET(request: NextRequest) {
             headers: {
                 // The catalog is cheap to refetch but we still cache it
                 // briefly on the client to make typing in the search
-                // box feel snappy.
-                "Cache-Control": "private, max-age=60",
+                // box feel snappy. Duration is config-driven.
+                "Cache-Control": `private, max-age=${envInt("OPENROUTER_CATALOG_CACHE_SECONDS", 60)}`,
             },
         })
     } catch (err) {

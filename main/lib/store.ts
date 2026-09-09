@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { get, set, del } from 'idb-keyval'
+import { storeDefaults } from './config'
 
 const idbStorage = {
     getItem: async (name: string): Promise<string | null> => {
@@ -314,21 +315,30 @@ interface ChatStore {
     nextMessageId: () => string
 }
 
-const defaultSettings: Settings = {
-    apiKey: '',
-    provider: 'openrouter',
-    model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
-    plannerModel: '',
-    temperature: 0.7,
-    // Note: the API route (getResponderModel) overrides this to 8192.
-    // This value is kept for the settings UI but is not used by the API.
-    maxTokens: 8192,
-    deepResearchMode: false,
-    webSearchEnabled: false,
-    visualizeEnabled: false,
-    developerMode: false,
-    customModels: [],
+/**
+ * Default settings — every value is config-driven (see lib/config.ts,
+ * STORE_DEFAULT_* env vars) so deployments can change out-of-box behavior
+ * without editing code. Resolved at store creation (client startup).
+ */
+function buildDefaultSettings(): Settings {
+    return {
+        apiKey: '',
+        provider: storeDefaults.provider(),
+        model: storeDefaults.model(),
+        plannerModel: '',
+        temperature: storeDefaults.temperature(),
+        // Note: the API route (getResponderModel) overrides this to 8192.
+        // This value is kept for the settings UI but is not used by the API.
+        maxTokens: storeDefaults.maxTokens(),
+        deepResearchMode: false,
+        webSearchEnabled: false,
+        visualizeEnabled: false,
+        developerMode: false,
+        customModels: [],
+    };
 }
+
+const defaultSettings: Settings = buildDefaultSettings();
 
 // Monotonic counter for graphHistory IDs. Lives outside the store
 // factory so it survives both `clearMessages` and zustand's persist
@@ -345,7 +355,7 @@ export const useChatStore = create<ChatStore>()(
             settings: defaultSettings,
             isSettingsOpen: false,
             visualizationData: null,
-            visualizationWidth: 500,
+            visualizationWidth: storeDefaults.visualizationWidth(),
             isVisualizationCollapsed: false,
             graphHistory: [],
             activeMessageId: null,
@@ -520,7 +530,7 @@ export const useChatStore = create<ChatStore>()(
                 })),
         }),
         {
-            name: 'f1-chat-storage',
+            name: storeDefaults.storageName(),
             storage: createJSONStorage(() => idbStorage),
             // Persist settings, messages (which carry chartSpecs for
             // deep-research mode), the active visualization payload, the
@@ -537,7 +547,7 @@ export const useChatStore = create<ChatStore>()(
             }),
             // Bump the version when the persisted shape changes so old
             // clients drop stale data instead of crashing on load.
-            version: 4,
+            version: storeDefaults.storageVersion(),
             // v2 -> v3: Settings gained a `customModels: string[]` field.
             // v3 -> v4: Settings gained a `plannerModel: string` field
             //   (the dedicated planner model, separate from `model`).

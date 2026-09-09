@@ -11,6 +11,8 @@
  */
 
 import type { Evidence, EvidenceType, EvidenceSource, ToolMetadata } from "./types";
+import { envJson, researchConfig } from "@/lib/config";
+import { tokenize as tokenizeText } from "./text";
 
 // =============================================================================
 // Execution Result (mirrors executor's shape, kept local to avoid circular deps)
@@ -28,10 +30,12 @@ export interface ExecutionResult {
 }
 
 // =============================================================================
-// Confidence by tool category (higher = more trustworthy data)
+// Confidence by tool category (higher = more trustworthy data).
+// Overridable via EVIDENCE_CATEGORY_CONFIDENCE_JSON, e.g.
+// '{"data":0.9,"regulation":0.85,"simulation":0.7,"search":0.5}'.
 // =============================================================================
 
-const CATEGORY_CONFIDENCE: Record<string, number> = {
+const BUILTIN_CATEGORY_CONFIDENCE: Record<string, number> = {
     data: 0.9, // F1 API — authoritative
     regulation: 0.85, // FIA documents via RAG
     simulation: 0.7, // Synthetic — depends on input quality
@@ -39,12 +43,22 @@ const CATEGORY_CONFIDENCE: Record<string, number> = {
     visualization: 0.5, // Marker, not real data
 };
 
+function categoryConfidence(): Record<string, number> {
+    return {
+        ...BUILTIN_CATEGORY_CONFIDENCE,
+        ...envJson<Record<string, number>>("EVIDENCE_CATEGORY_CONFIDENCE_JSON", {}),
+    };
+}
+
 /**
  * Maximum number of evidence items retained in the store. Once exceeded,
  * the least-recently-accessed evidence is evicted (LRU). This prevents
  * unbounded memory growth in long-running sessions.
+ * Config-driven (EVIDENCE_MAX_ITEMS).
  */
-const MAX_EVIDENCE_ITEMS = 200;
+function maxEvidenceItems(): number {
+    return researchConfig.maxEvidenceItems();
+}
 
 // =============================================================================
 // Evidence Store
@@ -69,7 +83,8 @@ export class EvidenceStore {
      * Map iteration order is insertion order, so the first key is the LRU.
      */
     private evictIfOverCap(): void {
-        while (this.evidence.size > MAX_EVIDENCE_ITEMS) {
+        const cap = maxEvidenceItems();
+        while (this.evidence.size > cap) {
             const oldestId = this.evidence.keys().next().value;
             if (oldestId === undefined) break;
             this.evidence.delete(oldestId);
@@ -100,8 +115,8 @@ export class EvidenceStore {
         // Generate heuristic summary from the data
         const summary = this.generateSummary(result.data);
 
-        // Compute per-evidence confidence from tool category
-        const confidence = CATEGORY_CONFIDENCE[toolMetadata.category] ?? 0.7;
+        // Compute per-evidence confidence from tool category (config-driven)
+        const confidence = categoryConfidence()[toolMetadata.category] ?? 0.7;
 
         // Extract tags for searchability
         const tags = this.extractTags(result.data, toolMetadata);
@@ -264,10 +279,10 @@ export class EvidenceStore {
             return "No evidence collected.";
         }
 
-        // Budget: distribute tokens across evidence items
-        // Total budget ~120K chars (~30K tokens), min 2K per item
-        const totalBudget = 120000;
-        const perItemBudget = Math.max(2000, Math.floor(totalBudget / all.length));
+        // Budget: distribute tokens across evidence items (config-driven).
+        // Total budget ~120K chars by default, min 2K per item.
+        const totalBudget = researchConfig.evidenceBudgetChars();
+        const perItemBudget = Math.max(researchConfig.evidenceMinPerItemChars(), Math.floor(totalBudget / all.length));
 
         const sections = all.map((e) => {
             const header = `### Evidence [${e.id}] — ${e.type}`;
@@ -324,30 +339,11 @@ export class EvidenceStore {
     }
 
     /**
-     * Lowercase, strip punctuation, drop generic English stop-words and
-     * very short tokens. F1-specific nouns (race, lap, qualifying, etc.) are
-     * intentionally KEPT because they are the primary query terms users use
-     * to find evidence. Used for query-aware relevance scoring. Kept in sync
-     * with the same logic in memory.ts so the two rankers behave consistently.
+     * Tokenize for query-aware relevance scoring (shared implementation in
+     * lib/research/text.ts so memory and evidence rankers stay consistent).
      */
     private tokenize(text: string): string[] {
-        const STOP_WORDS = new Set<string>([
-            // Generic English stop-words only — F1 nouns are kept on purpose.
-            "the", "and", "for", "are", "but", "not", "you", "all", "any", "can",
-            "her", "was", "one", "our", "out", "day", "had", "has", "his", "how",
-            "its", "let", "may", "now", "old", "see", "way", "who", "did",
-            "get", "got", "him", "man", "own", "put", "say", "she", "too",
-            "use", "with", "this", "that", "from", "they", "them", "then", "than",
-            "have", "what", "when", "where", "which", "their",
-            "there", "would", "could", "should", "about", "into", "over",
-            "after", "before", "again", "still", "being", "these", "those",
-            "very", "just", "only", "some", "such",
-        ]);
-        return text
-            .toLowerCase()
-            .replace(/[^a-z0-9\s]/g, " ")
-            .split(/\s+/)
-            .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+        return tokenizeText(text);
     }
 
     private extractNumber(args: Record<string, unknown>, keys: string[]): number | undefined {
@@ -415,16 +411,17 @@ export class EvidenceStore {
         return tags;
     }
 
-    private truncateForContext(data: unknown, maxChars: number = 8000): string {
+    private truncateForContext(data: unknown, maxChars?: number): string {
+        const cap = maxChars ?? researchConfig.evidenceDefaultTruncateChars();
         const str = typeof data === "string" ? data : JSON.stringify(data, null, 2);
-        if (str.length <= maxChars) return str;
+        if (str.length <= cap) return str;
 
         // Try to smart-summarize large data instead of just truncating
-        const summarized = this.summarizeForContext(data, maxChars);
+        const summarized = this.summarizeForContext(data, cap);
         if (summarized) return summarized;
 
         // Fallback: truncate but keep valid JSON structure
-        return this.smartTruncate(str, maxChars);
+        return this.smartTruncate(str, cap);
     }
 
     /**

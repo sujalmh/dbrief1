@@ -9,7 +9,8 @@
 
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { PROVIDER_MAP } from "./providers";
+import { PROVIDER_MAP, listProviders } from "./providers";
+import { llmTimeouts, llmSampling, gatewayConfig } from "./config";
 
 export type { Provider } from "./providers";
 import type { Provider } from "./providers";
@@ -50,14 +51,27 @@ export interface ModelConfig {
  * Note: muse-spark-1.3-contributor-free is excluded — like its Go
  * sibling it only serves the /responses endpoint; use the Go provider
  * entry (which sets responsesApi) if you need the Contributor tier.
+ *
+ * Live view of the dynamic provider registry (see lib/providers.ts and
+ * lib/config.ts `F1_PROVIDERS_JSON`) — never a frozen snapshot.
  */
-export const ZEN_FREE_MODELS: string[] = PROVIDER_MAP.zen.models.map((m) => m.id);
+export const ZEN_FREE_MODELS: string[] = liveModelList("zen");
 
-/** Curated Go models, cheapest-first (requires Go subscription). */
-export const GO_MODELS: string[] = PROVIDER_MAP.go.models.map((m) => m.id);
+/** Curated Go models, cheapest-first (requires Go subscription). Live view. */
+export const GO_MODELS: string[] = liveModelList("go");
 
-export const ZEN_BASE_URL = "https://opencode.ai/zen/v1";
-export const GO_BASE_URL = "https://opencode.ai/zen/go/v1";
+function liveModelList(providerId: string): string[] {
+    return new Proxy([] as unknown as string[], {
+        get: (_target, prop: string | symbol) => {
+            const snapshot = (listProviders().find((p) => p.id === providerId)?.models.map((m) => m.id) ?? []) as unknown as Record<string | symbol, unknown>;
+            const value = snapshot[prop];
+            return typeof value === "function" ? (value as () => unknown).bind(snapshot) : value;
+        },
+    });
+}
+
+export const ZEN_BASE_URL = gatewayConfig.zenBaseUrl();
+export const GO_BASE_URL = gatewayConfig.goBaseUrl();
 
 /**
  * Client identification required by the OpenCode gateways.
@@ -66,9 +80,12 @@ export const GO_BASE_URL = "https://opencode.ai/zen/go/v1";
  * and send a stable per-conversation `x-opencode-session` header so
  * requests can be routed + prompt-cached.
  * See: https://opencode.ai/docs/go ("Where can I use it?")
+ *
+ * Values come from lib/config.ts (`OPENCODE_USER_AGENT` /
+ * `OPENCODE_SESSION_HEADER`) so deployments can re-identify without edits.
  */
-export const OPENCODE_USER_AGENT = "f1-ai-chatbot/1.0";
-export const OPENCODE_SESSION_HEADER = "x-opencode-session";
+export const OPENCODE_USER_AGENT = gatewayConfig.userAgent();
+export const OPENCODE_SESSION_HEADER = gatewayConfig.sessionHeader();
 
 // =============================================================================
 // Hang protection (per-call timeouts)
@@ -81,16 +98,26 @@ export const OPENCODE_SESSION_HEADER = "x-opencode-session";
 // Every route-adjacent LLM call passes one of these signals so a stall
 // always surfaces as an AbortError (classified as `network`, i.e.
 // non-recoverable → degraded mode / clear error) instead of a silent hang.
-export const LLM_TIMEOUT_MS = {
-    /** Intent analysis is advisory-only (the planner proceeds without it),
-     * so keep this tight: a healthy call finishes in seconds, and every
-     * second here delays the user's answer. */
-    intent: 20_000,
-    /** Single decide-and-plan call. */
-    planner: 60_000,
-    /** Full responder stream (long answers need headroom). */
-    responder: 180_000,
-} as const;
+export interface LlmTimeouts {
+    intent: number;
+    planner: number;
+    responder: number;
+    viz: number;
+    sources: number;
+    critic: number;
+}
+
+/**
+ * Live view of lib/config.ts `llmTimeouts` (env: `LLM_TIMEOUT_*_MS`).
+ * Reads are resolved per-access so tuning env vars takes effect without a
+ * code change; defaults preserve the historical hang-protection budgets.
+ */
+export const LLM_TIMEOUT_MS: LlmTimeouts = new Proxy({} as LlmTimeouts, {
+    get: (_target, prop: keyof LlmTimeouts) => {
+        const getter = (llmTimeouts as unknown as Record<string, () => number>)[prop as string];
+        return typeof getter === "function" ? getter() : undefined;
+    },
+});
 
 /**
  * Extract plain text from a LangChain message content value.
@@ -116,13 +143,15 @@ export function chatContentToText(content: unknown): string {
 
 /**
  * Build the extra headers for OpenCode gateway requests.
+ * Values are read live from config so re-identification needs no redeploy.
  */
 export function buildOpenCodeHeaders(sessionId?: string): Record<string, string> {
     const headers: Record<string, string> = {
-        "User-Agent": OPENCODE_USER_AGENT,
+        "User-Agent": gatewayConfig.userAgent(),
     };
+    const sessionHeader = gatewayConfig.sessionHeader();
     if (sessionId) {
-        headers[OPENCODE_SESSION_HEADER] = sessionId;
+        headers[sessionHeader] = sessionId;
     }
     return headers;
 }
@@ -136,8 +165,8 @@ export function buildOpenCodeHeaders(sessionId?: string): Record<string, string>
  */
 function createGeminiModel(
     model: string,
-    temperature: number = 0.7,
-    maxTokens: number = 4096,
+    temperature: number = llmSampling.defaultTemperature(),
+    maxTokens: number = llmSampling.defaultMaxTokens(),
     userApiKey?: string
 ): BaseChatModel {
     const apiKey = userApiKey || process.env[PROVIDER_MAP.gemini.envKey];
@@ -159,8 +188,8 @@ function createGeminiModel(
  */
 async function createOpenRouterModel(
     model: string,
-    temperature: number = 0.7,
-    maxTokens: number = 4096,
+    temperature: number = llmSampling.defaultTemperature(),
+    maxTokens: number = llmSampling.defaultMaxTokens(),
     userApiKey?: string
 ): Promise<BaseChatModel> {
     const apiKey = userApiKey || process.env[PROVIDER_MAP.openrouter.envKey];
@@ -177,7 +206,7 @@ async function createOpenRouterModel(
         temperature,
         maxTokens,
         configuration: {
-            baseURL: "https://openrouter.ai/api/v1",
+            baseURL: gatewayConfig.openRouterBaseUrl(),
         },
     });
 }
@@ -189,8 +218,8 @@ async function createOpenRouterModel(
  */
 async function createZenModel(
     model: string,
-    temperature: number = 0.7,
-    maxTokens: number = 4096,
+    temperature: number = llmSampling.defaultTemperature(),
+    maxTokens: number = llmSampling.defaultMaxTokens(),
     userApiKey?: string,
     sessionId?: string,
     responsesApi: boolean = false
@@ -209,7 +238,7 @@ async function createZenModel(
         maxTokens,
         useResponsesApi: responsesApi,
         configuration: {
-            baseURL: ZEN_BASE_URL,
+            baseURL: gatewayConfig.zenBaseUrl(),
             defaultHeaders: buildOpenCodeHeaders(sessionId),
         },
     });
@@ -222,8 +251,8 @@ async function createZenModel(
  */
 async function createGoModel(
     model: string,
-    temperature: number = 0.7,
-    maxTokens: number = 4096,
+    temperature: number = llmSampling.defaultTemperature(),
+    maxTokens: number = llmSampling.defaultMaxTokens(),
     userApiKey?: string,
     sessionId?: string,
     responsesApi: boolean = false
@@ -242,7 +271,7 @@ async function createGoModel(
         maxTokens,
         useResponsesApi: responsesApi,
         configuration: {
-            baseURL: GO_BASE_URL,
+            baseURL: gatewayConfig.goBaseUrl(),
             defaultHeaders: buildOpenCodeHeaders(sessionId),
         },
     });
@@ -252,8 +281,8 @@ async function createGoModel(
  */
 async function createHuggingFaceModel(
     model: string,
-    temperature: number = 0.7,
-    maxTokens: number = 4096,
+    temperature: number = llmSampling.defaultTemperature(),
+    maxTokens: number = llmSampling.defaultMaxTokens(),
     userApiKey?: string
 ): Promise<BaseChatModel> {
     const apiKey = userApiKey || process.env[PROVIDER_MAP.huggingface.envKey];
@@ -271,7 +300,7 @@ async function createHuggingFaceModel(
         temperature,
         maxTokens,
         configuration: {
-            baseURL: "https://api-inference.huggingface.co/v1",
+            baseURL: gatewayConfig.huggingFaceBaseUrl(),
         },
     });
 }
@@ -288,7 +317,7 @@ async function createHuggingFaceModel(
  * @returns LangChain chat model instance
  */
 export async function getChatModel(config: ModelConfig, apiKey?: string): Promise<BaseChatModel> {
-    const { provider, model, temperature = 0.7, maxTokens = 4096, sessionId } = config;
+    const { provider, model, temperature = llmSampling.defaultTemperature(), maxTokens = llmSampling.defaultMaxTokens(), sessionId } = config;
     // Responses-only models (flagged in providers.ts) need LangChain's
     // responses API instead of chat/completions.
     const responsesApi =
@@ -335,8 +364,8 @@ export async function getPlannerModel(provider: Provider, apiKey?: string, model
     return getChatModel({
         provider,
         model,
-        temperature: 0, // Deterministic for planning
-        maxTokens: 2048,
+        temperature: llmSampling.plannerTemperature(), // Deterministic for planning
+        maxTokens: llmSampling.plannerMaxTokens(),
         sessionId,
     }, apiKey);
 }
@@ -365,8 +394,8 @@ export async function getResponderModel(
         provider,
         model: selectedModel,
         reasoning,
-        temperature: reasoning ? 0.3 : 0.7, // Lower temp for reasoning
-        maxTokens: 8192, // Higher limit for detailed responses
+        temperature: reasoning ? llmSampling.responderReasoningTemperature() : llmSampling.defaultTemperature(),
+        maxTokens: llmSampling.responderMaxTokens(), // Higher limit for detailed responses
         sessionId,
     }, apiKey);
 }

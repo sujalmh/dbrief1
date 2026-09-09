@@ -7,12 +7,27 @@
 
 import { z } from "zod";
 import { tool, StructuredTool } from "@langchain/core/tools";
+import { searchConfig } from "@/lib/config";
 
 // =============================================================================
-// Configuration
+// Configuration (live — see lib/config.ts)
 // =============================================================================
 
-const SEARCH_TIMEOUT_MS = 15000;
+function searchTimeoutMs(): number {
+    return searchConfig.timeoutMs();
+}
+
+function searchUrlFor(query: string): string {
+    return searchConfig.baseUrl().replace("{query}", encodeURIComponent(query));
+}
+
+function relatedTopicsLimit(): number {
+    return searchConfig.relatedTopicsLimit();
+}
+
+function resultsLimit(): number {
+    return searchConfig.resultsLimit();
+}
 
 // =============================================================================
 // Search Tool
@@ -25,11 +40,11 @@ const SEARCH_TIMEOUT_MS = 15000;
 export const webSearchTool = tool(
     async ({ query }) => {
         try {
-            // DuckDuckGo Instant Answers API
+            // Search endpoint is config-driven (SEARCH_BASE_URL).
             const response = await fetch(
-                `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+                searchUrlFor(query),
                 {
-                    signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+                    signal: AbortSignal.timeout(searchTimeoutMs()),
                 }
             );
 
@@ -39,7 +54,9 @@ export const webSearchTool = tool(
 
             const data = await response.json();
 
-            // Extract relevant information
+            // Extract relevant information (result caps are config-driven)
+            const topicsCap = relatedTopicsLimit();
+            const hitsCap = resultsLimit();
             const result = {
                 abstract: data.Abstract || null,
                 abstract_source: data.AbstractSource || null,
@@ -47,14 +64,14 @@ export const webSearchTool = tool(
                 heading: data.Heading || null,
                 answer: data.Answer || null,
                 related_topics: (data.RelatedTopics || [])
-                    .slice(0, 5)
+                    .slice(0, topicsCap)
                     .filter((topic: { Text?: string }) => topic.Text)
                     .map((topic: { Text: string; FirstURL?: string }) => ({
                         text: topic.Text,
                         url: topic.FirstURL,
                     })),
                 results: (data.Results || [])
-                    .slice(0, 5)
+                    .slice(0, hitsCap)
                     .map((result: { Text: string; FirstURL?: string }) => ({
                         text: result.Text,
                         url: result.FirstURL,

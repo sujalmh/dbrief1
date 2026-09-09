@@ -9,6 +9,7 @@
 import { z } from "zod";
 import { tool, StructuredTool } from "@langchain/core/tools";
 import { ragRetrieve } from "@/lib/agents/regulationRetriever";
+import { minSeasonYear, ragMaxSeasonYear } from "@/lib/config";
 
 // =============================================================================
 // Tool Definition
@@ -50,9 +51,9 @@ Returns reranked document chunks with source, title, url, source_url, relevance_
             season: z
                 .number()
                 .int()
-                .min(1950)
-                .max(2100)
-                .describe("The season year (e.g., 2025)"),
+                .min(minSeasonYear())
+                .max(ragMaxSeasonYear())
+                .describe(`The season year (e.g., ${new Date().getFullYear()})`),
             section: z
                 .enum(["Sporting", "Technical", "Financial"])
                 .describe("The regulation section: Sporting, Technical, or Financial"),

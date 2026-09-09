@@ -18,6 +18,7 @@
  */
 
 import { z } from "zod";
+import { simulationConfig } from "@/lib/config";
 
 // =============================================================================
 // Input Schema
@@ -39,9 +40,9 @@ export type SimulationParameters = z.infer<typeof SimulationParametersSchema>;
  */
 export const SimulationRequestSchema = z.object({
     scenario_id: z.string().min(1, "Scenario ID is required"),
-    horizon: z.enum(["lap", "race", "season", "custom"]).describe("Simulation time horizon"),
-    metric: z.enum(["time", "points", "score", "position", "gap"]).describe("Metric to simulate"),
-    iterations: z.number().int().min(1).max(10000).describe("Number of simulation runs"),
+    horizon: z.enum(simulationConfig.horizons() as [string, ...string[]]).describe("Simulation time horizon"),
+    metric: z.enum(simulationConfig.metrics() as [string, ...string[]]).describe("Metric to simulate"),
+    iterations: z.number().int().min(1).max(simulationConfig.iterationsMax()).describe("Number of simulation runs"),
     parameters: SimulationParametersSchema.optional(),
 });
 
@@ -154,16 +155,22 @@ function createSeededRandom(seed: number): () => number {
 // =============================================================================
 
 /**
- * Default value ranges for each metric type
- * These provide sensible defaults without requiring domain-specific calibration
+ * Default value ranges for each metric type (config-driven via
+ * SIMULATION_METRIC_DEFAULTS_JSON). Provide sensible defaults without
+ * requiring domain-specific calibration.
  */
-const METRIC_DEFAULTS: Record<string, { base: number; variance: number }> = {
-    time: { base: 90, variance: 15 },       // Lap time in seconds (~75-105s)
-    points: { base: 12, variance: 8 },      // Points per race (0-25 scale)
-    score: { base: 50, variance: 25 },      // Generic score (0-100 scale)
-    position: { base: 10, variance: 5 },    // Grid/finish position (1-20)
-    gap: { base: 0, variance: 30 },         // Time gap in seconds (-30 to +30)
-};
+function metricDefaults(): Record<string, { base: number; variance: number }> {
+    return simulationConfig.metricDefaults();
+}
+
+/**
+ * Per-metric output constraints (config-driven via
+ * SIMULATION_METRIC_CONSTRAINTS_JSON). Unknown metrics pass through
+ * unconstrained.
+ */
+function metricConstraints(): Record<string, { min?: number; max?: number; round?: boolean }> {
+    return simulationConfig.metricConstraints();
+}
 
 // =============================================================================
 // Core Simulation Functions
@@ -182,7 +189,7 @@ export function generateRandomValue(
     params: SimulationParameters | undefined,
     random: () => number
 ): number {
-    const defaults = METRIC_DEFAULTS[metric] || { base: 50, variance: 25 };
+    const defaults = metricDefaults()[metric] || { base: 50, variance: 25 };
     const base = params?.base_value ?? defaults.base;
     const variance = params?.variance ?? defaults.variance;
 
@@ -194,27 +201,13 @@ export function generateRandomValue(
 
     let value = base + normalRandom * variance;
 
-    // Apply metric-specific constraints
-    switch (metric) {
-        case "time":
-            // Lap times must be positive
-            value = Math.max(1, value);
-            break;
-        case "points":
-            // Points must be 0-25 (F1 scoring range)
-            value = Math.max(0, Math.min(25, Math.round(value)));
-            break;
-        case "score":
-            // Score must be 0-100
-            value = Math.max(0, Math.min(100, value));
-            break;
-        case "position":
-            // Position must be 1-20 integer
-            value = Math.max(1, Math.min(20, Math.round(value)));
-            break;
-        case "gap":
-            // Gap can be negative (ahead) or positive (behind)
-            break;
+    // Apply metric-specific constraints (config-driven; unknown metrics
+    // like "gap" pass through unconstrained)
+    const constraint = metricConstraints()[metric];
+    if (constraint) {
+        if (constraint.min !== undefined) value = Math.max(constraint.min, value);
+        if (constraint.max !== undefined) value = Math.min(constraint.max, value);
+        if (constraint.round) value = Math.round(value);
     }
 
     return value;
@@ -310,29 +303,30 @@ export function computeStatistics(values: number[]): Statistics {
  */
 function buildHistogramBuckets(
     values: number[],
-    bucketCount: number = 10
+    bucketCount?: number
 ): { range: string; count: number }[] {
+    const buckets = bucketCount ?? simulationConfig.histogramBuckets();
     if (values.length === 0) return [];
 
     const min = Math.min(...values);
     const max = Math.max(...values);
     const range = max - min;
-    const bucketSize = range / bucketCount || 1;
+    const bucketSize = range / buckets || 1;
 
-    const buckets: { range: string; count: number }[] = [];
-    for (let i = 0; i < bucketCount; i++) {
+    const out: { range: string; count: number }[] = [];
+    for (let i = 0; i < buckets; i++) {
         const bucketMin = min + i * bucketSize;
         const bucketMax = min + (i + 1) * bucketSize;
         const count = values.filter(
-            (v) => v >= bucketMin && (i === bucketCount - 1 ? v <= bucketMax : v < bucketMax)
+            (v) => v >= bucketMin && (i === buckets - 1 ? v <= bucketMax : v < bucketMax)
         ).length;
-        buckets.push({
+        out.push({
             range: `${bucketMin.toFixed(2)}-${bucketMax.toFixed(2)}`,
             count,
         });
     }
 
-    return buckets;
+    return out;
 }
 
 /**
@@ -481,8 +475,28 @@ const COMPOUND_BASE_PACE: Record<string, number> = {
     WET: 5.0,
 };
 
-const FUEL_BURN_S_PER_LAP = 0.035; // ~0.035s/lap regained as fuel burns off
-const MAX_DEG_PER_STINT = 8.0;      // cap quadratic degradation at 8s/lap
+/**
+ * Live physics tables (config-driven overrides of the built-in defaults
+ * above via SIMULATION_COMPOUND_DEG_JSON / SIMULATION_COMPOUND_PACE_JSON /
+ * SIMULATION_FUEL_BURN_PER_LAP / SIMULATION_MAX_DEG_PER_STINT).
+ * Defaults: ~0.035s/lap fuel burn regained; per-lap degradation capped at
+ * 8s/lap so long SOFT stints can't produce absurd lap times.
+ */
+function compoundDegPerLap(): Record<string, number> {
+    return { ...COMPOUND_DEG_PER_LAP, ...simulationConfig.compoundDegPerLap() };
+}
+
+function compoundBasePace(): Record<string, number> {
+    return { ...COMPOUND_BASE_PACE, ...simulationConfig.compoundBasePace() };
+}
+
+function fuelBurnPerLap(): number {
+    return simulationConfig.fuelBurnPerLap();
+}
+
+function maxDegPerStint(): number {
+    return simulationConfig.maxDegPerStint();
+}
 
 export interface TireStrategyStint {
     compound: string;
@@ -544,8 +558,8 @@ export function validateTireStrategy(input: TireStrategyInput): string | null {
         if (!Number.isFinite(s.laps) || s.laps < 1) {
             return `stint[${i}].laps must be a positive integer`;
         }
-        if (!(s.compound.toUpperCase() in COMPOUND_DEG_PER_LAP)) {
-            return `stint[${i}].compound '${s.compound}' is not recognized (use SOFT/MEDIUM/HARD/INTERMEDIATE/WET)`;
+        if (!(s.compound.toUpperCase() in compoundDegPerLap())) {
+            return `stint[${i}].compound '${s.compound}' is not recognized (use ${Object.keys(compoundDegPerLap()).join("/")})`;
         }
     }
     const totalStintLaps = input.stints.reduce((acc, s) => acc + s.laps, 0);
@@ -564,8 +578,8 @@ export function simulateTireStrategy(
     const err = validateTireStrategy(input);
     if (err) return null;
 
-    const baseLap = input.baseLapTime ?? 90;
-    const pitLoss = input.pitStopSeconds ?? 22.0;
+    const baseLap = input.baseLapTime ?? simulationConfig.defaultBaseLapTime();
+    const pitLoss = input.pitStopSeconds ?? simulationConfig.defaultPitStopSeconds();
     const random = input.seed !== undefined
         ? createSeededRandom(input.seed)
         : Math.random;
@@ -578,8 +592,8 @@ export function simulateTireStrategy(
 
     input.stints.forEach((stint, stintIdx) => {
         const compound = stint.compound.toUpperCase();
-        const deg = COMPOUND_DEG_PER_LAP[compound];
-        const basePaceOffset = COMPOUND_BASE_PACE[compound] ?? 0;
+        const deg = compoundDegPerLap()[compound] ?? 0;
+        const basePaceOffset = compoundBasePace()[compound] ?? 0;
         const stintLapTimes: number[] = [];
         const startLap = currentLap;
         const isFirstStint = stintIdx === 0;
@@ -593,9 +607,9 @@ export function simulateTireStrategy(
             // lap. Without the cap, deg * (n-1)^2 on a 30-lap SOFT
             // stint adds ~50s to the last lap.
             const rawDeg = deg * i * i;
-            const degradation = Math.min(rawDeg, MAX_DEG_PER_STINT);
+            const degradation = Math.min(rawDeg, maxDegPerStint());
             // Fuel effect: every lap is slightly faster as the car burns fuel.
-            const fuelEffect = -(currentLap - 1) * FUEL_BURN_S_PER_LAP;
+            const fuelEffect = -(currentLap - 1) * fuelBurnPerLap();
             // Light stochastic noise (±0.15s) so runs aren't perfectly identical.
             const noise = (random() - 0.5) * 0.3;
             // Pit-in lap: a small portion of the pit loss is paid on the in-lap

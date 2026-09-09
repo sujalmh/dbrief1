@@ -9,6 +9,13 @@ import { z } from "zod";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { chatContentToText, LLM_TIMEOUT_MS } from "./llm";
+import { envJson, maxSeasonYear, minSeasonYear, plannerConfig, seasonYearRangeLabel, telemetryStartYear } from "./config";
+import {
+    detectGpName,
+    driverCodesPromptList,
+    getSessionCodes,
+    getTeams,
+} from "./reference-data";
 
 // =============================================================================
 // Schemas
@@ -24,10 +31,11 @@ export const StepSchema = z.object({
 });
 
 /**
- * Schema for the complete execution plan
+ * Schema for the complete execution plan (cap is config-driven;
+ * evaluated at startup from F1_PLANNER_SCHEMA_MAX_STEPS).
  */
 export const PlanSchema = z.object({
-    steps: z.array(StepSchema).max(25).describe("List of execution steps (max 25)"),
+    steps: z.array(StepSchema).max(plannerConfig.schemaMaxSteps()).describe(`List of execution steps (max ${plannerConfig.schemaMaxSteps()})`),
     reasoning: z.string().optional().describe("Brief explanation of the plan"),
 });
 
@@ -35,25 +43,37 @@ export type Step = z.infer<typeof StepSchema>;
 export type Plan = z.infer<typeof PlanSchema>;
 
 // =============================================================================
-// Planner Prompt
+// Planner Prompt (built dynamically — years, driver codes, session codes,
+// and step budgets all come from lib/config.ts + lib/reference-data.ts so the
+// prompt tracks the live season and any configured overrides)
 // =============================================================================
 
-// Data availability depends on the calendar year, so the current year is
-// interpolated into the prompt rather than hardcoded — this keeps the
-// planner honest about the current season without frequent code updates.
-const PLANNER_CURRENT_YEAR = new Date().getFullYear();
-// Full telemetry lags the calendar: the current season is in progress, so
-// the latest year with *complete* telemetry is last year.
-const PLANNER_PRE_TELEMETRY_LAST_YEAR = PLANNER_CURRENT_YEAR - 1;
-const PLANNER_PROMPT_YEAR_RANGE = `1950-${PLANNER_CURRENT_YEAR}`;
+function plannerYearContext(): { currentYear: number; preTelemetryLastYear: number; yearRange: string; minYear: number; telemetryYear: number } {
+    const currentYear = new Date().getFullYear();
+    return {
+        currentYear,
+        // Full telemetry lags the calendar: the current season is in progress,
+        // so the latest year with *complete* telemetry is last year.
+        preTelemetryLastYear: currentYear - 1,
+        yearRange: seasonYearRangeLabel(),
+        minYear: minSeasonYear(),
+        telemetryYear: telemetryStartYear(),
+    };
+}
 
-const PLANNER_SYSTEM_PROMPT = `You are a query planner for an F1 AI assistant. Decompose queries into 1-5 atomic execution steps.
+function buildPlannerSystemPrompt(): string {
+    const { currentYear, preTelemetryLastYear, yearRange, minYear, telemetryYear } = plannerYearContext();
+    const driverCodes = driverCodesPromptList();
+    const sessionCodes = getSessionCodes().join(", ");
+    const teams = getTeams().join(", ");
+    const maxSteps = plannerConfig.maxSteps();
+    return `You are a query planner for an F1 AI assistant. Decompose queries into 1-${maxSteps} atomic execution steps.
 
 Available Tools (FastAPI):
-- get_seasons: Lists ${PLANNER_PROMPT_YEAR_RANGE} seasons.
+- get_seasons: Lists ${yearRange} seasons.
 - get_events(year): Lists events.
 - get_gp_names(year): Get canonical Grand Prix names for a season. Use this FIRST if you're unsure of the exact GP name.
-- get_sessions(year, gp): Lists sessions (FP1...R).
+- get_sessions(year, gp): Lists sessions (${sessionCodes}).
 - get_results(year, gp, session): Full session results.
 - get_qualifying(year, gp): Qualifying specific results.
 - get_race(year, gp): Race specific results.
@@ -76,37 +96,28 @@ Simulation Tool:
   * variance: Standard deviation for randomness
   * Returns: Statistical summary (mean, min, max, percentiles)
 
-Common Driver Codes (2024):
-- Max Verstappen: VER | Lewis Hamilton: HAM | Fernando Alonso: ALO
-- Charles Leclerc: LEC | Carlos Sainz: SAI | Sergio Perez: PER
-- Lando Norris: NOR | Oscar Piastri: PIA | George Russell: RUS
-- Yuki Tsunoda: TSU | Daniel Ricciardo: RIC | Lance Stroll: STR
-- Pierre Gasly: GAS | Esteban Ocon: OCO | Alex Albon: ALB
-- Logan Sargeant: SAR | Kevin Magnussen: MAG | Nico Hulkenberg: HUL
-- Zhou Guanyu: ZHO | Valtteri Bottas: BOT
+Known Driver Codes (${currentYear} grid — see reference data, updated dynamically):
+${driverCodes}
 NOTE: Driver lineups change yearly. If you are unsure of a driver's 3-letter code for a specific year, include a get_results or get_driver_standings step first to discover the correct codes from the actual data.
 
-Session Codes:
-- Practice: FP1, FP2, FP3
-- Qualifying: Q (or "Qualifying")
-- Sprint Qualifying: SQ
-- Sprint: S
-- Race: R (or "Race")
+Known Teams: ${teams}
+
+Session Codes: ${sessionCodes}
 
 Rules:
-1. MAX 5 steps total.
+1. MAX ${maxSteps} steps total.
 2. **CRITICAL**: To compare MULTIPLE drivers, make SEPARATE tool calls for EACH driver.
    Example: "Compare Lando and Oscar" → get_telemetry(driver="NOR") + get_telemetry(driver="PIA")
 3. Use 3-letter driver codes (NOR, not "Lando Norris"). If unsure of a driver's code for a specific year, plan a get_results or get_driver_standings call first to discover it.
 4. For race: use session="R". For qualifying: use session="Q".
 5. Always use correct GP names: "Abu Dhabi" (not "abu dhabi 23"). If unsure of the canonical GP name, include a get_gp_names(year) or get_events(year) step FIRST to discover valid names.
-6. **YEAR RANGE**: Years 1950-${PLANNER_CURRENT_YEAR} are supported with different data availability:
-   - **1950-2017**: Use ergast tools ONLY (get_driver_standings, get_race, get_qualifying). NO telemetry/laps/weather available.
-   - **2018-${PLANNER_PRE_TELEMETRY_LAST_YEAR}**: All tools available including telemetry, laps, weather, etc.
-   - **${PLANNER_CURRENT_YEAR} (current season)**: Sessions that have already finished are available. Live / in-progress sessions are blocked at the API layer for cost protection; if the user asks about a session that is currently running, fall back to web_search for live updates.
-   Example for "Senna 1994 championship": {"steps": [{"tool": "get_driver_standings", "args": {"year": 1994}}], "reasoning": "1994 is pre-2018, using ergast API for standings."}
-   Example for "1994 Monaco race telemetry": {"steps": [], "reasoning": "Telemetry not available for 1994. Only standings and results available for pre-2018 seasons."}
-   Example for "${PLANNER_CURRENT_YEAR} Australian GP results": {"needs_plan": true, "reasoning": "Current-season completed race results are available via FastF1.", "steps": [{"description": "Get race results", "tool": "get_race", "args": {"year": ${PLANNER_CURRENT_YEAR}, "gp": "Australia"}}]}
+6. **YEAR RANGE**: Years ${minYear}-${currentYear} are supported with different data availability:
+   - **${minYear}-${telemetryYear - 1}**: Use ergast tools ONLY (get_driver_standings, get_race, get_qualifying). NO telemetry/laps/weather available.
+   - **${telemetryYear}-${preTelemetryLastYear}**: All tools available including telemetry, laps, weather, etc.
+   - **${currentYear} (current season)**: Sessions that have already finished are available. Live / in-progress sessions are blocked at the API layer for cost protection; if the user asks about a session that is currently running, fall back to web_search for live updates.
+   Example for "Senna 1994 championship": {"steps": [{"tool": "get_driver_standings", "args": {"year": 1994}}], "reasoning": "1994 is pre-${telemetryYear}, using ergast API for standings."}
+   Example for "1994 Monaco race telemetry": {"steps": [], "reasoning": "Telemetry not available for 1994. Only standings and results available for pre-${telemetryYear} seasons."}
+   Example for "${currentYear} Australian GP results": {"needs_plan": true, "reasoning": "Current-season completed race results are available via FastF1.", "steps": [{"description": "Get race results", "tool": "get_race", "args": {"year": ${currentYear}, "gp": "Australia"}}]}
 7. **TOOL SELECTION**:
    - Use get_telemetry for comparisons and visualization queries
    - Use get_telemetry_summary only when user explicitly asks for "stats" or "summary"
@@ -153,6 +164,7 @@ Output: {"needs_plan": true, "reasoning": "Counterfactual needs real lap data fi
 Example D (penalty / stewards' decision):
 Input: "Who got the first penalty in 2024?"
 Output: {"needs_plan": true, "reasoning": "Penalty question needs stewards' decision documents, not results.", "steps": [{"description": "Search 2024 stewards' decisions for penalties", "tool": "retrieve_regulations", "args": {"query": "penalty", "season": 2024, "section": "Sporting", "doc_type": "decision"}}]}`;
+}
 
 // =============================================================================
 // Conversational Detection + Shared Planner Helpers
@@ -199,12 +211,12 @@ function resolveDecision(
     }
 
     if (obj.needs_plan === false) {
-        const reply = typeof obj.reply === "string" && obj.reply.trim() ? obj.reply : "Hey! 🏎️ How can I help you with F1 today?";
+        const reply = typeof obj.reply === "string" && obj.reply.trim() ? obj.reply : plannerConfig.fallbackReply();
         return {
             needsPlan: false,
             plan: {
                 steps: [],
-                reasoning: typeof obj.reasoning === "string" ? obj.reasoning : "Conversational message — no tools needed",
+                reasoning: typeof obj.reasoning === "string" ? obj.reasoning : plannerConfig.fallbackReasoning(),
             },
             reply,
         };
@@ -227,9 +239,12 @@ function resolveDecision(
 
 /**
  * Build the full system prompt with date, web-search flag, and deep-research overrides.
+ * Step budgets come from plannerConfig (F1_PLANNER_MAX_STEPS /
+ * F1_PLANNER_DEEP_MAX_STEPS) so the cap the prompt advertises always matches
+ * the cap validateAndFilterPlan enforces.
  */
 function buildPlannerPrompt(webSearchEnabled: boolean, deepResearchMode: boolean): string {
-    let prompt = PLANNER_SYSTEM_PROMPT;
+    let prompt = buildPlannerSystemPrompt();
     const currentDate = new Date().toISOString().split('T')[0];
     prompt += `\n\nCurrent Date: ${currentDate}`;
 
@@ -238,10 +253,13 @@ function buildPlannerPrompt(webSearchEnabled: boolean, deepResearchMode: boolean
     }
 
     if (deepResearchMode) {
-        prompt = prompt.replace(
-            "MAX 5 steps total",
-            "MAX 25 steps total. Create as many steps as needed for a comprehensive analysis."
-        );
+        const normalCap = `MAX ${plannerConfig.maxSteps()} steps total`;
+        const deepCap = `MAX ${plannerConfig.deepMaxSteps()} steps total. Create as many steps as needed for a comprehensive analysis.`;
+        if (prompt.includes(normalCap)) {
+            prompt = prompt.replace(normalCap, deepCap);
+        } else {
+            prompt += `\n\n**NOTE: Deep research mode — up to ${plannerConfig.deepMaxSteps()} steps allowed.**`;
+        }
     }
 
     return prompt;
@@ -270,7 +288,7 @@ function validateAndFilterPlan(
         );
     }
 
-    const maxSteps = deepResearchMode ? 25 : 5;
+    const maxSteps = deepResearchMode ? plannerConfig.deepMaxSteps() : plannerConfig.maxSteps();
     if (validatedPlan.steps.length > maxSteps) {
         validatedPlan.steps = validatedPlan.steps.slice(0, maxSteps);
     }
@@ -286,6 +304,72 @@ function responseToText(response: { content: unknown }): string {
     // Handles both string content (chat/completions) and content blocks
     // (responses API) via the shared helper.
     return chatContentToText(response.content);
+}
+
+/**
+ * Fast conversational fast-path: resolve greetings/thanks/capability
+ * questions WITHOUT any LLM call. Exported for the chat route, which
+ * checks it BEFORE decidePlan so short conversational messages skip the
+ * planner round-trip entirely.
+ *
+ * Patterns are data, not logic: built-ins below preserve current behavior,
+ * and `F1_CONVERSATIONAL_PATTERNS_JSON` (array of {match, reply}) replaces
+ * or extends them without a code change. `match` is a case-insensitive
+ * regex source; entries that fail to compile fall back to substring match.
+ */
+const BUILTIN_CONVERSATIONAL_PATTERNS: Array<{ pattern: RegExp; reply: string }> = [
+    {
+        pattern: /^(hi|hey|hello|yo|sup|good\s?(morning|afternoon|evening))\b[^?!.\n]{0,40}$/i,
+        reply: "Hey! 🏎️ I can pull race results, compare drivers, analyze telemetry, explain regulations, or run what-if simulations — what are you curious about?",
+    },
+    {
+        pattern: /^(thanks?|thank\s?you|thx|cheers|much\s?appreciated)\b[^?!.\n]{0,40}$/i,
+        reply: "You're welcome! 🏁 Anything else you'd like to know about F1?",
+    },
+    {
+        pattern: /^(bye|goodbye|good\s?night|see\s?you)\b[^?!.\n]{0,40}$/i,
+        reply: "See you at the next Grand Prix! 🏎️💨",
+    },
+    {
+        pattern: /^(what\s?can\s?you\s?do|how\s?can\s?you\s?help|help|capabilit)/i,
+        reply: "Hey! 🏎️ I can pull race results, compare drivers, analyze telemetry, explain regulations, or run what-if simulations — what are you curious about?",
+    },
+];
+
+export function getConversationalPatterns(): Array<{ pattern: RegExp; reply: string }> {
+    const configured = envJson<Array<{ match: string; reply: string }>>("F1_CONVERSATIONAL_PATTERNS_JSON", []);
+    if (!Array.isArray(configured) || configured.length === 0) return BUILTIN_CONVERSATIONAL_PATTERNS;
+    const built: Array<{ pattern: RegExp; reply: string }> = [];
+    for (const entry of configured) {
+        if (!entry || typeof entry.match !== "string" || typeof entry.reply !== "string") continue;
+        try {
+            built.push({ pattern: new RegExp(entry.match, "i"), reply: entry.reply });
+        } catch {
+            const needle = entry.match.toLowerCase();
+            built.push({ pattern: new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), reply: entry.reply });
+        }
+    }
+    return built.length > 0 ? built : BUILTIN_CONVERSATIONAL_PATTERNS;
+}
+
+export function tryConversationalFastPath(message: string): PlanDecision | null {
+    const trimmed = message.trim();
+    // Only for short messages — longer ones may carry real data needs
+    // (e.g. "Hi, who won Monaco 2024?") and must go to the LLM planner.
+    if (trimmed.length > plannerConfig.fastPathMaxMessageChars()) return null;
+    for (const { pattern, reply } of getConversationalPatterns()) {
+        if (pattern.test(trimmed)) {
+            return {
+                needsPlan: false,
+                plan: {
+                    steps: [],
+                    reasoning: "Conversational fast-path — no tools needed",
+                },
+                reply,
+            };
+        }
+    }
+    return null;
 }
 
 /**
@@ -436,68 +520,63 @@ function extractFirstBalancedJsonObject(s: string): string | null {
 export function createFallbackPlan(message: string): Plan {
     const lowerMessage = message.toLowerCase();
 
-    // Try to extract year. F1 history spans 1950+, so match 19xx and 20xx.
-    // Only accept 4-digit years in the plausible F1 range — a bare 2-digit
-    // number (e.g. the "21" in "Abu Dhabi 21") must NOT become year 21.
+    // Year extraction bounds are config-driven (F1_MIN_SEASON_YEAR /
+    // F1_SEASON_YEAR_BUFFER). Only accept 4-digit years in the plausible F1
+    // range — a bare 2-digit number (e.g. the "21" in "Abu Dhabi 21") must
+    // NOT become year 21.
     const yearMatch = message.match(/(?:19|20)\d{2}/);
     let year = new Date().getFullYear();
     if (yearMatch) {
         const parsed = parseInt(yearMatch[0], 10);
-        if (parsed >= 1950 && parsed <= new Date().getFullYear() + 2) {
+        if (parsed >= minSeasonYear() && parsed <= maxSeasonYear()) {
             year = parsed;
         }
     }
 
-    // Try to detect GP name from common ones
-    const gpPatterns = [
-        { pattern: /monaco/i, name: "Monaco" },
-        { pattern: /silverstone|british/i, name: "Silverstone" },
-        { pattern: /monza|italian/i, name: "Monza" },
-        { pattern: /spa|belgium|belgian/i, name: "Belgium" },
-        { pattern: /suzuka|japanese|japan/i, name: "Japan" },
-        { pattern: /austin|us\s*gp|united states/i, name: "United States" },
-        { pattern: /bahrain/i, name: "Bahrain" },
-        { pattern: /saudi|jeddah/i, name: "Saudi Arabia" },
-        { pattern: /australia|melbourne/i, name: "Australia" },
-        { pattern: /miami/i, name: "Miami" },
-        { pattern: /canada|montreal/i, name: "Canada" },
-        { pattern: /austria|spielberg/i, name: "Austria" },
-        { pattern: /hungary|hungaroring/i, name: "Hungary" },
-        { pattern: /netherlands|zandvoort/i, name: "Netherlands" },
-        { pattern: /singapore/i, name: "Singapore" },
-        { pattern: /mexico/i, name: "Mexico" },
-        { pattern: /brazil|interlagos/i, name: "Brazil" },
-        { pattern: /vegas|las vegas/i, name: "Las Vegas" },
-        { pattern: /qatar/i, name: "Qatar" },
-        { pattern: /abu dhabi/i, name: "Abu Dhabi" },
-    ];
+    // GP detection uses the shared reference-data patterns (built-ins +
+    // F1_GP_PATTERNS_JSON env override + runtime registration).
+    const gp = detectGpName(message);
 
-    let gp: string | null = null;
-    for (const { pattern, name } of gpPatterns) {
-        if (pattern.test(message)) {
-            gp = name;
-            break;
+    // Simulation / metric / horizon keyword sets are config-overridable so
+    // new phrasings can be routed without code changes.
+    const simKeywords = envJson<string[]>("F1_SIMULATION_KEYWORDS_JSON", [
+        "what\\s*if", "simulate", "simulation", "predict", "project",
+        "counterfactual", "hypothetical", "how\\s+would", "what\\s+would",
+    ]);
+    const simPattern = new RegExp(`\\b(${simKeywords.join("|")})\\b`, "i");
+    const metricRules = envJson<Array<{ match: string; metric: string }>>("F1_SIMULATION_METRICS_JSON", [
+        { match: "lap\\s*time|time", metric: "time" },
+        { match: "points|championship|standings", metric: "points" },
+        { match: "position|place|finish", metric: "position" },
+        { match: "gap|delta|margin", metric: "gap" },
+    ]);
+    const horizonRules = envJson<Array<{ match: string; horizon: string }>>("F1_SIMULATION_HORIZONS_JSON", [
+        { match: "season|championship|year", horizon: "season" },
+        { match: "lap", horizon: "lap" },
+    ]);
+    const matchAny = (rules: Array<{ match: string }>, key: "metric" | "horizon"): string | null => {
+        for (const rule of rules) {
+            try {
+                if (new RegExp(`\\b(${rule.match})\\b`, "i").test(lowerMessage)) {
+                    return (rule as Record<string, string>)[key];
+                }
+            } catch {
+                if (lowerMessage.includes(rule.match)) return (rule as Record<string, string>)[key];
+            }
         }
-    }
+        return null;
+    };
 
     // Determine what type of data to fetch
     // PRIORITY: Detect simulation / what-if / predictive queries FIRST so they
     // don't fall through to a generic "get events" plan when the LLM planner
     // fails. These need run_simulation, not data retrieval.
-    const isSimulationQuery =
-        /\b(what\s*if|simulate|simulation|predict|project|counterfactual|hypothetical|how\s+would|what\s+would)\b/i.test(lowerMessage);
+    const isSimulationQuery = simPattern.test(lowerMessage);
 
     if (isSimulationQuery) {
-        // Try to infer the metric from the query
-        const metricMatch = lowerMessage.match(/\b(lap\s*time|time)\b/i) ? "time"
-            : lowerMessage.match(/\b(points|championship|standings)\b/i) ? "points"
-                : lowerMessage.match(/\b(position|place|finish)\b/i) ? "position"
-                    : lowerMessage.match(/\b(gap|delta|margin)\b/i) ? "gap"
-                        : "points"; // sensible default for season-level what-ifs
-
-        const horizonMatch = lowerMessage.match(/\b(season|championship|year)\b/i) ? "season"
-            : lowerMessage.match(/\b(lap)\b/i) ? "lap"
-                : "race"; // default to race-level
+        // Try to infer the metric/horizon from the query
+        const metricMatch = matchAny(metricRules, "metric") ?? "points"; // sensible default for season-level what-ifs
+        const horizonMatch = matchAny(horizonRules, "horizon") ?? "race"; // default to race-level
 
         // Build a scenario_id from the message so it's identifiable
         const scenarioId = message
@@ -570,7 +649,10 @@ export function createFallbackPlan(message: string): Plan {
         };
     }
 
-    if (lowerMessage.includes("penalt") || lowerMessage.includes("steward") || lowerMessage.includes("disqualif") || lowerMessage.includes("investigat") || lowerMessage.includes("protest") || lowerMessage.includes("appeal") || lowerMessage.includes("fine ")) {
+    const penaltyKeywords = envJson<string[]>("F1_PENALTY_KEYWORDS_JSON", [
+        "penalt", "steward", "disqualif", "investigat", "protest", "appeal", "fine ",
+    ]);
+    if (penaltyKeywords.some((k) => lowerMessage.includes(k))) {
         return {
             steps: [{ description: `Search ${year} stewards' decisions`, tool: "retrieve_regulations", args: { query: message.slice(0, 200), season: year, section: "Sporting", doc_type: "decision" } }],
             reasoning: "Fallback: detected penalty/decision query",

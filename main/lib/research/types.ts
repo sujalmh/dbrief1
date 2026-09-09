@@ -10,6 +10,7 @@
  */
 
 import { z } from "zod";
+import { envJson } from "@/lib/config";
 
 // =============================================================================
 // Research Type Taxonomy (17 types)
@@ -328,7 +329,7 @@ export type CriticResult = z.infer<typeof CriticResultSchema>;
 // Research Type → Expected Evidence Types (for confidence completeness)
 // =============================================================================
 
-export const RESEARCH_TYPE_EXPECTATIONS: Partial<Record<ResearchType, EvidenceType[]>> = {
+const BUILTIN_RESEARCH_TYPE_EXPECTATIONS: Partial<Record<ResearchType, EvidenceType[]>> = {
     race_analysis: ["qualifying", "race", "laps", "weather"],
     season_review: ["standings", "race", "qualifying"],
     reliability: ["race", "race_control", "results"],
@@ -347,6 +348,35 @@ export const RESEARCH_TYPE_EXPECTATIONS: Partial<Record<ResearchType, EvidenceTy
     predictive: ["standings", "simulation"],
     factual: ["results"],
 };
+
+/**
+ * Expected evidence types per research type. Built-ins above preserve
+ * current behavior; override/extend without a code change via
+ * RESEARCH_TYPE_EXPECTATIONS_JSON (partial map, merged by research type).
+ * Read live on every access so config changes apply immediately.
+ */
+export const RESEARCH_TYPE_EXPECTATIONS: Partial<Record<ResearchType, EvidenceType[]>> = new Proxy(
+    {} as Partial<Record<ResearchType, EvidenceType[]>>,
+    {
+        get: (_target, prop: string) => {
+            const overrides = envJson<Partial<Record<string, EvidenceType[]>>>(
+                "RESEARCH_TYPE_EXPECTATIONS_JSON",
+                {}
+            );
+            const base = BUILTIN_RESEARCH_TYPE_EXPECTATIONS[prop as ResearchType];
+            const override = overrides?.[prop];
+            if (override !== undefined) return override;
+            return base;
+        },
+        has: (_target, prop: string) => prop in BUILTIN_RESEARCH_TYPE_EXPECTATIONS,
+        ownKeys: () => Reflect.ownKeys(BUILTIN_RESEARCH_TYPE_EXPECTATIONS),
+        getOwnPropertyDescriptor: (_target, prop: string) => ({
+            enumerable: true,
+            configurable: true,
+            value: (BUILTIN_RESEARCH_TYPE_EXPECTATIONS as Record<string, EvidenceType[] | undefined>)[prop],
+        }),
+    }
+);
 
 // =============================================================================
 // Intent Analysis (pre-planning structured breakdown)

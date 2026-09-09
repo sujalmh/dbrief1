@@ -19,20 +19,27 @@ import type { EvidenceStore } from "../evidence-store";
 import type { ResearchMemory } from "../memory";
 import type { Task, TaskStatus, Evidence } from "../types";
 import type { ExecutionResult } from "../evidence-store";
+import { executionConfig } from "@/lib/config";
 
 // =============================================================================
-// Configuration
+// Configuration (live — see lib/config.ts)
 // =============================================================================
 
-const STEP_TIMEOUT_MS = 60000;
-const MAX_RETRIES = 2;
+function stepTimeoutMs(): number {
+    return executionConfig.stepTimeoutMs();
+}
+
+function retryBudget(): number {
+    return executionConfig.maxRetries();
+}
+
+function concurrencyLimit(): number {
+    return executionConfig.maxConcurrency();
+}
 
 function isRetryableError(error: unknown): boolean {
     const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes("400") || msg.includes("401") || msg.includes("403") || msg.includes("404")) {
-        return false;
-    }
-    return true;
+    return !executionConfig.nonRetryableStatusFragments().some((fragment) => msg.includes(fragment));
 }
 
 // =============================================================================
@@ -110,8 +117,8 @@ export class Executor {
                 break;
             }
 
-            // Execute ready tasks in parallel with concurrency limit
-            const CONCURRENCY_LIMIT = 3;
+            // Execute ready tasks in parallel with the configured concurrency
+            // limit (tool calls are I/O-bound; higher fan-out cuts wall time).
             const batchResults: ExecutionResult[] = new Array(ready.length);
             let currentIndex = 0;
 
@@ -124,7 +131,7 @@ export class Executor {
             };
 
             const workers = Array.from(
-                { length: Math.min(CONCURRENCY_LIMIT, ready.length) },
+                { length: Math.min(concurrencyLimit(), ready.length) },
                 () => worker()
             );
             await Promise.all(workers);
@@ -221,7 +228,8 @@ export class Executor {
 
         // Execute with retry
         let lastError: string | undefined;
-        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        const retries = retryBudget();
+        for (let attempt = 0; attempt <= retries; attempt++) {
             try {
                 const data = await this.invokeWithTimeout(tool, resolvedArgs);
 
@@ -259,11 +267,11 @@ export class Executor {
             } catch (error) {
                 lastError = error instanceof Error ? error.message : String(error);
                 console.warn(
-                    `[Executor] Tool "${task.tool}" attempt ${attempt + 1}/${MAX_RETRIES + 1} failed for task ${task.id}: ${lastError}`
+                    `[Executor] Tool "${task.tool}" attempt ${attempt + 1}/${retries + 1} failed for task ${task.id}: ${lastError}`
                 );
-                if (attempt < MAX_RETRIES && isRetryableError(error)) {
-                    // Exponential backoff
-                    const delay = Math.pow(2, attempt) * 1000;
+                if (attempt < retries && isRetryableError(error)) {
+                    // Short backoff: fail fast for responsiveness.
+                    const delay = Math.pow(2, attempt) * executionConfig.retryBackoffBaseMs();
                     await new Promise((r) => setTimeout(r, delay));
                 } else {
                     break; // Skip further retries for non-retryable errors
@@ -284,16 +292,22 @@ export class Executor {
     }
 
     /**
-     * Invoke a tool with a timeout.
+     * Invoke a tool with a timeout. The timer is always cleared so we never
+     * leak handles on the server.
      */
     private async invokeWithTimeout(tool: StructuredTool, args: Record<string, unknown>): Promise<unknown> {
-        const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("Tool execution timed out")), STEP_TIMEOUT_MS)
-        );
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error("Tool execution timed out")), stepTimeoutMs());
+        });
 
         const invokePromise = tool.invoke(args);
 
-        return Promise.race([invokePromise, timeoutPromise]);
+        try {
+            return await Promise.race([invokePromise, timeoutPromise]);
+        } finally {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+        }
     }
 
     /**

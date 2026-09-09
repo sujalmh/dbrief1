@@ -12,17 +12,17 @@
  *   3. Carry axis labels, units, and a headline insight so the renderer
  *      never has to invent them.
  *
- * The LLM is used to suggest chart *intents* and *titles*; the actual
- * spec, aggregation, and chart type are produced deterministically by
- * `visualization-intelligence.ts`. This keeps the renderer dumb and
- * prevents the LLM from inventing fake x/y fields.
+ * Intents are detected deterministically via `detectIntents` (+ a
+ * per-research-type fallback); the actual spec, aggregation, and chart
+ * type are produced deterministically by `visualization-intelligence.ts`.
+ * This keeps chart planning at ~0ms with no LLM call on the critical
+ * path, and prevents the LLM from inventing fake x/y fields.
  */
 
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
-import { z } from "zod";
 import { type ChartSpec, type Evidence, type ResearchType } from "../types";
 import type { EvidenceStore } from "../evidence-store";
+import { envJson } from "@/lib/config";
 import {
     detectIntents,
     buildChartSpec,
@@ -32,78 +32,10 @@ import {
 } from "./visualization-intelligence";
 
 // =============================================================================
-// LLM-side intent + title proposal
-// =============================================================================
-//
-// The LLM is intentionally scoped: it picks which intents to render and
-// writes a focused question/purpose. It does NOT pick chart type, fields,
-// or aggregation. Those come from the deterministic pipeline.
-
-const IntentProposalSchema = z.object({
-    charts: z
-        .array(
-            z.object({
-                intent: z.string().describe("One of: compare_drivers, compare_teams, rank_metric, championship_progression, lap_progression, tyre_degradation, strategy_breakdown, pit_stop_distribution, lap_time_distribution, qualifying_pace, qualifying_vs_result, telemetry_compare, telemetry_single, telemetry_correlation, standings_breakdown, race_control_timeline, weather_conditions, correlation, summary_kpi, show"),
-                purpose: z.string().describe("One-line summary of the chart's purpose"),
-                question: z.string().describe("The user-facing question this chart answers"),
-                evidenceIds: z.array(z.string()).describe("IDs of evidence to use (E1, E2, ...)"),
-                focus: z.array(z.string()).optional().describe("Optional driver/team/compound codes to highlight"),
-            })
-        )
-        .describe("List of meaningful chart intents. Return an empty array if no charts are needed."),
-});
-
-const VIZ_PROMPT = `You are an expert F1 Data Analyst.
-
-Your job is to choose which CHARTS (not which datasets) communicate the user's
-research objective. You do NOT pick chart types, fields, or aggregations —
-those are decided downstream by a deterministic pipeline. You only choose
-*which insights to communicate* and write a purpose + question for each.
-
-Rules:
-- Do NOT emit a chart unless it answers a real, specific question.
-- Do NOT emit a chart that just mirrors a table.
-- Prefer 1-4 focused charts over 10 generic ones.
-- If the user asked about specific drivers/teams, list them in 'focus'.
-- If the question is purely informational ("what year did X happen?"), return [].
-- If the evidence store has no relevant data, return [].
-
-Intents you can pick from:
-- compare_drivers           → "Who was faster / better?"
-- compare_teams             → Team vs team
-- rank_metric               → "Most wins, top 5 drivers"
-- championship_progression  → WDC/WCC points over a season
-- lap_progression           → Pace across a stint
-- tyre_degradation          → Pace vs tyre age
-- strategy_breakdown        → Compound usage
-- pit_stop_distribution     → Pit time spread
-- lap_time_distribution     → Pace consistency
-- qualifying_pace           → Qualifying comparison
-- qualifying_vs_result      → Grid vs finish
-- telemetry_compare         → Speed traces of multiple drivers
-- telemetry_single          → Single-driver telemetry
-- telemetry_correlation     → Telemetry-derived correlation
-- standings_breakdown       → Final WDC/WCC breakdown
-- race_control_timeline     → Flags/SC timeline
-- weather_conditions        → Air/track temp
-- correlation               → Generic scatter
-- summary_kpi               → Headline number only
-- show                      → Generic fallback
-
-Research Objective: {objective}
-Research Type: {researchType}
-
-Available Evidence:
-{evidenceContext}
-
-Output JSON matching the schema. The pipeline will fill in chart type, fields,
-and aggregation. Focus on intent + question.`;
-
-// =============================================================================
 // Visualization Planner
 // =============================================================================
 
-const DEFAULT_INTENTS_BY_RESEARCH: Partial<Record<ResearchType, VisualizationIntent[]>> = {
+const BUILTIN_INTENTS_BY_RESEARCH: Partial<Record<ResearchType, VisualizationIntent[]>> = {
     race_analysis: ["compare_drivers", "qualifying_vs_result", "lap_progression", "tyre_degradation"],
     season_review: ["championship_progression", "standings_breakdown", "rank_metric"],
     reliability: ["race_control_timeline"],
@@ -123,12 +55,29 @@ const DEFAULT_INTENTS_BY_RESEARCH: Partial<Record<ResearchType, VisualizationInt
     factual: [],
 };
 
+/**
+ * Default chart intents per research type (overridable via
+ * VIZ_INTENTS_BY_RESEARCH_JSON without a code change).
+ */
+function defaultIntentsByResearch(): Partial<Record<ResearchType, VisualizationIntent[]>> {
+    const overrides = envJson<Partial<Record<string, string[]>>>("VIZ_INTENTS_BY_RESEARCH_JSON", {});
+    if (!overrides || Object.keys(overrides).length === 0) return BUILTIN_INTENTS_BY_RESEARCH;
+    return { ...BUILTIN_INTENTS_BY_RESEARCH, ...(overrides as Partial<Record<ResearchType, VisualizationIntent[]>>) };
+}
+
 export class VisualizationPlanner {
     constructor(private model: BaseChatModel) {}
 
     /**
-     * Plan charts intelligently using an LLM based on objective and evidence.
-     * The LLM proposes intents; we deterministically build the specs.
+     * Plan charts deterministically from the objective + evidence — no LLM
+     * call. The old path made a blocking structured-output LLM call per
+     * research session (and the Synthesizer waited on its chartSpecs), adding
+     * a full model round-trip to every deep-research answer. The heuristic
+     * `detectIntents` + type-fallback below already picks sensible intents,
+     * and the deterministic `buildChartSpec` pipeline (aggregation, labels,
+     * validation) produces the actual specs — the LLM only wrote
+     * purpose/question strings. Those are now templated from the intent,
+     * keeping chart quality while cutting a full sequential LLM call.
      */
     async plan(
         evidenceStore: EvidenceStore,
@@ -139,34 +88,7 @@ export class VisualizationPlanner {
             return [];
         }
 
-        const evidenceContext = evidenceStore.toReasonerContextString();
-
-        let intents: IntentProposal[];
-
-        try {
-            const modelWithStructure = this.model.withStructuredOutput(IntentProposalSchema, {
-                name: "plan_visualizations",
-            });
-            const prompt = ChatPromptTemplate.fromTemplate(VIZ_PROMPT);
-            const chain = prompt.pipe(modelWithStructure);
-            const result = await chain.invoke({ objective, researchType, evidenceContext });
-            intents = result.charts
-                .map((c): IntentProposal | null => {
-                    const intent = sanitizeIntent(c.intent);
-                    if (!intent) return null;
-                    return {
-                        intent,
-                        purpose: c.purpose,
-                        question: c.question,
-                        evidenceIds: c.evidenceIds,
-                        focus: c.focus,
-                    };
-                })
-                .filter((c): c is IntentProposal => c !== null);
-        } catch (error) {
-            console.error("VisualizationPlanner: LLM intent proposal failed, falling back to heuristics:", error);
-            intents = fallbackIntents(objective, researchType, evidenceStore);
-        }
+        const intents = fallbackIntents(objective, researchType, evidenceStore);
 
         // Build deterministic specs for each intent.
         const specs: ChartSpec[] = [];
@@ -203,28 +125,13 @@ interface IntentProposal {
     focus?: string[];
 }
 
-const VALID_INTENTS: Set<string> = new Set([
-    "compare_drivers", "compare_teams", "rank_metric", "championship_progression",
-    "lap_progression", "tyre_degradation", "strategy_breakdown", "pit_stop_distribution",
-    "lap_time_distribution", "qualifying_pace", "qualifying_vs_result",
-    "telemetry_compare", "telemetry_single", "telemetry_correlation",
-    "standings_breakdown", "race_control_timeline", "weather_conditions",
-    "correlation", "summary_kpi", "show",
-]);
-
-function sanitizeIntent(raw: string): VisualizationIntent | null {
-    const normalized = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
-    if (VALID_INTENTS.has(normalized)) return normalized as VisualizationIntent;
-    return null;
-}
-
 function fallbackIntents(
     objective: string,
     researchType: ResearchType,
     evidenceStore: EvidenceStore
 ): IntentProposal[] {
     const heuristic = detectIntents(objective);
-    const fallbackByType = DEFAULT_INTENTS_BY_RESEARCH[researchType] ?? [];
+    const fallbackByType = defaultIntentsByResearch()[researchType] ?? [];
     const intents: VisualizationIntent[] = heuristic.length > 0 && !heuristic.includes("show")
         ? heuristic
         : fallbackByType.length > 0
@@ -240,9 +147,9 @@ function fallbackIntents(
 }
 
 /**
- * Pick the best evidence for an intent. We prefer evidence the LLM named,
- * but if it's missing or the wrong type we fall back to the highest-quality
- * evidence whose type matches the intent.
+ * Pick the best evidence for an intent. We prefer the heuristic's
+ * suggested evidence, but if it's missing or the wrong type we fall back
+ * to the highest-quality evidence whose type matches the intent.
  */
 function pickEvidenceForIntent(
     intent: VisualizationIntent,

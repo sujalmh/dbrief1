@@ -20,7 +20,8 @@ import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import type { EvidenceStore } from "../evidence-store";
 import type { CriticResult } from "../types";
 import { CriticResultSchema } from "../types";
-import { extractJson, extractContent } from "../llm-parse";
+import { LLM_TIMEOUT_MS } from "@/lib/llm";
+import { researchConfig } from "@/lib/config";
 
 // =============================================================================
 // Critic
@@ -58,6 +59,20 @@ export class Critic {
             };
         }
 
+        // Fast path: short answers and refusals need no LLM verification.
+        // The old path made up to TWO sequential LLM calls (structured +
+        // manual fallback) for every report, blocking `done` on verification.
+        // Short/refusal text has little to verify — return ok immediately.
+        const lowered = answer.toLowerCase();
+        const isRefusal =
+            lowered.includes("unable to retrieve") ||
+            lowered.includes("don't have") ||
+            lowered.includes("no data") ||
+            lowered.includes("insufficient data");
+        if (isRefusal || answer.trim().length < researchConfig.criticMinCharsForReview()) {
+            return { grounded: true, issues: [], severity: "ok" as const };
+        }
+
         const evidenceContext = evidenceStore.toContextString();
 
         const systemPrompt = `You are the Critic in an F1 research agent. Your job is to verify that the synthesized answer is grounded in the collected evidence.
@@ -85,7 +100,10 @@ ${answer}
 
 Analyze the answer against the evidence. Report specific issues with the claim and which evidence (if any) it contradicts.`;
 
-        // Try structured output first
+        // Try structured output once with a tight timeout. The old manual
+        // invoke + JSON-extraction fallback (a SECOND sequential LLM call)
+        // is removed: on any failure return ok so verification never blocks
+        // the answer with a false warning or added latency.
         try {
             const structuredModel = this.model.withStructuredOutput(
                 CriticResultSchema,
@@ -94,31 +112,11 @@ Analyze the answer against the evidence. Report specific issues with the claim a
             const result = await structuredModel.invoke([
                 new SystemMessage(systemPrompt),
                 new HumanMessage("Verify the answer against the evidence."),
-            ]);
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.critic) });
             return result as CriticResult;
-        } catch (structuredError) {
-            console.log(
-                "[Critic] Structured output failed, falling back to manual parsing:",
-                structuredError instanceof Error ? structuredError.message : structuredError
-            );
-        }
-
-        // Fallback: manual invoke + JSON extraction
-        try {
-            const response = await this.model.invoke([
-                new SystemMessage(
-                    systemPrompt +
-                    '\n\nRespond as JSON:\n{"grounded": true/false, "issues": ["..."], "severity": "ok"|"minor"|"major"}'
-                ),
-                new HumanMessage("Verify the answer against the evidence. Respond with ONLY the JSON object."),
-            ]);
-
-            const content = extractContent(response.content);
-            const parsed = extractJson(content);
-            return CriticResultSchema.parse(parsed);
         } catch (error) {
-            console.error(
-                "[Critic] Review failed:",
+            console.warn(
+                "[Critic] Review failed/skipped:",
                 error instanceof Error ? error.message : error
             );
             // On failure, return ok (don't block the answer with a false warning)

@@ -7,6 +7,7 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { Step } from "./planner";
+import { envJson, executionConfig } from "./config";
 
 // =============================================================================
 // Types
@@ -23,11 +24,21 @@ export interface ExecutionResult {
 }
 
 // =============================================================================
-// Configuration
+// Configuration (live — see lib/config.ts; env: F1_STEP_TIMEOUT_MS,
+// F1_MAX_CONCURRENCY, F1_MAX_RETRIES, F1_RETRY_BACKOFF_BASE_MS)
 // =============================================================================
 
+function stepTimeoutMs(): number {
+    return executionConfig.stepTimeoutMs();
+}
 
-const STEP_TIMEOUT_MS = 60000;
+function maxConcurrency(): number {
+    return executionConfig.maxConcurrency();
+}
+
+function maxRetries(): number {
+    return executionConfig.maxRetries();
+}
 
 // =============================================================================
 // Tool name resolution
@@ -39,7 +50,7 @@ const STEP_TIMEOUT_MS = 60000;
 // fallback. Anything still unmatched is reported back to the caller so
 // the real bugs are still visible in the logs.
 
-const TOOL_ALIASES: Record<string, string> = {
+const BUILTIN_TOOL_ALIASES: Record<string, string> = {
     get_lap_times: "get_laps",
     get_laptime: "get_laps",
     get_laptimes: "get_laps",
@@ -66,6 +77,17 @@ const TOOL_ALIASES: Record<string, string> = {
     simulation: "run_simulation",
 };
 
+/**
+ * Alias table with env overrides (F1_TOOL_ALIASES_JSON merged over
+ * built-ins) so new model hallucinations can be remapped without a deploy.
+ */
+function toolAliases(): Record<string, string> {
+    return {
+        ...BUILTIN_TOOL_ALIASES,
+        ...envJson<Record<string, string>>("F1_TOOL_ALIASES_JSON", {}),
+    };
+}
+
 function resolveTool(
     requested: string,
     tools: Record<string, StructuredTool>
@@ -74,7 +96,7 @@ function resolveTool(
         return { tool: tools[requested], normalizedTool: requested, aliasHit: false };
     }
     // 1) Alias table hit
-    const alias = TOOL_ALIASES[requested];
+    const alias = toolAliases()[requested];
     if (alias && tools[alias]) {
         return { tool: tools[alias], normalizedTool: alias, aliasHit: true };
     }
@@ -96,14 +118,13 @@ export interface ExecutionContext {
     totalDurationMs: number;
 }
 
-const MAX_RETRIES = 2;
-
 function isRetryableError(error: unknown): boolean {
     const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes("400") || msg.includes("401") || msg.includes("403") || msg.includes("404")) {
-        return false;
-    }
-    return true;
+    return !executionConfig.nonRetryableStatusFragments().some((fragment) => msg.includes(fragment));
+}
+
+function retryBudget(): number {
+    return maxRetries();
 }
 
 async function executeStep(
@@ -166,14 +187,15 @@ async function executeStep(
     }
 
     let lastError: unknown;
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const retries = retryBudget();
+    for (let attempt = 0; attempt <= retries; attempt++) {
         try {
             // Execute with timeout. The timer is always cleared so we never
             // leak handles on the server (Next.js warns on dangling timers
             // and they keep the event loop alive under load).
             let timeoutId: ReturnType<typeof setTimeout> | undefined;
             const timeoutPromise = new Promise<never>((_, reject) => {
-                timeoutId = setTimeout(() => reject(new Error("Tool execution timeout")), STEP_TIMEOUT_MS);
+                timeoutId = setTimeout(() => reject(new Error("Tool execution timeout")), stepTimeoutMs());
             });
 
             const resultPromise = tool.invoke(validatedArgs);
@@ -205,9 +227,10 @@ async function executeStep(
             };
         } catch (error) {
             lastError = error;
-            if (attempt < MAX_RETRIES && isRetryableError(error)) {
-                // Exponential backoff: 1s, 2s
-                const delay = Math.pow(2, attempt) * 1000;
+            if (attempt < retries && isRetryableError(error)) {
+                // Short backoff: fail fast for responsiveness (scaled by
+                // F1_RETRY_BACKOFF_BASE_MS, default 400ms).
+                const delay = Math.pow(2, attempt) * executionConfig.retryBackoffBaseMs();
                 await new Promise((r) => setTimeout(r, delay));
             } else {
                 break;
@@ -242,19 +265,41 @@ export async function executeSteps(
     // Limit to max steps provided by planner
     const stepsToExecute = steps;
 
+    // Deduplicate identical steps (same tool + same args) before execution.
+    // The planner occasionally emits the same call twice (e.g. get_events
+    // for GP discovery + again as a data fetch). Running it once and
+    // fanning the result out to both slots saves a full backend round-trip.
+    // Toggle via F1_EXECUTOR_DEDUP.
+    const dedupKey = (s: Step) => `${s.tool}:${JSON.stringify(s.args ?? {})}`;
+    const firstIndexByKey = new Map<string, number>();
+    const duplicateOf = new Map<number, number>();
+    if (executionConfig.dedupIdenticalSteps()) {
+        stepsToExecute.forEach((s, i) => {
+            const k = dedupKey(s);
+            const first = firstIndexByKey.get(k);
+            if (first === undefined) firstIndexByKey.set(k, i);
+            else duplicateOf.set(i, first);
+        });
+    }
+    const uniqueIndices = stepsToExecute
+        .map((_, i) => i)
+        .filter((i) => !duplicateOf.has(i));
+
     // Initial pending state
     stepsToExecute.forEach((_, index) => {
         onUpdate?.(index + 1, 'pending');
     });
 
-    // Execute in parallel with concurrency limit (max 3)
-    const CONCURRENCY_LIMIT = 3;
+    // Execute in parallel with a configured concurrency limit (independent
+    // F1 API calls are I/O-bound, so higher fan-out directly cuts
+    // wall time for multi-driver comparisons). Env: F1_MAX_CONCURRENCY.
+    const CONCURRENCY_LIMIT = maxConcurrency();
     const results: ExecutionResult[] = new Array(stepsToExecute.length);
-    let currentIndex = 0;
+    let cursor = 0;
 
     const worker = async () => {
-        while (currentIndex < stepsToExecute.length) {
-            const index = currentIndex++;
+        while (cursor < uniqueIndices.length) {
+            const index = uniqueIndices[cursor++]!;
             const step = stepsToExecute[index];
             const stepNum = index + 1;
 
@@ -272,10 +317,19 @@ export async function executeSteps(
     };
 
     const workers = Array.from(
-        { length: Math.min(CONCURRENCY_LIMIT, stepsToExecute.length) },
+        { length: Math.min(CONCURRENCY_LIMIT, uniqueIndices.length) },
         () => worker()
     );
     await Promise.all(workers);
+
+    // Fan out deduped results to duplicate slots (no extra backend call).
+    for (const [dupIdx, firstIdx] of duplicateOf) {
+        const first = results[firstIdx];
+        if (first) {
+            results[dupIdx] = { ...first, step: dupIdx + 1 };
+            onUpdate?.(dupIdx + 1, first.success ? 'success' : 'failed', first.success ? undefined : first.error);
+        }
+    }
 
     // Log execution (for debugging)
     if (process.env.NODE_ENV === "development") {
@@ -298,19 +352,31 @@ export async function executeSteps(
 }
 
 // =============================================================================
-// Context Budgeting Configuration
+// Context Budgeting Configuration (live — see lib/config.ts)
 // =============================================================================
 
-const MAX_CONTEXT_TOKENS = 150_000; // Safe limit below 262k
-const CHARS_PER_TOKEN = 3; // Safer estimate for dense JSON: 1 token ≈ 3 characters
-/** Max rows kept per list payload (results, standings, events, ...) before row-truncation kicks in. */
-const MAX_ROWS_PER_LIST = 12;
+function maxContextTokens(): number {
+    return executionConfig.maxContextTokens();
+}
+
+function charsPerToken(): number {
+    return executionConfig.charsPerToken();
+}
+
+/** Max rows kept per list payload before row-truncation kicks in. */
+function maxRowsPerList(): number {
+    return executionConfig.maxRowsPerList();
+}
+
+function maxInlinePayloadChars(): number {
+    return executionConfig.maxInlinePayloadChars();
+}
 
 /**
  * Estimate token count from a string
  */
 function estimateTokens(text: string): number {
-    return Math.ceil(text.length / CHARS_PER_TOKEN);
+    return Math.ceil(text.length / charsPerToken());
 }
 
 /**
@@ -508,16 +574,17 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
     // "[Data too large]" stub and the responder is forced to refuse.)
     if (typeof result.data === "object" && result.data !== null) {
         const rec = result.data as Record<string, unknown>;
+        const rowCap = maxRowsPerList();
         for (const key of Object.keys(rec)) {
             const val = rec[key];
-            if (Array.isArray(val) && val.length > MAX_ROWS_PER_LIST) {
+            if (Array.isArray(val) && val.length > rowCap) {
                 return {
                     ...result,
                     data: {
                         ...rec,
-                        [key]: val.slice(0, MAX_ROWS_PER_LIST),
+                        [key]: val.slice(0, rowCap),
                         [`${key}_truncated_from`]: val.length,
-                        note: `Showing first ${MAX_ROWS_PER_LIST} of ${val.length} ${key} for LLM context efficiency`,
+                        note: `Showing first ${rowCap} of ${val.length} ${key} for LLM context efficiency`,
                     },
                 };
             }
@@ -527,7 +594,8 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
     // Generic truncation for large payloads
     try {
         const strData = JSON.stringify(result.data);
-        if (strData.length > 10000) {
+        const inlineCap = maxInlinePayloadChars();
+        if (strData.length > inlineCap) {
             let summaryInfo = "";
             if (typeof result.data === "object" && result.data !== null) {
                 summaryInfo = ` Keys available: ${Object.keys(result.data).join(", ")}`;
@@ -577,7 +645,8 @@ export function aggregateContext(context: ExecutionContext): string {
         `in ${context.totalDurationMs}ms`;
 
     // Build progressively to avoid mid-section truncation
-    const maxChars = MAX_CONTEXT_TOKENS * CHARS_PER_TOKEN;
+    const tokenBudget = maxContextTokens();
+    const maxChars = tokenBudget * charsPerToken();
     let aggregated = summary;
     let remaining = maxChars - summary.length;
 
@@ -597,9 +666,9 @@ export function aggregateContext(context: ExecutionContext): string {
 
     // Optional safety check (logging only)
     const estimatedTokens = estimateTokens(aggregated);
-    if (estimatedTokens > MAX_CONTEXT_TOKENS) {
+    if (estimatedTokens > tokenBudget) {
         console.warn(
-            `[Executor] Context near token limit (${estimatedTokens}/${MAX_CONTEXT_TOKENS})`
+            `[Executor] Context near token limit (${estimatedTokens}/${tokenBudget})`
         );
     }
 

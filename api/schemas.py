@@ -6,12 +6,29 @@ All models are designed for JSON-only, LLM-safe responses.
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any
 from enum import Enum
+import os
 
 
-# Static upper bound for OpenAPI/docs. The authoritative dynamic check
-# (current year + buffer) lives in main._validate_year and runs per-request
-# so long-lived processes never go stale after New Year.
-_MAX_YEAR = 2100
+def _env_int(name: str, fallback: int) -> int:
+    try:
+        raw = os.getenv(name)
+        if raw is None or raw == "":
+            return fallback
+        return int(raw)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _min_year() -> int:
+    return _env_int("F1_MIN_SEASON_YEAR", 1950)
+
+
+# Static upper bound for OpenAPI/docs, env-driven at import (F1_RAG_MAX_SEASON_YEAR).
+# The authoritative dynamic check (current year + buffer) lives in
+# main._validate_year and runs per-request so long-lived processes never go
+# stale after New Year.
+_MAX_YEAR = _env_int("F1_RAG_MAX_SEASON_YEAR", 2100)
+_MIN_YEAR = _min_year()
 
 
 # =============================================================================
@@ -43,7 +60,7 @@ class TyreCompound(str, Enum):
 
 class SessionRequest(BaseModel):
     """Base request for session-related endpoints."""
-    year: int = Field(..., ge=1950, le=_MAX_YEAR, description="Season year (1950-2017: ergast data, 2018+: full telemetry)")
+    year: int = Field(..., ge=_MIN_YEAR, le=_MAX_YEAR, description="Season year (1950-2017: ergast data, 2018+: full telemetry)")
     gp: str = Field(..., pattern=r'^[\w\-\s]+$', description="Grand Prix name or round number")
     session: SessionType = Field(..., description="Session identifier (FP1, FP2, FP3, Q, SQ, S, R)")
 
@@ -119,7 +136,7 @@ class StintsRequest(SessionRequest):
 
 class DriverStandingsRequest(BaseModel):
     """Request for driver standings."""
-    year: int = Field(..., ge=1950, le=_MAX_YEAR, description="Season year")
+    year: int = Field(..., ge=_MIN_YEAR, le=_MAX_YEAR, description="Season year")
     driver: Optional[str] = Field(None, description="Filter by specific driver")
 
 

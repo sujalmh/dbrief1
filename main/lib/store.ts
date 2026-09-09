@@ -102,6 +102,12 @@ export interface Message {
     citations?: {
         source: string
         type: string
+        /** Human-readable document title (falls back to `source`). */
+        title?: string | null
+        /** Source URL — renders as a clickable link when present. */
+        url?: string | null
+        /** Canonical link from the collection payload (preferred over `url`). */
+        source_url?: string | null
     }[]
     visualizationData?: unknown
     /**

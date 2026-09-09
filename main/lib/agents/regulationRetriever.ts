@@ -34,6 +34,14 @@ const MAX_SUBQUERIES = 5;
 const MIN_SUBQUERIES = 2;
 const DEFAULT_MATCH_COUNT = 10;
 const TOP_N_RESULTS = 5;
+/**
+ * Minimum Voyage rerank-3 relevance score (0-1) for a document to be kept.
+ * Hits below this floor are clearly off-topic vector-search noise and must
+ * not become UI sources. If every hit falls below the floor we keep the
+ * single best one so the answer path still has context — the downstream
+ * LLM source-pick decides whether it is actually cited.
+ */
+export const MIN_RELEVANCE_SCORE = 0.2;
 
 /**
  * Section filter values map to every known `section` payload variant in
@@ -72,12 +80,26 @@ export const DocumentSchema = z.object({
     source: z.string().describe("Source filename"),
     title: z.string().describe("Document short title"),
     url: z.string().nullable().describe("Source URL"),
+    /**
+     * Canonical link field of the live `fia_documents` collection payload.
+     * Carried explicitly (alongside the legacy `url`) so the exact
+     * collection value reaches the UI clickable link without guessing.
+     */
+    source_url: z.string().nullable().optional().describe("Canonical source URL from the collection payload"),
     doc_type: z.string().describe("regulation or decision"),
     section: z.string().nullable(),
     event: z.string().nullable(),
     season: z.number(),
     published_on: z.string().nullable(),
     content: z.string().describe("Chunk text"),
+    /**
+     * Voyage rerank-3 relevance score (0-1, higher = more relevant).
+     * Present only on documents that went through reranking; null when
+     * the reranker was skipped or failed and vector order was used.
+     * Downstream consumers use this to surface only genuinely relevant
+     * sources instead of the raw top-N candidate list.
+     */
+    relevance_score: z.number().nullable().optional().describe("Rerank relevance score, null when not reranked"),
 });
 
 export type Document = z.infer<typeof DocumentSchema>;
@@ -99,10 +121,12 @@ interface RetrievedDocument {
     source: string;
     title: string;
     url: string | null;
+    source_url?: string | null;
     published_on: string | null;
     chunk_index: number | null;
     content: string;
     similarity?: number;
+    relevance_score?: number | null;
 }
 
 // =============================================================================
@@ -336,11 +360,15 @@ export async function retrieveFromQdrant(
             event: point.payload.event ?? null,
             source: point.payload.filename ?? "unknown",
             title: point.payload.short_title ?? point.payload.title ?? "untitled",
+            // Carry the collection's canonical link field explicitly; `url`
+            // stays as the merged fallback for older payloads/tests.
+            source_url: point.payload.source_url ?? null,
             url: point.payload.source_url ?? point.payload.url ?? null,
             published_on: point.payload.published_on ?? null,
             chunk_index: point.payload.chunk_index ?? null,
             content: point.payload.text ?? "",
             similarity: point.score,
+            relevance_score: null as number | null,
         }));
     } catch (error) {
         console.error("[Retrieve] Qdrant retrieval failed:", error);
@@ -417,15 +445,36 @@ export async function rerankDocuments(
             throw new Error("Invalid rerank response from Voyage");
         }
 
-        return results
+        const ranked = results
             .filter(
                 (item) =>
                     typeof item.index === "number" &&
                     item.index >= 0 &&
                     item.index < documents.length
             )
-            .slice(0, topK)
-            .map((item) => documents[item.index]);
+            .slice(0, topK);
+
+        // Attach the rerank relevance score to each surviving document so
+        // downstream consumers (LLM source-pick, UI) can distinguish
+        // genuinely relevant hits from vector-search noise.
+        const scored = ranked.map((item) => ({
+            ...documents[item.index],
+            relevance_score: item.relevance_score,
+        }));
+
+        // Drop clearly off-topic hits below the relevance floor. If that
+        // would empty the list, keep the single best hit so the answer
+        // path still has context to work with.
+        const kept = scored.filter(
+            (doc) => (doc.relevance_score ?? 0) >= MIN_RELEVANCE_SCORE
+        );
+        if (kept.length === 0 && scored.length > 0) {
+            console.warn(
+                `[Rerank] All ${scored.length} hits below relevance floor ${MIN_RELEVANCE_SCORE} — keeping best hit only.`
+            );
+            return [scored[0]];
+        }
+        return kept;
     } catch (error) {
         console.error("[Rerank] Reranking failed:", error);
         throw error;
@@ -470,6 +519,7 @@ export function deduplicateAndRank(results: RetrievedDocument[][]): Document[] {
                     source: doc.source,
                     title: doc.title,
                     url: doc.url,
+                    source_url: doc.source_url ?? null,
                     doc_type: doc.doc_type,
                     section: doc.section,
                     event: doc.event,
@@ -491,17 +541,21 @@ export function deduplicateAndRank(results: RetrievedDocument[][]): Document[] {
         return a.originalOrder - b.originalOrder; // Lower order first
     });
 
-    // Return top N results, stripped of ranking metadata
+    // Return top N results, stripped of ranking metadata.
+    // relevance_score stays null here — it is only populated by the
+    // reranker in rerankDocuments().
     return ranked.slice(0, TOP_N_RESULTS).map((doc) => ({
         source: doc.source,
         title: doc.title,
         url: doc.url,
+        source_url: doc.source_url ?? null,
         doc_type: doc.doc_type,
         section: doc.section,
         event: doc.event,
         season: doc.season,
         published_on: doc.published_on,
         content: doc.content,
+        relevance_score: null as number | null,
     }));
 }
 

@@ -294,6 +294,7 @@ export type ResearchEvent =
     | { type: "plan_iteration"; iteration: number; tasks: Task[]; reasoning: string }
     | { type: "task_update"; taskId: string; status: TaskStatus; data?: unknown; evidenceId?: string }
     | { type: "evidence"; evidence: Evidence }
+    | { type: "citations"; citations: import("@/lib/utils/sources").SourceCitation[] }
     | { type: "reflection"; reflection: Reflection; iteration: number }
     | { type: "confidence"; confidence: ConfidenceScore }
     | { type: "chart_specs"; specs: ChartSpec[] }

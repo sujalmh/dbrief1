@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { BrainCircuit, AlertTriangle, Copy, Check, RotateCcw, Trash2, FileText, ShieldCheck, AlertOctagon } from "lucide-react"
 import { Message, useChatStore } from "@/lib/store"
-import { cn } from "@/lib/utils"
+import { cn, citationHref } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -436,22 +436,43 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
                     </div>
                 )}
 
-                {/* Citations Section */}
+                {/* Citations Section — only LLM-picked, reranked sources.
+                    Entries with a url render as clickable links. */}
                 {message.citations && message.citations.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-border/50">
                         <div className="flex items-center gap-2 mb-2">
                             <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Sources</span>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                            {message.citations.map((citation, i) => (
-                                <div
-                                    key={i}
-                                    className="flex items-center gap-1.5 px-2 py-1 rounded bg-muted/50 border border-border/50 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-                                >
-                                    <FileText className="h-3 w-3" />
-                                    <span className="truncate max-w-[200px]">{citation.source}</span>
-                                </div>
-                            ))}
+                            {message.citations.map((citation, i) => {
+                                const label = citation.title || citation.source;
+                                // Prefer the collection's canonical link field;
+                                // non-http(s) values never become anchors.
+                                const href = citationHref(citation);
+                                const chipClassName = "flex items-center gap-1.5 px-2 py-1 rounded bg-muted/50 border border-border/50 text-[10px] text-muted-foreground hover:text-foreground transition-colors";
+                                const chipContent = (
+                                    <>
+                                        <FileText className="h-3 w-3 shrink-0" />
+                                        <span className="truncate max-w-[200px]" title={label}>{label}</span>
+                                    </>
+                                );
+                                return href ? (
+                                    <a
+                                        key={i}
+                                        href={href}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        title={`${label} — open source`}
+                                        className={chipClassName}
+                                    >
+                                        {chipContent}
+                                    </a>
+                                ) : (
+                                    <div key={i} title={label} className={chipClassName}>
+                                        {chipContent}
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                 )}

@@ -7,6 +7,7 @@
  */
 
 import type { Message } from "@/lib/store";
+import { citationHref } from "@/lib/utils";
 
 export type ExportFormat = "markdown" | "json";
 
@@ -133,7 +134,9 @@ export function exportToMarkdown(
             lines.push("### Sources");
             lines.push("");
             msg.citations.forEach((c) => {
-                lines.push(`- [${c.type}] ${c.source}`);
+                const label = c.title || c.source;
+                const href = citationHref(c);
+                lines.push(href ? `- [${c.type}] [${label}](${href})` : `- [${c.type}] ${c.source}`);
             });
             lines.push("");
         }

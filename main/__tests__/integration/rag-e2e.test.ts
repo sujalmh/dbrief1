@@ -71,7 +71,8 @@ describe("RAG Retrieval - End-to-End Test", () => {
         expect(result.used_subqueries.length).toBeGreaterThanOrEqual(1);
         expect(result.used_subqueries.length).toBeLessThanOrEqual(5);
         expect(result.retrieved_documents.length).toBeGreaterThan(0);
-        expect(result.retrieved_documents.length).toBeLessThanOrEqual(8);
+        // TOP_N_RESULTS (5) after dedup, minus any hits below the rerank floor
+        expect(result.retrieved_documents.length).toBeLessThanOrEqual(5);
 
         // Verify document structure
         result.retrieved_documents.forEach((doc) => {

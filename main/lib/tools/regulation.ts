@@ -42,7 +42,7 @@ This tool performs semantic search to find relevant document chunks.
 Season and section must be provided by the planner - do NOT infer them.
 Use doc_type "decision" with an event name for race-specific stewards' documents.
 
-Returns an array of relevant document chunks with source, title, url, doc_type, section, event, and content.`,
+Returns reranked document chunks with source, title, url, source_url, relevance_score, doc_type, section, event, and content.`,
         schema: z.object({
             query: z
                 .string()

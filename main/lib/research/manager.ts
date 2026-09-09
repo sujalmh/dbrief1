@@ -129,10 +129,22 @@ export class ResearchManager {
         let timedOut = false;
 
         try {
-            // --- Step 1: Classify ---
+            // --- Step 1 + 1.5: Classify + Intent Analysis IN PARALLEL ---
+            // These are independent LLM calls (classify needs only the
+            // objective; intent needs objective + history), so start both
+            // together. Wall time drops from sum to max. research_start is
+            // still yielded as soon as classify resolves — we don't wait
+            // for intent to finish first.
+            const classifyPromise = this.reasoner.classify(objective);
+            const intentPromise = this.intentAnalyzer.analyze(objective, history);
+            // Avoid unhandled-rejection warnings if we return early (e.g.
+            // classify fails non-recoverably while intent is still in
+            // flight) — the later await/catch still observes the outcome.
+            intentPromise.then(undefined, () => { /* handled below */ });
+
             let classification: { researchType: string; strategy: string };
             try {
-                classification = await this.reasoner.classify(objective);
+                classification = await classifyPromise;
             } catch (classifyError) {
                 const cls = classifyLlmError(classifyError, "ResearchManager.Reasoner.classify");
                 if (isNonRecoverable(cls)) {
@@ -158,14 +170,14 @@ export class ResearchManager {
                 strategy,
             };
 
-            // --- Step 1.5: Intent Analysis ---
+            // --- Step 1.5: Intent Analysis (already in flight) ---
             // Produce a structured breakdown of the user's question (entities,
             // data needs, ambiguities, suggested tools) BEFORE planning.
             // This gives the Planner much better inputs than the raw strategy
             // string, improving first-try quality.
             let intentAnalysis: IntentAnalysis | null = null;
             try {
-                intentAnalysis = await this.intentAnalyzer.analyze(objective, history);
+                intentAnalysis = await intentPromise;
                 yield { type: "intent_analysis", intentAnalysis };
                 // Derive a richer strategy from the intent analysis
                 const { deriveStrategy } = await import("./types");
@@ -525,6 +537,33 @@ export class ResearchManager {
                         );
                     }
                 }
+
+                // --- Step 5.6: LLM-picked source citations ---
+                // Only evidence the synthesizer actually cited ([E#] refs in
+                // the final report) becomes UI sources — the full evidence
+                // list stays in the EvidencePanel. Regulation evidence
+                // carries document urls so the UI can link to the source.
+                if (!synthErrored && fullReport.trim()) {
+                    try {
+                        const { extractEvidenceIds, extractRegulationDocs, citationsFromDocs } =
+                            await import("@/lib/utils/sources");
+                        const citedIds = extractEvidenceIds(fullReport);
+                        const citedDocs = citedIds.flatMap((id) => {
+                            const item = this.evidenceStore.getById(id);
+                            if (!item) return [];
+                            return extractRegulationDocs(item.data);
+                        });
+                        const picked = citationsFromDocs(citedDocs);
+                        if (picked.length > 0) {
+                            yield { type: "citations", citations: picked };
+                        }
+                    } catch (citationError) {
+                        console.warn(
+                            "[ResearchManager] Source citation extraction failed:",
+                            citationError instanceof Error ? citationError.message : citationError
+                        );
+                    }
+                }
             }
 
             // --- Done ---
@@ -573,8 +612,12 @@ export async function createResearchManager(
     options: ResearchOptions,
     reasoning: boolean = false
 ): Promise<ResearchManager> {
-    const plannerModel = await getPlannerModel(provider, apiKey);
-    const responderModel = await getResponderModel(provider, model, reasoning, apiKey);
+    // Independent model constructions (dynamic imports + client setup) —
+    // run together instead of sequentially.
+    const [plannerModel, responderModel] = await Promise.all([
+        getPlannerModel(provider, apiKey),
+        getResponderModel(provider, model, reasoning, apiKey),
+    ]);
 
     return new ResearchManager(plannerModel, responderModel, options);
 }

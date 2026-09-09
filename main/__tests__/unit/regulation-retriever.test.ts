@@ -305,7 +305,7 @@ describe("deduplicateAndRank", () => {
         expect(ranked[2].content).toBe("Third");
     });
 
-    it("should limit results to top 8", () => {
+    it("should limit results to top 5 (TOP_N_RESULTS)", () => {
         const manyDocs = Array(15)
             .fill(null)
             .map((_, i) => createMockDocument(i, `Content ${i}`));
@@ -313,7 +313,7 @@ describe("deduplicateAndRank", () => {
         const results = [manyDocs];
         const ranked = deduplicateAndRank(results);
 
-        expect(ranked.length).toBeLessThanOrEqual(8);
+        expect(ranked.length).toBeLessThanOrEqual(5);
     });
 
     it("should handle empty input", () => {
@@ -444,7 +444,7 @@ describe("rerankDocuments", () => {
                     data: [
                         { index: 2, relevance_score: 0.9 },
                         { index: 0, relevance_score: 0.5 },
-                        { index: 1, relevance_score: 0.1 },
+                        { index: 1, relevance_score: 0.3 },
                     ],
                     model: "rerank-3",
                 }),
@@ -453,6 +453,8 @@ describe("rerankDocuments", () => {
         const result = await rerankDocuments("test query", docs, 3);
 
         expect(result.map((d) => d.content)).toEqual(["Content C", "Content A", "Content B"]);
+        // Rerank scores are carried on the documents for downstream source picks.
+        expect(result.map((d) => d.relevance_score)).toEqual([0.9, 0.5, 0.3]);
 
         const [url, options] = mockFetch.mock.calls[0];
         expect(url).toBe("https://ai.mongodb.com/v1/rerank");
@@ -482,6 +484,71 @@ describe("rerankDocuments", () => {
 
         expect(result.length).toBe(1);
         expect(result[0].content).toBe("Content B");
+    });
+
+    it("should drop hits below the relevance floor", async () => {
+        const docs = [createDoc("Content A"), createDoc("Content B"), createDoc("Content C")];
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    object: "list",
+                    data: [
+                        { index: 0, relevance_score: 0.85 },
+                        { index: 1, relevance_score: 0.05 },
+                        { index: 2, relevance_score: 0.01 },
+                    ],
+                    model: "rerank-3",
+                }),
+        });
+
+        const result = await rerankDocuments("test query", docs, 3);
+
+        expect(result.map((d) => d.content)).toEqual(["Content A"]);
+        expect(result[0].relevance_score).toBe(0.85);
+    });
+
+    it("should keep the best hit when all scores fall below the floor", async () => {
+        const docs = [createDoc("Content A"), createDoc("Content B")];
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    object: "list",
+                    data: [
+                        { index: 1, relevance_score: 0.15 },
+                        { index: 0, relevance_score: 0.05 },
+                    ],
+                    model: "rerank-3",
+                }),
+        });
+
+        const result = await rerankDocuments("test query", docs, 2);
+
+        expect(result.length).toBe(1);
+        expect(result[0].content).toBe("Content B");
+    });
+
+    it("should carry source_url from the collection payload", async () => {
+        const docs = [createDoc("Content A")];
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    object: "list",
+                    data: [{ index: 0, relevance_score: 0.9 }],
+                    model: "rerank-3",
+                }),
+        });
+
+        const result = await rerankDocuments("test query", docs, 1);
+
+        // createDoc-based unit docs carry url; source_url may be absent here
+        // (populated from the live Qdrant payload in retrieveFromQdrant).
+        expect(result[0].url).toBe("https://www.fia.com/test.pdf");
     });
 
     it("should return empty array for empty input without calling API", async () => {
@@ -654,6 +721,62 @@ describe("ragRetrieve (integration)", () => {
                 section: "Sporting",
             })
         ).rejects.toThrow();
+    });
+
+    it("should carry source_url and relevance_score from Qdrant through rerank", async () => {
+        const mockEmbedding = Array(1024).fill(0.1);
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () =>
+                Promise.resolve({
+                    data: [{ embedding: mockEmbedding }],
+                }),
+        });
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({
+                result: [
+                    {
+                        id: 1,
+                        score: 0.9,
+                        payload: {
+                            season: "2025",
+                            doc_type: "regulation",
+                            section: "Sporting",
+                            filename: "2025_sporting_regs.pdf",
+                            short_title: "Sporting Regulations",
+                            source_url: "https://www.fia.com/2025_sporting_regs.pdf",
+                            published_on: "2024-10-17",
+                            chunk_index: 0,
+                            text: "Regulation content",
+                        },
+                    },
+                ],
+            }),
+        });
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve({
+                object: "list",
+                data: [{ index: 0, relevance_score: 0.95 }],
+                model: "rerank-3",
+            }),
+        });
+
+        const result = await ragRetrieve({
+            query: "race stopped points",
+            season: 2025,
+            section: "Sporting",
+        });
+
+        expect(result.retrieved_documents.length).toBe(1);
+        const doc = result.retrieved_documents[0];
+        expect(doc.source_url).toBe("https://www.fia.com/2025_sporting_regs.pdf");
+        expect(doc.url).toBe("https://www.fia.com/2025_sporting_regs.pdf");
+        expect(doc.relevance_score).toBe(0.95);
     });
 
     it("should send season/doc_type/section filters to Qdrant", async () => {

@@ -7,7 +7,7 @@ import type { StoredSession } from "@/lib/store"
 import { firestoreTimestampToMs } from "@/lib/firebase/firestore";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { createSession, getSessions, getSessionMessages, deleteSession } from "@/lib/firebase/firestore";
-import { cn } from "@/lib/utils";
+import { cn, sanitizeCitations } from "@/lib/utils";
 
 export function Sidebar() {
     const {
@@ -54,13 +54,16 @@ export function Sidebar() {
     const handleSelectSession = async (sessionId: string) => {
         setCurrentSessionId(sessionId);
         const messages = await getSessionMessages(sessionId);
-        setMessages(messages.map(m => ({
-            id: m.id!,
-            role: m.role,
-            content: m.content,
-            timestamp: firestoreTimestampToMs(m.timestamp) ?? Date.now(),
-            // Map other fields if necessary
-        })));
+        setMessages(messages.map(m => {
+            const citations = sanitizeCitations(m.citations);
+            return {
+                id: m.id!,
+                role: m.role,
+                content: m.content,
+                timestamp: firestoreTimestampToMs(m.timestamp) ?? Date.now(),
+                ...(citations.length > 0 ? { citations } : {}),
+            };
+        }));
     };
 
     const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {

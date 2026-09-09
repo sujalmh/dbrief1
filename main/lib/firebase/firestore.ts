@@ -20,7 +20,7 @@ export interface ChatMessage {
     content: string;
     timestamp: unknown;
     queryType?: "telemetry" | "COMPARISON" | "STRATEGY" | "INSIGHTS";
-    citations?: Array<{ source: string; type: string }> | null;
+    citations?: Array<{ source: string; type: string; title?: string | null; url?: string | null; source_url?: string | null }> | null;
 }
 
 export interface ChatSession {

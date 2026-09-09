@@ -4,6 +4,7 @@ import * as React from "react"
 import { useChatStore, type Message, type ResearchIteration } from "@/lib/store"
 import { useAuth } from "@/lib/firebase/auth-context"
 import { createSession } from "@/lib/firebase/firestore"
+import { sanitizeCitations } from "@/lib/utils"
 
 /** Minimal shape of SSE payload steps/tasks — fields are unknown until validated. */
 interface SsePlanStep {
@@ -168,13 +169,20 @@ export function useChatHandler() {
             let buffer = ""
             let done = false
 
-            // Function to save assistant message on completion
+            // Function to save assistant message on completion.
+            // Citations ride along (sanitized) so Sources survive reloads —
+            // the `citations` SSE event always precedes stream end, so the
+            // store already holds them here.
             const saveAssistantMessage = () => {
                 if (effectiveSessionId && user && assistantContent) {
+                    const citations = sanitizeCitations(
+                        useChatStore.getState().messages.find((m) => m.id === assistantMsgId)?.citations
+                    );
                     import("@/lib/firebase/firestore").then(({ addMessageToSession }) => {
                         addMessageToSession(effectiveSessionId!, {
                             role: "assistant",
                             content: assistantContent,
+                            ...(citations.length > 0 ? { citations } : {}),
                         }).catch(err => console.error("Error saving assistant message:", err));
                     });
                 }
@@ -270,7 +278,7 @@ export function useChatHandler() {
                                         }
                                         break
                                     case "citations":
-                                        useChatStore.getState().updateMessageCitations(assistantMsgId, data.citations)
+                                        useChatStore.getState().updateMessageCitations(assistantMsgId, sanitizeCitations(data.citations))
                                         break
                                     case "token":
                                         assistantContent += data.content

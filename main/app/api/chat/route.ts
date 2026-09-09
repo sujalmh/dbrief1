@@ -34,6 +34,12 @@ import { getSimulationTools } from "@/lib/tools/simulation";
 import { ResearchManager } from "@/lib/research/manager";
 import { IntentAnalyzer, IntentAnalyzerUnavailableError } from "@/lib/research/agents/intent-analyzer";
 import { classifyLlmError, isNonRecoverable, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
+import {
+    extractRegulationDocs,
+    pickUsedSources,
+    type RetrievedDocLike,
+    type SourceCitation,
+} from "@/lib/utils/sources";
 import { adminAuth } from "@/lib/firebase/admin";
 
 // =============================================================================
@@ -166,7 +172,8 @@ const RESPONDER_SYSTEM_PROMPT = `You are an expert Formula 1 AI assistant with d
 - Use bullet points for lists
 - Use tables for comparisons when appropriate
 - Bold important information
-- Keep responses focused and relevant`;
+- Keep responses focused and relevant
+- When the F1 Data Context contains \`retrieve_regulations\` results, base every regulation/decision claim on the retrieved documents, preferring higher \`relevance_score\` hits`;
 
 // =============================================================================
 // Main API Handler
@@ -266,8 +273,10 @@ export async function POST(request: NextRequest) {
                 };
 
                 try {
-                    // 1. Initialize the cheap planner model. The responder is
-                    // created lazily later — conversational messages never need it.
+                    // 1. Initialize models. The responder is created lazily
+                    // in normal mode — conversational messages never need it.
+                    // In deep-research mode both models are needed, so init
+                    // them in parallel (independent getChatModel calls).
                     //
                     // The planner and responder are configured independently:
                     // the user can pick a cheap fast model for intent analysis
@@ -277,13 +286,27 @@ export async function POST(request: NextRequest) {
                     // provider's built-in cheap planner model inside
                     // getPlannerModel, so the feature is fully opt-in.
                     let plannerModel;
+                    // Pre-initialized responder for deep-research mode (parallel init below).
+                    let deepResponderModel: Awaited<ReturnType<typeof getResponderModel>> | null = null;
                     try {
-                        plannerModel = await getPlannerModel(
-                            effectivePlannerProvider,
-                            apiKey,
-                            plannerModelId || undefined,
-                            gatewaySessionId
-                        );
+                        if (deepResearchMode) {
+                            [plannerModel, deepResponderModel] = await Promise.all([
+                                getPlannerModel(
+                                    effectivePlannerProvider,
+                                    apiKey,
+                                    plannerModelId || undefined,
+                                    gatewaySessionId
+                                ),
+                                getResponderModel(provider as Provider, model, true, apiKey, gatewaySessionId),
+                            ]);
+                        } else {
+                            plannerModel = await getPlannerModel(
+                                effectivePlannerProvider,
+                                apiKey,
+                                plannerModelId || undefined,
+                                gatewaySessionId
+                            );
+                        }
                     } catch (error) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
@@ -291,6 +314,52 @@ export async function POST(request: NextRequest) {
                         safeClose();
                         return;
                     }
+
+                    // --- Session metadata (title + type) runs in parallel ---
+                    // This is independent of intent/planning/execution (it only
+                    // needs the raw user message), so kick it off NOW instead
+                    // of waiting for the full answer. The promise resolves in
+                    // the background and emits the `metadata` SSE event as soon
+                    // as it's ready — the chat list title updates mid-stream
+                    // rather than after a 30s+ response.
+                    let metadataPromise: Promise<{ title: string; type: string } | null> | null = null;
+                    let metadataSent = false;
+                    const emitMetadata = (metadata: { title: string; type: string } | null) => {
+                        if (metadata && !metadataSent && !controllerClosed) {
+                            metadataSent = true;
+                            sendEvent("metadata", metadata);
+                        }
+                    };
+                    if (isFirstMessage && sessionId) {
+                        const msg = message;
+                        metadataPromise = (async () => {
+                            const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
+                            return generateSessionMetadata(msg, provider, model, apiKey, gatewaySessionId);
+                        })();
+                        // Fire-and-forget: emit as soon as ready (parallel
+                        // with intent + planner + executor below). The final
+                        // `await metadataPromise` before close is only a
+                        // rendezvous so the stream doesn't close early.
+                        metadataPromise.then(emitMetadata, (err) =>
+                            console.error("Error generating session metadata:", err)
+                        );
+                    }
+                    /** Rendezvous before close: wait for the early metadata call (bounded). */
+                    const flushMetadata = async () => {
+                        if (!metadataPromise || metadataSent) return;
+                        let timer: ReturnType<typeof setTimeout> | undefined;
+                        try {
+                            const timeout = new Promise<null>((resolve) => {
+                                timer = setTimeout(() => resolve(null), 10_000);
+                            });
+                            const metadata = await Promise.race([metadataPromise, timeout]);
+                            emitMetadata(metadata);
+                        } catch (error) {
+                            console.error("Error generating session metadata:", error);
+                        } finally {
+                            if (timer !== undefined) clearTimeout(timer);
+                        }
+                    };
 
                     // Track usage across every LLM call we make in this
                     // request (created once the responder model exists —
@@ -332,13 +401,11 @@ export async function POST(request: NextRequest) {
                     // visualization, done) lights up the full deep research UI.
                     // =================================================================
                     if (deepResearchMode) {
-                        // Deep mode always needs the responder (the manager's
-                        // Synthesizer generates the final answer with it).
-                        let responderModel;
-                        try {
-                            responderModel = await getResponderModel(provider as Provider, model, true, apiKey, gatewaySessionId);
-                        } catch (error) {
-                            const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
+                        // Responder was pre-initialized in parallel with the
+                        // planner above (both are needed in deep mode).
+                        const responderModel = deepResponderModel;
+                        if (!responderModel) {
+                            const errorMessage = "Failed to initialize models";
                             console.error("[API] Model initialization error:", errorMessage);
                             sendEvent("error", { message: errorMessage });
                             safeClose();
@@ -397,6 +464,11 @@ export async function POST(request: NextRequest) {
                                     case "evidence":
                                         sendEvent("evidence", { evidence: ev.evidence });
                                         break;
+                                    case "citations":
+                                        // LLM-picked sources only (subset of the
+                                        // evidence actually cited in the report).
+                                        sendEvent("citations", { citations: ev.citations });
+                                        break;
                                     case "reflection":
                                         sendEvent("reflection", {
                                             reflection: ev.reflection,
@@ -445,6 +517,10 @@ export async function POST(request: NextRequest) {
                             // is in scope here.
                             emitUsage()
 
+                            // Flush the parallel session-metadata call so the
+                            // chat title updates even for deep-research turns.
+                            await flushMetadata();
+
                             safeClose();
                             return;
                         } catch (error) {
@@ -465,39 +541,54 @@ export async function POST(request: NextRequest) {
                         }
                     }
 
-                    // 2. Decide + plan in a SINGLE model call (preceded by the
-                    // IntentAnalyzer pass above, which gives the planner
-                    // structured entity/data-need guidance).
+                    // 2. Intent + decide/plan run IN PARALLEL (independent LLM
+                    // calls on the same cheap planner model — neither input
+                    // depends on the other's output). Wall time drops from
+                    // sum(intent, planner) to max(intent, planner). Session
+                    // metadata (title + type) is already in flight too (see
+                    // above), so all three pre-execution LLM calls overlap.
                     let plan: Plan;
                     let directReply: string | undefined;
                     let intentUnavailableError: IntentAnalyzerUnavailableError | null = null;
                     try {
-                        // --- Intent Analysis (normal mode) ---
-                        // Run the IntentAnalyzer before planning to give the
-                        // planner structured entity/data-need guidance.
-                        //
-                        // If the IntentAnalyzer throws an unavailable error
-                        // (rate limit / auth / network) we still try the
-                        // planner because it has its own structured call, but
-                        // we'll surface the error to the user at the end of
-                        // the stream so they know the response may be
-                        // degraded (heuristic routing, no structured entity
-                        // context, etc.).
-                        try {
+                        // In Deep Research Mode, force web search to be enabled
+                        const effectiveWebSearch = deepResearchMode ? true : web_search;
+
+                        const intentPromise = (async () => {
                             const intentAnalyzer = new IntentAnalyzer(plannerModel);
-                            const intentAnalysis = await intentAnalyzer.analyze(message, history);
-                            sendEvent("intent_analysis", { intentAnalysis });
-                            // NOTE: We deliberately don't try to capture
-                            // usage from the IntentAnalyzer. It calls
-                            // `.withStructuredOutput().invoke()` which
-                            // uses tool calls under the hood, and LangChain
-                            // does not reliably preserve OpenRouter's
-                            // `usage` block on the resulting AIMessage.
-                            // The intent pass is small (typically 1-2k
-                            // tokens on free models) and the responder
-                            // stream is the dominant cost driver, so this
-                            // omission is acceptable.
-                        } catch (intentError) {
+                            return intentAnalyzer.analyze(message, history);
+                        })();
+                        const planPromise = decidePlan(
+                            plannerModel,
+                            message,
+                            effectiveWebSearch,
+                            deepResearchMode
+                        );
+
+                        // allSettled so one failure never cancels the other:
+                        // an unavailable intent pass still yields a plan (with
+                        // a degraded-mode signal), and a bad plan still yields
+                        // the intent event.
+                        const [intentSettled, planSettled] = await Promise.allSettled([
+                            intentPromise,
+                            planPromise,
+                        ]);
+
+                        // --- Intent result (classification) ---
+                        // NOTE: We deliberately don't try to capture
+                        // usage from the IntentAnalyzer. It calls
+                        // `.withStructuredOutput().invoke()` which
+                        // uses tool calls under the hood, and LangChain
+                        // does not reliably preserve OpenRouter's
+                        // `usage` block on the resulting AIMessage.
+                        // The intent pass is small (typically 1-2k
+                        // tokens on free models) and the responder
+                        // stream is the dominant cost driver, so this
+                        // omission is acceptable.
+                        if (intentSettled.status === "fulfilled") {
+                            sendEvent("intent_analysis", { intentAnalysis: intentSettled.value });
+                        } else {
+                            const intentError = intentSettled.reason;
                             if (intentError instanceof IntentAnalyzerUnavailableError) {
                                 console.warn(
                                     "[API] Intent analysis unavailable:",
@@ -520,21 +611,18 @@ export async function POST(request: NextRequest) {
                             }
                         }
 
-                        // In Deep Research Mode, force web search to be enabled
-                        const effectiveWebSearch = deepResearchMode ? true : web_search;
-
+                        // --- Planner result (decide + plan, single call) ---
                         // needs_plan=false carries a direct reply (greetings,
                         // thanks, capability questions) — streamed back with no
                         // tool calls and no second LLM call. needs_plan=true
                         // carries steps.
-                        const decision = await decidePlan(
-                            plannerModel,
-                            message,
-                            effectiveWebSearch,
-                            deepResearchMode
-                        );
-                        plan = decision.plan;
-                        directReply = decision.needsPlan ? undefined : decision.reply;
+                        if (planSettled.status === "fulfilled") {
+                            const decision = planSettled.value;
+                            plan = decision.plan;
+                            directReply = decision.needsPlan ? undefined : decision.reply;
+                        } else {
+                            throw planSettled.reason;
+                        }
                     } catch (error) {
                         // Distinguish "LLM is unavailable" (rate limit, auth,
                         // network) from "LLM returned bad JSON". The former
@@ -568,16 +656,10 @@ export async function POST(request: NextRequest) {
                         sendEvent("token", { content: directReply });
                         sendEvent("done", {});
 
-                        // Generate Session Metadata (if first message)
-                        if (isFirstMessage && sessionId) {
-                            try {
-                                const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
-                                const metadata = await generateSessionMetadata(message, provider, model, apiKey, gatewaySessionId);
-                                sendEvent("metadata", metadata);
-                            } catch (error) {
-                                console.error("Error generating session metadata:", error);
-                            }
-                        }
+                        // Session metadata (title + type) was kicked off in
+                        // parallel above — rendezvous here so the `metadata`
+                        // event is flushed before the stream closes.
+                        await flushMetadata();
 
                         safeClose();
                         return;
@@ -636,6 +718,10 @@ export async function POST(request: NextRequest) {
                         }
                     );
 
+                    // Reranked FIA docs collected here; the responder LLM picks
+                    // the actually-used subset after streaming (below).
+                    const regulationDocs: RetrievedDocLike[] = [];
+
                     // Send visualization data if available
                     // NOTE: This sends full data to the FRONTEND for charts.
                     // LLM protection is handled separately in aggregateContext.
@@ -649,49 +735,24 @@ export async function POST(request: NextRequest) {
                         }));
                         sendEvent("visualization", { data: visualizationPayload });
 
-                        // Extract and stream citations from retrieval results
-                        const citations: { source: string; type: string }[] = [];
-                        executionContext.results.forEach(result => {
-                            if (result.tool === "retrieve_regulations" && result.success && result.data) {
-                                try {
-                                    // Parse data if it's a string (executor might stringify it)
-                                    let data: unknown = result.data;
-                                    if (typeof result.data === 'string') {
-                                        try {
-                                            data = JSON.parse(result.data) as unknown;
-                                        } catch {
-                                            data = null;
-                                        }
+                        // Collect reranked FIA documents for post-answer source
+                        // picking. These are deliberately NOT emitted as
+                        // sources here: only documents picked by the
+                        // structured-output call below (see
+                        // lib/utils/sources.ts) become UI sources.
+                        regulationDocs.push(
+                            ...executionContext.results.flatMap((result) => {
+                                if (result.tool === "retrieve_regulations" && result.success && result.data) {
+                                    try {
+                                        return extractRegulationDocs(result.data);
+                                    } catch (e) {
+                                        console.error("Error parsing regulation docs:", e);
+                                        return [];
                                     }
-
-                                    // New Qdrant schema carries `doc_type` ("regulation" |
-                                    // "decision"); fall back to legacy `type`, then default.
-                                    if (
-                                        typeof data === "object" && data !== null &&
-                                        "retrieved_documents" in data &&
-                                        Array.isArray((data as { retrieved_documents: unknown }).retrieved_documents)
-                                    ) {
-                                        for (const doc of (data as { retrieved_documents: Array<{ source?: unknown; doc_type?: unknown; type?: unknown }> }).retrieved_documents) {
-                                            if (typeof doc === "object" && doc !== null && typeof doc.source === "string" && doc.source) {
-                                                const kind = typeof doc.doc_type === "string" ? doc.doc_type
-                                                    : typeof doc.type === "string" ? doc.type
-                                                        : "regulation";
-                                                citations.push({
-                                                    source: doc.source,
-                                                    type: kind
-                                                });
-                                            }
-                                        }
-                                    }
-                                } catch (e) {
-                                    console.error("Error parsing citations:", e);
                                 }
-                            }
-                        });
-
-                        if (citations.length > 0) {
-                            sendEvent("citations", { citations });
-                        }
+                                return [];
+                            })
+                        );
                     }
 
                     // 4. Generate Response
@@ -781,6 +842,22 @@ Please answer the user's question based on the F1 data provided above.`;
                                 sendEvent("token", { content });
                             }
                         }
+                        // FIA source picking (structured output, NOT reply
+                        // markers): a cheap model maps the finished answer
+                        // back onto the reranked candidate filenames. Only
+                        // picked, really-retrieved files become UI sources —
+                        // the raw candidate list is never shown.
+                        if (regulationDocs.length > 0 && assistantContent.trim()) {
+                            const picked: SourceCitation[] = await pickUsedSources(
+                                plannerModel,
+                                message,
+                                assistantContent,
+                                regulationDocs
+                            );
+                            if (picked.length > 0) {
+                                sendEvent("citations", { citations: picked });
+                            }
+                        }
                     } catch (streamError) {
                         // The responder model failed mid-stream. Classify the
                         // error: if it's non-recoverable (rate limit, auth,
@@ -863,19 +940,12 @@ Please answer the user's question based on the F1 data provided above.`;
 
                     sendEvent("done", {});
 
-                    // 5. Generate Session Metadata (if first message)
-                    if (isFirstMessage && sessionId) {
-                        try {
-                            const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
-                            const metadata = await generateSessionMetadata(message, provider, model, apiKey, gatewaySessionId);
-
-                            // Emit metadata update event to client
-                            // The client will handle persisting this to Firestore
-                            sendEvent("metadata", metadata);
-                        } catch (error) {
-                            console.error("Error generating session metadata:", error);
-                        }
-                    }
+                    // 5. Session metadata (title + type) was kicked off in
+                    // parallel at request start and likely already emitted
+                    // mid-stream — rendezvous here so it isn't lost if the
+                    // stream would otherwise close first. The client persists
+                    // it to Firestore.
+                    await flushMetadata();
 
                     safeClose();
 

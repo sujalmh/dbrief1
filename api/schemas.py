@@ -8,6 +8,12 @@ from typing import Optional, List, Any
 from enum import Enum
 
 
+# Static upper bound for OpenAPI/docs. The authoritative dynamic check
+# (current year + buffer) lives in main._validate_year and runs per-request
+# so long-lived processes never go stale after New Year.
+_MAX_YEAR = 2100
+
+
 # =============================================================================
 # Enums
 # =============================================================================
@@ -37,9 +43,9 @@ class TyreCompound(str, Enum):
 
 class SessionRequest(BaseModel):
     """Base request for session-related endpoints."""
-    year: int = Field(..., ge=1950, le=2025, description="Season year (1950-2017: ergast data, 2018+: full telemetry)")
-    gp: str = Field(..., description="Grand Prix name or round number")
-    session: str = Field(..., description="Session identifier (FP1, FP2, FP3, Q, SQ, S, R)")
+    year: int = Field(..., ge=1950, le=_MAX_YEAR, description="Season year (1950-2017: ergast data, 2018+: full telemetry)")
+    gp: str = Field(..., pattern=r'^[\w\-\s]+$', description="Grand Prix name or round number")
+    session: SessionType = Field(..., description="Session identifier (FP1, FP2, FP3, Q, SQ, S, R)")
 
 
 class LapsRequest(SessionRequest):
@@ -113,7 +119,7 @@ class StintsRequest(SessionRequest):
 
 class DriverStandingsRequest(BaseModel):
     """Request for driver standings."""
-    year: int = Field(..., ge=1950, le=2025, description="Season year")
+    year: int = Field(..., ge=1950, le=_MAX_YEAR, description="Season year")
     driver: Optional[str] = Field(None, description="Filter by specific driver")
 
 
@@ -133,7 +139,7 @@ class SeasonResponse(BaseModel):
 
 class EventInfo(BaseModel):
     """Single event information."""
-    round_number: int
+    round_number: int = Field(..., ge=0, le=99, description="Round number in the season (1-based)")
     country: str
     location: str
     event_name: str
@@ -146,6 +152,21 @@ class EventsResponse(BaseModel):
     """Response for events in a season."""
     year: int
     events: List[EventInfo]
+
+
+class GpNameInfo(BaseModel):
+    """Canonical GP name information for LLM tool consumption."""
+    round: int = Field(..., ge=0, le=99, description="Round number in the season (1-based)")
+    event_name: str = Field(..., description="Full event name from FastF1 schedule (e.g., 'Monaco Grand Prix')")
+    location: str = Field(..., description="City/location of the event")
+    country: str = Field(..., description="Country of the event")
+    canonical: str = Field(..., description="Canonical name accepted by get_session (same as event_name)")
+
+
+class GpNamesResponse(BaseModel):
+    """Response for canonical GP names in a season."""
+    year: int
+    grand_prix: List[GpNameInfo]
 
 
 class SessionInfo(BaseModel):
@@ -186,17 +207,29 @@ class LapsResponse(BaseModel):
     laps: List[dict]
 
 
+class DriverLapsResponse(BaseModel):
+    """Response for a single driver's lap data.
+
+    Extends LapsResponse with the driver identifier so the client can confirm
+    whose laps they received without re-parsing the request.
+    """
+    session_name: str
+    driver: str
+    total_laps: int
+    laps: List[dict]
+
+
 class FastestLapResponse(BaseModel):
     """Response for fastest lap."""
     session_name: str
     driver: str
-    lap_number: int
+    lap_number: int = Field(..., ge=1, description="Lap number (1-based)")
     lap_time: Optional[str]
     sector1: Optional[str]
     sector2: Optional[str]
     sector3: Optional[str]
     compound: Optional[str]
-    tyre_life: Optional[int]
+    tyre_life: Optional[int] = Field(None, ge=0)
 
 
 class SectorsResponse(BaseModel):
@@ -207,50 +240,54 @@ class SectorsResponse(BaseModel):
 
 class CornerData(BaseModel):
     """Single corner information."""
-    Number: int
-    Distance: float
+    Number: int = Field(..., ge=1)
+    Distance: float = Field(..., ge=0)
     Letter: str
     Angle: float
 
 class TelemetryResponse(BaseModel):
     """Response for telemetry data."""
     driver: str
-    lap_number: int
+    lap_number: int = Field(..., ge=1)
     lap_time: Optional[str]
     data: List[dict]
     corners: Optional[List[dict]] = None
-    total_points: int
-    downsampled_from: int
+    total_points: int = Field(..., ge=0)
+    downsampled_from: int = Field(..., ge=0)
 
 
 class ChannelSummary(BaseModel):
-    """Statistical summary for a telemetry channel."""
-    min: float
-    max: float
-    avg: float
+    """Statistical summary for a telemetry channel.
+
+    Fields are Optional so a channel with no usable samples (empty list,
+    all-NaN) returns None instead of misleading zeros.
+    """
+    min: Optional[float] = None
+    max: Optional[float] = None
+    avg: Optional[float] = None
 
 
 class TelemetrySummaryResponse(BaseModel):
     """LLM-optimized telemetry summary response (no raw data)."""
     driver: str
-    lap_number: int
+    lap_number: int = Field(..., ge=1)
     lap_time: Optional[str]
     compound: Optional[str]
-    tyre_life: Optional[int]
+    tyre_life: Optional[int] = Field(None, ge=0)
     speed_summary: ChannelSummary
     throttle_summary: ChannelSummary
     brake_summary: ChannelSummary
     corner_min_speeds: Optional[List[dict]] = None
     sector_speeds: Optional[dict] = None
-    total_points_analyzed: int
+    total_points_analyzed: int = Field(..., ge=0)
 
 
 class CarDataResponse(BaseModel):
     """Response for car data."""
     driver: str
-    lap_number: Optional[int]
+    lap_number: Optional[int] = Field(None, ge=1)
     data: List[dict]
-    total_points: int
+    total_points: int = Field(..., ge=0)
 
 
 class WeatherDataPoint(BaseModel):
@@ -348,10 +385,10 @@ class TeamsResponse(BaseModel):
 
 class StandingsEntry(BaseModel):
     """Single driver standing entry."""
-    position: int
+    position: int = Field(..., ge=1)
     driver: str
-    points: float
-    wins: int
+    points: float = Field(..., ge=0)
+    wins: int = Field(..., ge=0)
     team: str
 
 
@@ -362,12 +399,16 @@ class DriverStandingsResponse(BaseModel):
 
 class CornerMinSpeed(BaseModel):
     """Minimum speed at a corner."""
-    corner: int
+    corner: int = Field(..., ge=1)
     letter: str
-    min_speed: float
+    min_speed: float = Field(..., ge=0)
 
 class SectorSpeeds(BaseModel):
-    """Average speeds per sector."""
-    sector1_avg_speed: float
-    sector2_avg_speed: float
-    sector3_avg_speed: float
+    """Average speeds per sector.
+
+    Fields are Optional because the underlying telemetry may not contain
+    a Distance channel (e.g., older sessions).
+    """
+    sector1_avg_speed: Optional[float] = None
+    sector2_avg_speed: Optional[float] = None
+    sector3_avg_speed: Optional[float] = None

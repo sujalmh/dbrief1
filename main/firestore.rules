@@ -18,7 +18,8 @@ service cloud.firestore {
       
       // Messages subcollection
       match /messages/{messageId} {
-        allow read, write: if isAuthenticated() && isOwner(get(/databases/$(database)/documents/sessions/$(sessionId)).data.userId);
+        allow read, update, delete: if isAuthenticated() && isOwner(resource.data.userId);
+        allow create: if isAuthenticated() && isOwner(request.resource.data.userId);
       }
     }
 

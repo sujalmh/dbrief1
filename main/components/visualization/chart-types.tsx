@@ -440,14 +440,6 @@ export function TelemetryChart({ data, title, circuit, corners: apiCorners }: Te
             }))
     }
 
-    console.log("[TelemetryChart] Debug:", {
-        hasApiCorners: !!(apiCorners && apiCorners.length),
-        apiCornersCount: apiCorners?.length,
-        finalCornersCount: corners.length,
-        maxDistance,
-        firstCorner: corners[0]
-    })
-
     // For multi-driver, restructure data
     if (hasMultipleDrivers) {
         // Group by distance (rounded to nearest 10m for alignment)

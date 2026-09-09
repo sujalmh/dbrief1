@@ -686,7 +686,8 @@ describe("ragRetrieve (integration)", () => {
         expect(qdrantCall).toBeDefined();
         const body = JSON.parse(qdrantCall![1].body);
         const must = body.filter.must;
-        expect(must).toContainEqual({ key: "season", match: { value: 2023 } });
+        // Season is a KEYWORD (string) payload in the live collection.
+        expect(must).toContainEqual({ key: "season", match: { value: "2023" } });
         expect(must).toContainEqual({ key: "doc_type", match: { value: "decision" } });
         expect(must).toContainEqual({ key: "event", match: { value: "Austrian Grand Prix" } });
         // Decisions carry no section payload — no section filter expected

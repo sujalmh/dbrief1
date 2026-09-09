@@ -1,6 +1,7 @@
 "use client"
 
-import { Brain, Globe, Database, Cpu, BarChart3, Sparkles, Zap } from "lucide-react"
+import { useState } from "react"
+import { Brain, Globe, Database, Cpu, BarChart3, Sparkles, Zap, Plus } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { useChatStore } from "@/lib/store"
 import {
@@ -12,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import {
     DropdownMenu,
     DropdownMenuContent,
+    DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuSeparator,
     DropdownMenuTrigger,
@@ -19,6 +21,7 @@ import {
     DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu"
 import { PROVIDERS, PROVIDER_MAP, getProviderMeta } from "@/lib/providers"
+import { AddModelsDialog } from "@/components/chat/add-models-dialog"
 
 const PROVIDER_ICONS: Record<string, LucideIcon> = {
     gemini: Database,
@@ -28,12 +31,78 @@ const PROVIDER_ICONS: Record<string, LucideIcon> = {
     go: Zap,
 };
 
+// =============================================================================
+// ModelList
+// =============================================================================
+//
+// Shared radio group for the responder / planner model pickers. Renders the
+// built-in presets from the centralized provider catalog (lib/providers.ts),
+// then the user's "Custom" list (if any). Kept as a sub-component so the
+// planner and responder sections stay in sync.
+//
+interface ModelListProps {
+    provider: string
+    customModels: string[]
+    value: string
+    onSelect: (modelId: string) => void
+    /**
+     * When provided, prepend a non-default radio entry (e.g.
+     * "Use default" for the planner) that the user can pick
+     * to clear their selection. We represent "no selection" as
+     * the empty string in the store.
+     */
+    prependDefault?: {
+        label: string
+        value: string
+    }
+}
+
+function ModelList({ provider, customModels, value, onSelect, prependDefault }: ModelListProps) {
+    const builtins = getProviderMeta(provider)?.models ?? []
+    return (
+        <DropdownMenuRadioGroup value={value} onValueChange={onSelect}>
+            {prependDefault && (
+                <DropdownMenuRadioItem value={prependDefault.value}>
+                    <span className="flex items-center gap-1.5">
+                        <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+                        {prependDefault.label}
+                    </span>
+                </DropdownMenuRadioItem>
+            )}
+
+            {builtins.map((m) => (
+                <DropdownMenuRadioItem key={m.id} value={m.id}>
+                    {m.label}
+                </DropdownMenuRadioItem>
+            ))}
+
+            {customModels.length > 0 && (
+                <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel className="text-[10px] text-muted-foreground/70 uppercase">
+                        Custom
+                    </DropdownMenuLabel>
+                    {customModels.map((m) => (
+                        <DropdownMenuRadioItem key={m} value={m}>
+                            <span className="font-mono text-xs">{m}</span>
+                        </DropdownMenuRadioItem>
+                    ))}
+                </>
+            )}
+        </DropdownMenuRadioGroup>
+    )
+}
+
 export function ControlPanel() {
     const { settings, updateSettings } = useChatStore()
+    // The "Add other models" dialog opens from a special non-radio
+    // item at the bottom of the model list. Keeping its open state
+    // local to the panel means the dropdown can close itself while
+    // the dialog is still open.
+    const [isAddModelsOpen, setIsAddModelsOpen] = useState(false)
 
     // Helper to get current provider icon
     const ProviderIcon = PROVIDER_ICONS[settings.provider] || Database
-    const activeProvider = getProviderMeta(settings.provider)
 
     // Switching provider also applies its default model so the selection
     // never goes stale; the menu stays open so the user can pick another one.
@@ -123,30 +192,29 @@ export function ControlPanel() {
 
             {/* Provider / Model Selector */}
             <DropdownMenu>
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <DropdownMenuTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                className="btn-wheel btn-wheel-orange h-8 gap-2 text-xs px-3"
-                            >
-                                <ProviderIcon className="h-3.5 w-3.5" />
-                                <span className="max-w-[80px] truncate hidden sm:inline-block font-bold">
-                                    {settings.model.split("/").pop()?.split(":")[0] ||
-                                        settings.model}
-                                </span>
-                            </Button>
-                        </DropdownMenuTrigger>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                        <p>Select AI Provider & Model</p>
-                    </TooltipContent>
-                </Tooltip>
+                {/* NOTE: Do NOT wrap a DropdownMenuTrigger in a Radix
+                    Tooltip. The two components compete for focus/pointer
+                    events and the dropdown silently stops opening in some
+                    browsers. We rely on the visible button label and the
+                    DropdownMenuLabel inside the menu for affordance. */}
+                <DropdownMenuTrigger asChild>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="btn-wheel btn-wheel-orange h-8 gap-2 text-xs px-3"
+                        title="Select AI Provider & Model"
+                    >
+                        <ProviderIcon className="h-3.5 w-3.5" />
+                        <span className="max-w-[80px] truncate hidden sm:inline-block font-bold">
+                            {settings.model.split("/").pop()?.split(":")[0] ||
+                                settings.model}
+                        </span>
+                    </Button>
+                </DropdownMenuTrigger>
 
                 <DropdownMenuContent
                     align="end"
-                    className="w-56 bg-background/95 backdrop-blur border border-border shadow-lg"
+                    className="w-64 bg-background/95 backdrop-blur border border-border shadow-lg"
                 >
                     <DropdownMenuLabel className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                         Provider
@@ -164,21 +232,57 @@ export function ControlPanel() {
 
                     <DropdownMenuSeparator />
 
+                    {/* Responder (answer) model — the "main" model the user
+                        picked. The server uses this to generate the final
+                        response. */}
                     <DropdownMenuLabel className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                        Model
+                        Model (Answer)
                     </DropdownMenuLabel>
-                    <DropdownMenuRadioGroup
+                    <ModelList
+                        provider={settings.provider}
+                        customModels={settings.customModels}
                         value={settings.model}
-                        onValueChange={(v) => updateSettings({ model: v })}
+                        onSelect={(v) => updateSettings({ model: v })}
+                    />
+
+                    <DropdownMenuSeparator />
+
+                    {/* Planner model. Defaults to the provider's
+                        built-in cheap planner when empty (the
+                        "Use default" entry). When set, this
+                        model handles intent analysis + step
+                        decomposition. */}
+                    <DropdownMenuLabel className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                        Model (Planner)
+                    </DropdownMenuLabel>
+                    <ModelList
+                        provider={settings.provider}
+                        customModels={settings.customModels}
+                        value={settings.plannerModel}
+                        onSelect={(v) => updateSettings({ plannerModel: v })}
+                        prependDefault={{
+                            label: "Use default (built-in cheap)",
+                            value: "",
+                        }}
+                    />
+
+                    <DropdownMenuSeparator />
+                    {/* Non-radio action: open the "Add other models"
+                        dialog. Clicking this closes the dropdown so
+                        the dialog can take over focus. */}
+                    <DropdownMenuItem
+                        onSelect={(e) => {
+                            e.preventDefault()
+                            setIsAddModelsOpen(true)
+                        }}
+                        className="text-xs gap-1.5"
                     >
-                        {activeProvider?.models.map((m) => (
-                            <DropdownMenuRadioItem key={m.id} value={m.id}>
-                                {m.label}
-                            </DropdownMenuRadioItem>
-                        ))}
-                    </DropdownMenuRadioGroup>
+                        <Plus className="h-3.5 w-3.5" />
+                        Add other models…
+                    </DropdownMenuItem>
                 </DropdownMenuContent>
             </DropdownMenu>
+            <AddModelsDialog open={isAddModelsOpen} onOpenChange={setIsAddModelsOpen} />
         </div>
     )
 }

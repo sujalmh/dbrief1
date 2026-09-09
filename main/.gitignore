@@ -13,6 +13,13 @@
 # testing
 /coverage
 
+# local test / typecheck output (never commit)
+*.log
+test-*.txt
+tsc-*.txt
+vitest*.log
+.e2e-logs/
+
 # next.js
 /.next/
 /out/

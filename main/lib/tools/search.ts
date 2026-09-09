@@ -63,20 +63,20 @@ export const webSearchTool = tool(
 
             // If no useful results, return a note
             if (!result.abstract && !result.answer && result.related_topics.length === 0) {
-                return {
+                return JSON.stringify({
                     note: "No relevant web results found for this query",
                     query,
-                };
+                });
             }
 
-            return result;
+            return JSON.stringify(result);
         } catch (error) {
             // Return error info instead of throwing
-            return {
+            return JSON.stringify({
                 error: true,
                 message: error instanceof Error ? error.message : "Search failed",
                 query,
-            };
+            });
         }
     },
     {

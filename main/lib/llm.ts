@@ -70,6 +70,28 @@ export const GO_BASE_URL = "https://opencode.ai/zen/go/v1";
 export const OPENCODE_USER_AGENT = "f1-ai-chatbot/1.0";
 export const OPENCODE_SESSION_HEADER = "x-opencode-session";
 
+// =============================================================================
+// Hang protection (per-call timeouts)
+// =============================================================================
+//
+// Upstream free-tier endpoints occasionally stall indefinitely (observed:
+// OpenRouter strict-structured-output requests hanging with no response and
+// no error for 3+ minutes). Without a client-side timeout those stalls hang
+// the SSE stream forever — the UI spins and the server holds the connection.
+// Every route-adjacent LLM call passes one of these signals so a stall
+// always surfaces as an AbortError (classified as `network`, i.e.
+// non-recoverable → degraded mode / clear error) instead of a silent hang.
+export const LLM_TIMEOUT_MS = {
+    /** Intent analysis is advisory-only (the planner proceeds without it),
+     * so keep this tight: a healthy call finishes in seconds, and every
+     * second here delays the user's answer. */
+    intent: 20_000,
+    /** Single decide-and-plan call. */
+    planner: 60_000,
+    /** Full responder stream (long answers need headroom). */
+    responder: 180_000,
+} as const;
+
 /**
  * Extract plain text from a LangChain message content value.
  * Chat-completions models return a string; responses-API models return an
@@ -299,11 +321,16 @@ export async function getChatModel(config: ModelConfig, apiKey?: string): Promis
  *
  * @param provider - The user's selected provider
  * @param apiKey - Optional API key from user settings
+ * @param modelId - Optional model id override. When provided, the planner
+ *   uses this exact model (the ControlPanel "Model (Planner)" picker).
+ *   When omitted, falls back to the provider's built-in cheap planner
+ *   model from providers.ts so the feature is fully opt-in.
  * @param sessionId - Optional stable per-conversation ID (x-opencode-session)
  * @returns LangChain chat model for planning
  */
-export async function getPlannerModel(provider: Provider, apiKey?: string, sessionId?: string): Promise<BaseChatModel> {
-    const model = PROVIDER_MAP[provider].plannerModel;
+export async function getPlannerModel(provider: Provider, apiKey?: string, modelId?: string, sessionId?: string): Promise<BaseChatModel> {
+    const meta = PROVIDER_MAP[provider];
+    const model = modelId || meta.plannerModel;
 
     return getChatModel({
         provider,

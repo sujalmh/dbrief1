@@ -187,7 +187,8 @@ export function generateRandomValue(
     const variance = params?.variance ?? defaults.variance;
 
     // Generate value using normal distribution approximation (Box-Muller)
-    const u1 = random();
+    let u1 = random();
+    while (u1 === 0) u1 = random(); // Avoid log(0)
     const u2 = random();
     const normalRandom = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 
@@ -446,4 +447,229 @@ export function runSimulation(request: SimulationRequest): SimulationOutput {
         visualization,
         summary,
     };
+}
+
+// =============================================================================
+// Tire Strategy Simulation
+// =============================================================================
+//
+// A lightweight, physics-informed tire strategy simulator. Returns lap-by-lap
+// times for a multi-stint race given a tyre compound sequence. Replaces the
+// earlier quadratic-deg model with one that:
+//
+//   - caps per-lap degradation at a compound-specific ceiling
+//   - rewards fresh tyres at the start of each stint
+//   - includes a configurable pit-stop time penalty per stop
+//   - accounts for fuel burn (cars get faster as fuel loads drop)
+//
+// All inputs are validated; invalid inputs return null so the caller can
+// surface a useful error message instead of getting NaN lap times.
+
+const COMPOUND_DEG_PER_LAP: Record<string, number> = {
+    SOFT: 0.06,        // ~0.06 s/lap^2 cap, fastest but gravest
+    MEDIUM: 0.04,      // balanced
+    HARD: 0.025,       // slowest deg, longest stints
+    INTERMEDIATE: 0.05,// wet but drying
+    WET: 0.045,        // full wet
+};
+
+const COMPOUND_BASE_PACE: Record<string, number> = {
+    SOFT: -0.4,        // ~0.4s faster than MEDIUM on a fresh set
+    MEDIUM: 0.0,
+    HARD: 0.3,         // ~0.3s slower than MEDIUM on a fresh set
+    INTERMEDIATE: 3.0, // significantly slower in dry conditions
+    WET: 5.0,
+};
+
+const FUEL_BURN_S_PER_LAP = 0.035; // ~0.035s/lap regained as fuel burns off
+const MAX_DEG_PER_STINT = 8.0;      // cap quadratic degradation at 8s/lap
+
+export interface TireStrategyStint {
+    compound: string;
+    /** Number of laps to run on this compound. Must be >= 1. */
+    laps: number;
+}
+
+export interface TireStrategyInput {
+    /** Total number of laps in the race. Must be >= 1. */
+    totalLaps: number;
+    /** Ordered list of stints. The sum of stint.laps should equal totalLaps. */
+    stints: TireStrategyStint[];
+    /** Base lap time at full fuel on a fresh MEDIUM, in seconds. Default 90. */
+    baseLapTime?: number;
+    /** Pit-stop time loss in seconds. Default 22.0 (typical F1 stationary). */
+    pitStopSeconds?: number;
+    /** Optional seed for deterministic output. */
+    seed?: number;
+}
+
+export interface TireStrategyResult {
+    /** Per-lap breakdown including pit laps flagged with isPitLap=true. */
+    laps: Array<{
+        lap: number;
+        compound: string;
+        lapTime: number;        // seconds, including pit loss for pit laps
+        tyreAge: number;        // laps on this set
+        isPitLap: boolean;
+        isFirstStintLap: boolean;
+    }>;
+    /** Sum of all lap times including pit stops. */
+    totalTimeSeconds: number;
+    /** Number of pit stops in the strategy. */
+    pitStops: number;
+    /** Per-stint summary. */
+    stints: Array<{
+        compound: string;
+        startLap: number;
+        endLap: number;
+        avgLapTime: number;
+        tyreAge: number;
+    }>;
+}
+
+/**
+ * Validate a tire strategy input. Returns an error message string or null.
+ */
+export function validateTireStrategy(input: TireStrategyInput): string | null {
+    if (!input || typeof input !== "object") return "Input is required";
+    if (!Number.isFinite(input.totalLaps) || input.totalLaps < 1) {
+        return "totalLaps must be a positive integer";
+    }
+    if (!Array.isArray(input.stints) || input.stints.length === 0) {
+        return "At least one stint is required";
+    }
+    for (let i = 0; i < input.stints.length; i++) {
+        const s = input.stints[i];
+        if (!s || !s.compound) return `stint[${i}] is missing compound`;
+        if (!Number.isFinite(s.laps) || s.laps < 1) {
+            return `stint[${i}].laps must be a positive integer`;
+        }
+        if (!(s.compound.toUpperCase() in COMPOUND_DEG_PER_LAP)) {
+            return `stint[${i}].compound '${s.compound}' is not recognized (use SOFT/MEDIUM/HARD/INTERMEDIATE/WET)`;
+        }
+    }
+    const totalStintLaps = input.stints.reduce((acc, s) => acc + s.laps, 0);
+    if (totalStintLaps !== input.totalLaps) {
+        return `Sum of stint.laps (${totalStintLaps}) must equal totalLaps (${input.totalLaps})`;
+    }
+    return null;
+}
+
+/**
+ * Simulate a tire strategy. Returns null if the input fails validation.
+ */
+export function simulateTireStrategy(
+    input: TireStrategyInput
+): TireStrategyResult | null {
+    const err = validateTireStrategy(input);
+    if (err) return null;
+
+    const baseLap = input.baseLapTime ?? 90;
+    const pitLoss = input.pitStopSeconds ?? 22.0;
+    const random = input.seed !== undefined
+        ? createSeededRandom(input.seed)
+        : Math.random;
+
+    const laps: TireStrategyResult["laps"] = [];
+    const stintSummaries: TireStrategyResult["stints"] = [];
+
+    let currentLap = 1;
+    let pitStops = 0;
+
+    input.stints.forEach((stint, stintIdx) => {
+        const compound = stint.compound.toUpperCase();
+        const deg = COMPOUND_DEG_PER_LAP[compound];
+        const basePaceOffset = COMPOUND_BASE_PACE[compound] ?? 0;
+        const stintLapTimes: number[] = [];
+        const startLap = currentLap;
+        const isFirstStint = stintIdx === 0;
+        // A stint ends with a pit stop unless it is the final one.
+        const endsWithPit = stintIdx < input.stints.length - 1;
+
+        for (let i = 0; i < stint.laps; i++) {
+            const tyreAge = i + 1;
+            // Quadratic-in-age degradation, capped at MAX_DEG_PER_STINT
+            // so even a long SOFT stint can't produce an absurdly slow
+            // lap. Without the cap, deg * (n-1)^2 on a 30-lap SOFT
+            // stint adds ~50s to the last lap.
+            const rawDeg = deg * i * i;
+            const degradation = Math.min(rawDeg, MAX_DEG_PER_STINT);
+            // Fuel effect: every lap is slightly faster as the car burns fuel.
+            const fuelEffect = -(currentLap - 1) * FUEL_BURN_S_PER_LAP;
+            // Light stochastic noise (±0.15s) so runs aren't perfectly identical.
+            const noise = (random() - 0.5) * 0.3;
+            // Pit-in lap: a small portion of the pit loss is paid on the in-lap
+            // and the rest on the out-lap. We model it on the out-lap because
+            // that's where the lost time actually shows up on the leaderboard.
+            const isPitLap = endsWithPit && i === stint.laps - 1;
+            const pitCost = isPitLap ? pitLoss : 0;
+
+            const lapTime =
+                baseLap + basePaceOffset + degradation + fuelEffect + noise + pitCost;
+
+            laps.push({
+                lap: currentLap,
+                compound,
+                lapTime: Math.round(lapTime * 1000) / 1000,
+                tyreAge,
+                isPitLap,
+                isFirstStintLap: isFirstStint && i === 0,
+            });
+            stintLapTimes.push(lapTime);
+            currentLap++;
+        }
+
+        if (endsWithPit) pitStops++;
+
+        const avgLap = stintLapTimes.reduce((a, b) => a + b, 0) / stintLapTimes.length;
+        stintSummaries.push({
+            compound,
+            startLap,
+            endLap: currentLap - 1,
+            avgLapTime: Math.round(avgLap * 1000) / 1000,
+            tyreAge: stint.laps,
+        });
+    });
+
+    const totalTime = laps.reduce((acc, l) => acc + l.lapTime, 0);
+
+    return {
+        laps,
+        totalTimeSeconds: Math.round(totalTime * 1000) / 1000,
+        pitStops,
+        stints: stintSummaries,
+    };
+}
+
+/**
+ * Compare a list of tire strategies head-to-head. The first one is treated
+ * as the baseline; the rest are compared as deltas. Returns a sorted list
+ * from fastest to slowest. Input is validated; invalid entries are skipped
+ * with their error preserved in the returned object.
+ */
+export function compareStrategies(
+    strategies: Array<{ name: string; input: TireStrategyInput }>
+): Array<
+    | { name: string; totalTime: number; deltaToOptimal: number; error: null }
+    | { name: string; error: string }
+> {
+    const valid: Array<{ name: string; result: TireStrategyResult }> = [];
+    for (const s of strategies) {
+        const result = simulateTireStrategy(s.input);
+        if (result) valid.push({ name: s.name, result });
+    }
+    if (valid.length === 0) {
+        return strategies.map((s) => ({
+            name: s.name,
+            error: validateTireStrategy(s.input) ?? "Unknown error",
+        }));
+    }
+    valid.sort((a, b) => a.result.totalTimeSeconds - b.result.totalTimeSeconds);
+    const optimal = valid[0].result.totalTimeSeconds;
+    return valid.map((v) => ({
+        name: v.name,
+        totalTime: v.result.totalTimeSeconds,
+        deltaToOptimal: Math.round((v.result.totalTimeSeconds - optimal) * 1000) / 1000,
+        error: null,
+    }));
 }

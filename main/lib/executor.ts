@@ -15,7 +15,7 @@ import { Step } from "./planner";
 export interface ExecutionResult {
     step: number;
     tool: string;
-    args: unknown; // Input arguments used for the tool
+    args: Record<string, unknown>; // Input arguments used for the tool
     success: boolean;
     data?: unknown;
     error?: string;
@@ -29,11 +29,81 @@ export interface ExecutionResult {
 
 const STEP_TIMEOUT_MS = 60000;
 
+// =============================================================================
+// Tool name resolution
+// =============================================================================
+//
+// LLMs frequently hallucinate tool names that are close to but not exactly
+// the canonical name (e.g. `get_lap_times` instead of `get_laps`). Rather
+// than fail every such step, we apply a small alias table and a fuzzy
+// fallback. Anything still unmatched is reported back to the caller so
+// the real bugs are still visible in the logs.
+
+const TOOL_ALIASES: Record<string, string> = {
+    get_lap_times: "get_laps",
+    get_laptime: "get_laps",
+    get_laptimes: "get_laps",
+    get_lap_data: "get_laps",
+    get_driver_standings_for_year: "get_driver_standings",
+    get_championship_standings: "get_driver_standings",
+    get_standings: "get_driver_standings",
+    get_telemetry_data: "get_telemetry",
+    get_telemetry_stats: "get_telemetry_summary",
+    get_telemetry_summary_stats: "get_telemetry_summary",
+    get_qualifying_results: "get_qualifying",
+    get_race_results: "get_race",
+    get_pit_stops: "get_stints",
+    get_pit_strategy: "get_stints",
+    get_tyre_strategy: "get_tyres",
+    get_tire_strategy: "get_tyres",
+    get_tire_stints: "get_tyres",
+    get_session_results: "get_results",
+    get_weather_data: "get_weather",
+    get_safety_car: "get_race_control",
+    get_race_control_messages: "get_race_control",
+    simulate: "run_simulation",
+    run_sim: "run_simulation",
+    simulation: "run_simulation",
+};
+
+function resolveTool(
+    requested: string,
+    tools: Record<string, StructuredTool>
+): { tool: StructuredTool | null; normalizedTool: string; aliasHit: boolean } {
+    if (tools[requested]) {
+        return { tool: tools[requested], normalizedTool: requested, aliasHit: false };
+    }
+    // 1) Alias table hit
+    const alias = TOOL_ALIASES[requested];
+    if (alias && tools[alias]) {
+        return { tool: tools[alias], normalizedTool: alias, aliasHit: true };
+    }
+    // 2) Case-insensitive / underscore-stripped fuzzy match
+    const norm = (s: string) => s.toLowerCase().replace(/[_-]/g, "");
+    const target = norm(requested);
+    for (const name of Object.keys(tools)) {
+        if (norm(name) === target) {
+            return { tool: tools[name], normalizedTool: name, aliasHit: true };
+        }
+    }
+    return { tool: null, normalizedTool: requested, aliasHit: false };
+}
+
 export interface ExecutionContext {
     results: ExecutionResult[];
     successCount: number;
     failureCount: number;
     totalDurationMs: number;
+}
+
+const MAX_RETRIES = 2;
+
+function isRetryableError(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("400") || msg.includes("401") || msg.includes("403") || msg.includes("404")) {
+        return false;
+    }
+    return true;
 }
 
 async function executeStep(
@@ -43,46 +113,116 @@ async function executeStep(
 ): Promise<ExecutionResult> {
     const startTime = Date.now();
 
-    // Check if tool exists
-    const tool = tools[step.tool];
+    // Resolve the tool, applying common-sense aliases for hallucinated
+    // tool names. We've seen Llama, Nemotron, and Poolside all invent
+    // names like `get_lap_times`, `get_driver_standings_for_year`, or
+    // `get_telemetry_data` instead of the canonical `get_laps`,
+    // `get_driver_standings`, `get_telemetry`. A small alias table plus
+    // a case-insensitive / underscore-stripped lookup catches the most
+    // common ones without hiding actual bugs.
+    const { tool, normalizedTool, aliasHit } = resolveTool(step.tool, tools);
     if (!tool) {
         return {
             step: stepIndex,
             tool: step.tool,
             args: step.args,
             success: false,
-            error: `Unknown tool: ${step.tool}`,
+            error: `Unknown tool: ${step.tool}. Available: ${Object.keys(tools).join(", ")}`,
             durationMs: Date.now() - startTime,
         };
     }
 
-    try {
-        // Execute with timeout
-        const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error("Tool execution timeout")), STEP_TIMEOUT_MS);
-        });
-
-        const resultPromise = tool.invoke(step.args);
-        const result = await Promise.race([resultPromise, timeoutPromise]);
-
-        return {
-            step: stepIndex,
-            tool: step.tool,
-            args: step.args,
-            success: true,
-            data: typeof result === "string" ? JSON.parse(result) : result,
-            durationMs: Date.now() - startTime,
-        };
-    } catch (error) {
-        return {
-            step: stepIndex,
-            tool: step.tool,
-            args: step.args,
-            success: false,
-            error: error instanceof Error ? error.message : "Tool execution failed",
-            durationMs: Date.now() - startTime,
-        };
+    if (aliasHit && process.env.NODE_ENV === "development") {
+        console.warn(
+            `[Executor] Step ${stepIndex}: remapped hallucinated tool "${step.tool}" -> "${normalizedTool}"`
+        );
     }
+
+    // Validate args against tool schema. LangChain's tool.schema can be a
+    // Zod schema, a JSON schema, or a callable returning either. Only Zod
+    // schemas expose .parseAsync; fall back to safeParse or skipping when
+    // the tool uses a different schema format.
+    let validatedArgs = step.args;
+    if (tool.schema) {
+        try {
+            const schema = tool.schema as { parseAsync?: (input: unknown) => Promise<unknown>; parse?: (input: unknown) => unknown };
+            if (typeof schema.parseAsync === "function") {
+                validatedArgs = await schema.parseAsync(step.args) as Record<string, unknown>;
+            } else if (typeof schema.parse === "function") {
+                validatedArgs = schema.parse(step.args) as Record<string, unknown>;
+            }
+            // If the schema is JSON-schema (no parse methods), skip strict
+            // validation here — the tool will validate and surface errors.
+        } catch (e) {
+            return {
+                step: stepIndex,
+                tool: step.tool,
+                args: step.args,
+                success: false,
+                error: `Schema validation failed: ${e instanceof Error ? e.message : String(e)}`,
+                durationMs: Date.now() - startTime,
+            };
+        }
+    }
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            // Execute with timeout. The timer is always cleared so we never
+            // leak handles on the server (Next.js warns on dangling timers
+            // and they keep the event loop alive under load).
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                timeoutId = setTimeout(() => reject(new Error("Tool execution timeout")), STEP_TIMEOUT_MS);
+            });
+
+            const resultPromise = tool.invoke(validatedArgs);
+            let result: unknown;
+            try {
+                result = await Promise.race([resultPromise, timeoutPromise]);
+            } finally {
+                if (timeoutId !== undefined) clearTimeout(timeoutId);
+            }
+
+            let parsedData: unknown = result;
+            if (typeof result === "string") {
+                try {
+                    parsedData = JSON.parse(result);
+                } catch {
+                    // Tool returned a plain string, not JSON — keep as-is
+                    // rather than failing the step.
+                    parsedData = result;
+                }
+            }
+
+            return {
+                step: stepIndex,
+                tool: step.tool,
+                args: validatedArgs as Record<string, unknown>,
+                success: true,
+                data: parsedData,
+                durationMs: Date.now() - startTime,
+            };
+        } catch (error) {
+            lastError = error;
+            if (attempt < MAX_RETRIES && isRetryableError(error)) {
+                // Exponential backoff: 1s, 2s
+                const delay = Math.pow(2, attempt) * 1000;
+                await new Promise((r) => setTimeout(r, delay));
+            } else {
+                break;
+            }
+        }
+    }
+
+    return {
+        step: stepIndex,
+        tool: step.tool,
+        args: step.args,
+        success: false,
+        error: lastError instanceof Error ? lastError.message : String(lastError) || "Tool execution failed",
+        durationMs: Date.now() - startTime,
+    };
 }
 
 /**
@@ -107,23 +247,35 @@ export async function executeSteps(
         onUpdate?.(index + 1, 'pending');
     });
 
-    // Execute in parallel for speed optimization
-    const resultPromises = stepsToExecute.map(async (step, index) => {
-        const stepNum = index + 1;
-        onUpdate?.(stepNum, 'running');
+    // Execute in parallel with concurrency limit (max 3)
+    const CONCURRENCY_LIMIT = 3;
+    const results: ExecutionResult[] = new Array(stepsToExecute.length);
+    let currentIndex = 0;
 
-        const result = await executeStep(step, stepNum, tools);
+    const worker = async () => {
+        while (currentIndex < stepsToExecute.length) {
+            const index = currentIndex++;
+            const step = stepsToExecute[index];
+            const stepNum = index + 1;
 
-        onUpdate?.(
-            stepNum,
-            result.success ? 'success' : 'failed',
-            result.success ? undefined : result.error
-        );
+            onUpdate?.(stepNum, 'running');
+            const result = await executeStep(step, stepNum, tools);
 
-        return result;
-    });
+            onUpdate?.(
+                stepNum,
+                result.success ? 'success' : 'failed',
+                result.success ? undefined : result.error
+            );
 
-    const results = await Promise.all(resultPromises);
+            results[index] = result;
+        }
+    };
+
+    const workers = Array.from(
+        { length: Math.min(CONCURRENCY_LIMIT, stepsToExecute.length) },
+        () => worker()
+    );
+    await Promise.all(workers);
 
     // Log execution (for debugging)
     if (process.env.NODE_ENV === "development") {
@@ -150,7 +302,9 @@ export async function executeSteps(
 // =============================================================================
 
 const MAX_CONTEXT_TOKENS = 150_000; // Safe limit below 262k
-const CHARS_PER_TOKEN = 4; // Rough estimate: 1 token ≈ 4 characters
+const CHARS_PER_TOKEN = 3; // Safer estimate for dense JSON: 1 token ≈ 3 characters
+/** Max rows kept per list payload (results, standings, events, ...) before row-truncation kicks in. */
+const MAX_ROWS_PER_LIST = 12;
 
 /**
  * Estimate token count from a string
@@ -214,12 +368,15 @@ function summarizeTelemetryForLLM(data: { data: unknown[];[key: string]: unknown
         }
     }
 
-    // Keep only essential metadata + summary
+    // Keep only essential metadata + summary. Field names are chosen to
+    // avoid racing-domain misreads: `telemetry_points` is the count of
+    // telemetry samples (NOT championship points), and `lap_number` is
+    // which lap was sampled (NOT a finishing position).
     return {
         driver: data.driver,
         lap_number: data.lap_number,
         lap_time: data.lap_time,
-        total_points: points.length,
+        telemetry_points: points.length,
         telemetry_summary: summary,
         note: "Raw telemetry data replaced with statistical summary for LLM context efficiency",
     };
@@ -342,6 +499,46 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
             ...result,
             data: summarizeLapsForLLM(result.data),
         };
+    }
+
+    // Check for other large row-list payloads (results, standings, events,
+    // weather, tyres, stints, race control, ...): keep the first rows and
+    // note how many were omitted, instead of nuking the whole payload.
+    // (Without this, e.g. a 20-driver results table collapses to a
+    // "[Data too large]" stub and the responder is forced to refuse.)
+    if (typeof result.data === "object" && result.data !== null) {
+        const rec = result.data as Record<string, unknown>;
+        for (const key of Object.keys(rec)) {
+            const val = rec[key];
+            if (Array.isArray(val) && val.length > MAX_ROWS_PER_LIST) {
+                return {
+                    ...result,
+                    data: {
+                        ...rec,
+                        [key]: val.slice(0, MAX_ROWS_PER_LIST),
+                        [`${key}_truncated_from`]: val.length,
+                        note: `Showing first ${MAX_ROWS_PER_LIST} of ${val.length} ${key} for LLM context efficiency`,
+                    },
+                };
+            }
+        }
+    }
+
+    // Generic truncation for large payloads
+    try {
+        const strData = JSON.stringify(result.data);
+        if (strData.length > 10000) {
+            let summaryInfo = "";
+            if (typeof result.data === "object" && result.data !== null) {
+                summaryInfo = ` Keys available: ${Object.keys(result.data).join(", ")}`;
+            }
+            return {
+                ...result,
+                data: `[Data too large, truncated. String length: ${strData.length}.${summaryInfo}]`,
+            };
+        }
+    } catch {
+        // Ignore JSON stringify errors for circular refs
     }
 
     return result;

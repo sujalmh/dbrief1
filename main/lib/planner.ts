@@ -8,7 +8,7 @@
 import { z } from "zod";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { chatContentToText } from "./llm";
+import { chatContentToText, LLM_TIMEOUT_MS } from "./llm";
 
 // =============================================================================
 // Schemas
@@ -38,11 +38,21 @@ export type Plan = z.infer<typeof PlanSchema>;
 // Planner Prompt
 // =============================================================================
 
+// Data availability depends on the calendar year, so the current year is
+// interpolated into the prompt rather than hardcoded — this keeps the
+// planner honest about the current season without frequent code updates.
+const PLANNER_CURRENT_YEAR = new Date().getFullYear();
+// Full telemetry lags the calendar: the current season is in progress, so
+// the latest year with *complete* telemetry is last year.
+const PLANNER_PRE_TELEMETRY_LAST_YEAR = PLANNER_CURRENT_YEAR - 1;
+const PLANNER_PROMPT_YEAR_RANGE = `1950-${PLANNER_CURRENT_YEAR}`;
+
 const PLANNER_SYSTEM_PROMPT = `You are a query planner for an F1 AI assistant. Decompose queries into 1-5 atomic execution steps.
 
 Available Tools (FastAPI):
-- get_seasons: Lists 1950-2025 seasons.
+- get_seasons: Lists ${PLANNER_PROMPT_YEAR_RANGE} seasons.
 - get_events(year): Lists events.
+- get_gp_names(year): Get canonical Grand Prix names for a season. Use this FIRST if you're unsure of the exact GP name.
 - get_sessions(year, gp): Lists sessions (FP1...R).
 - get_results(year, gp, session): Full session results.
 - get_qualifying(year, gp): Qualifying specific results.
@@ -74,6 +84,7 @@ Common Driver Codes (2024):
 - Pierre Gasly: GAS | Esteban Ocon: OCO | Alex Albon: ALB
 - Logan Sargeant: SAR | Kevin Magnussen: MAG | Nico Hulkenberg: HUL
 - Zhou Guanyu: ZHO | Valtteri Bottas: BOT
+NOTE: Driver lineups change yearly. If you are unsure of a driver's 3-letter code for a specific year, include a get_results or get_driver_standings step first to discover the correct codes from the actual data.
 
 Session Codes:
 - Practice: FP1, FP2, FP3
@@ -86,14 +97,16 @@ Rules:
 1. MAX 5 steps total.
 2. **CRITICAL**: To compare MULTIPLE drivers, make SEPARATE tool calls for EACH driver.
    Example: "Compare Lando and Oscar" → get_telemetry(driver="NOR") + get_telemetry(driver="PIA")
-3. Use 3-letter driver codes (NOR, not "Lando Norris").
+3. Use 3-letter driver codes (NOR, not "Lando Norris"). If unsure of a driver's code for a specific year, plan a get_results or get_driver_standings call first to discover it.
 4. For race: use session="R". For qualifying: use session="Q".
-5. Always use correct GP names: "Abu Dhabi" (not "abu dhabi 23").
-6. **YEAR RANGE**: Years 1950-2025 are supported with different data availability:
+5. Always use correct GP names: "Abu Dhabi" (not "abu dhabi 23"). If unsure of the canonical GP name, include a get_gp_names(year) or get_events(year) step FIRST to discover valid names.
+6. **YEAR RANGE**: Years 1950-${PLANNER_CURRENT_YEAR} are supported with different data availability:
    - **1950-2017**: Use ergast tools ONLY (get_driver_standings, get_race, get_qualifying). NO telemetry/laps/weather available.
-   - **2018-2025**: All tools available including telemetry, laps, weather, etc.
+   - **2018-${PLANNER_PRE_TELEMETRY_LAST_YEAR}**: All tools available including telemetry, laps, weather, etc.
+   - **${PLANNER_CURRENT_YEAR} (current season)**: Sessions that have already finished are available. Live / in-progress sessions are blocked at the API layer for cost protection; if the user asks about a session that is currently running, fall back to web_search for live updates.
    Example for "Senna 1994 championship": {"steps": [{"tool": "get_driver_standings", "args": {"year": 1994}}], "reasoning": "1994 is pre-2018, using ergast API for standings."}
    Example for "1994 Monaco race telemetry": {"steps": [], "reasoning": "Telemetry not available for 1994. Only standings and results available for pre-2018 seasons."}
+   Example for "${PLANNER_CURRENT_YEAR} Australian GP results": {"needs_plan": true, "reasoning": "Current-season completed race results are available via FastF1.", "steps": [{"description": "Get race results", "tool": "get_race", "args": {"year": ${PLANNER_CURRENT_YEAR}, "gp": "Australia"}}]}
 7. **TOOL SELECTION**:
    - Use get_telemetry for comparisons and visualization queries
    - Use get_telemetry_summary only when user explicitly asks for "stats" or "summary"
@@ -293,7 +306,11 @@ export async function decidePlan(
         new HumanMessage(message),
     ];
 
-    const response = await model.invoke(messages);
+    const response = await model.invoke(messages, {
+        // Hang protection: a stalled upstream must surface as an AbortError
+        // (classified `network` by the caller) instead of hanging the stream.
+        signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner),
+    });
     const { plan: parsed, reasoning } = parseJsonResponse(responseToText(response));
 
     return resolveDecision(parsed, reasoning, webSearchEnabled, deepResearchMode);
@@ -330,44 +347,86 @@ export async function streamPlanQuery(
 }
 
 /**
- * Parse JSON from LLM response, handling markdown code blocks and the
- * legacy "reasoning text\n\nPLAN: {json}" prefix.
- * Returns the raw parsed value plus any extracted reasoning prefix.
+ * Parse JSON from LLM response, handling markdown code blocks, the legacy
+ * "reasoning text\n\nPLAN: {json}" prefix, and JSON objects embedded in
+ * prose (via balanced-brace extraction). Returns the raw parsed value plus
+ * any extracted reasoning prefix.
  */
 function parseJsonResponse(content: string): { plan: unknown; reasoning?: string } {
-    // Remove markdown code block if present
-    let text = content.trim();
+    const text = content.trim();
 
-    // Handle ```json ... ``` format
+    // 1) Canonical "PLAN: {json}" marker (legacy format)
+    const planMarkerIndex = text.indexOf('PLAN:');
+    if (planMarkerIndex !== -1) {
+        const reasoningText = text.substring(0, planMarkerIndex).trim();
+        const jsonStr = text.substring(planMarkerIndex + 5).trim();
+        const tryParse = (s: string) => {
+            try { return JSON.parse(s); } catch { return undefined; }
+        };
+        // Try as-is, then try the first balanced { ... } in jsonStr
+        let parsed = tryParse(jsonStr);
+        if (parsed === undefined) {
+            const obj = extractFirstBalancedJsonObject(jsonStr);
+            if (obj) parsed = tryParse(obj);
+        }
+        if (parsed !== undefined) return { plan: parsed, reasoning: reasoningText };
+    }
+
+    // 2) Markdown fenced block (```json ... ``` or ``` ... ```)
     const jsonBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonBlockMatch) {
-        text = jsonBlockMatch[1].trim();
+        const inside = jsonBlockMatch[1].trim();
+        try { return { plan: JSON.parse(inside) }; } catch { /* fall through */ }
     }
 
-    // Check if response has the new format with "PLAN:" marker
-    const planMarkerIndex = text.indexOf('PLAN:');
+    // 3) Whole response is JSON
+    try { return { plan: JSON.parse(text) }; } catch { /* fall through */ }
 
-    if (planMarkerIndex !== -1) {
-        // Extract reasoning (everything before PLAN:)
-        const reasoningText = text.substring(0, planMarkerIndex).trim();
+    // 4) Embedded balanced JSON object somewhere in the response
+    const embedded = extractFirstBalancedJsonObject(text);
+    if (embedded) {
+        try { return { plan: JSON.parse(embedded) }; } catch { /* fall through */ }
+    }
 
-        // Extract JSON (everything after PLAN:)
-        const jsonStr = text.substring(planMarkerIndex + 5).trim();
+    throw new Error(`Failed to parse planner response as JSON: ${text.slice(0, 200)}`);
+}
 
-        try {
-            const plan = JSON.parse(jsonStr);
-            return { plan, reasoning: reasoningText };
-        } catch {
-            throw new Error(`Failed to parse plan JSON: ${jsonStr}`);
+/**
+ * Find the first balanced top-level JSON object in `s`.
+ *
+ * Walks the string tracking brace depth (skipping braces inside strings and
+ * respecting escape sequences). Returns the slice from the matching opening
+ * brace to its closing brace, or null if no balanced object is found.
+ *
+ * This lets us recover plans from responses like:
+ *   "Sure! Here you go:\n{\"steps\":[...]} \nLet me know if..."
+ */
+function extractFirstBalancedJsonObject(s: string): string | null {
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escape = false;
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (escape) { escape = false; continue; }
+        if (inString) {
+            if (c === '\\') escape = true;
+            else if (c === '"') inString = false;
+            continue;
+        }
+        if (c === '"') { inString = true; continue; }
+        if (c === '{') {
+            if (depth === 0) start = i;
+            depth++;
+        } else if (c === '}') {
+            depth--;
+            if (depth === 0 && start !== -1) {
+                return s.substring(start, i + 1);
+            }
+            if (depth < 0) return null;
         }
     }
-
-    // Fallback: try to parse entire content as JSON (old format)
-    try {
-        return { plan: JSON.parse(text) };
-    } catch {
-        throw new Error(`Failed to parse planner response as JSON: ${content}`);
-    }
+    return null;
 }
 
 /**
@@ -377,9 +436,17 @@ function parseJsonResponse(content: string): { plan: unknown; reasoning?: string
 export function createFallbackPlan(message: string): Plan {
     const lowerMessage = message.toLowerCase();
 
-    // Try to extract year
-    const yearMatch = message.match(/20\d{2}/);
-    const year = yearMatch ? parseInt(yearMatch[0]) : 2024;
+    // Try to extract year. F1 history spans 1950+, so match 19xx and 20xx.
+    // Only accept 4-digit years in the plausible F1 range — a bare 2-digit
+    // number (e.g. the "21" in "Abu Dhabi 21") must NOT become year 21.
+    const yearMatch = message.match(/(?:19|20)\d{2}/);
+    let year = new Date().getFullYear();
+    if (yearMatch) {
+        const parsed = parseInt(yearMatch[0], 10);
+        if (parsed >= 1950 && parsed <= new Date().getFullYear() + 2) {
+            year = parsed;
+        }
+    }
 
     // Try to detect GP name from common ones
     const gpPatterns = [
@@ -414,6 +481,53 @@ export function createFallbackPlan(message: string): Plan {
     }
 
     // Determine what type of data to fetch
+    // PRIORITY: Detect simulation / what-if / predictive queries FIRST so they
+    // don't fall through to a generic "get events" plan when the LLM planner
+    // fails. These need run_simulation, not data retrieval.
+    const isSimulationQuery =
+        /\b(what\s*if|simulate|simulation|predict|project|counterfactual|hypothetical|how\s+would|what\s+would)\b/i.test(lowerMessage);
+
+    if (isSimulationQuery) {
+        // Try to infer the metric from the query
+        const metricMatch = lowerMessage.match(/\b(lap\s*time|time)\b/i) ? "time"
+            : lowerMessage.match(/\b(points|championship|standings)\b/i) ? "points"
+                : lowerMessage.match(/\b(position|place|finish)\b/i) ? "position"
+                    : lowerMessage.match(/\b(gap|delta|margin)\b/i) ? "gap"
+                        : "points"; // sensible default for season-level what-ifs
+
+        const horizonMatch = lowerMessage.match(/\b(season|championship|year)\b/i) ? "season"
+            : lowerMessage.match(/\b(lap)\b/i) ? "lap"
+                : "race"; // default to race-level
+
+        // Build a scenario_id from the message so it's identifiable
+        const scenarioId = message
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, "")
+            .trim()
+            .split(/\s+/)
+            .slice(0, 6)
+            .join("-")
+            .slice(0, 60) || "fallback-scenario";
+
+        return {
+            steps: [
+                {
+                    description: `Run simulation for: ${message.slice(0, 80)}`,
+                    tool: "run_simulation",
+                    args: {
+                        scenario_id: scenarioId,
+                        horizon: horizonMatch,
+                        metric: metricMatch,
+                        iterations: 1000,
+                    },
+                    // base_value/variance intentionally omitted — the simulation
+                    // tool will fall back to metric defaults.
+                },
+            ],
+            reasoning: "Fallback: detected simulation/what-if query — routing to run_simulation",
+        };
+    }
+
     if (lowerMessage.includes("qualifying") || lowerMessage.includes("q1") || lowerMessage.includes("q2") || lowerMessage.includes("q3")) {
         if (gp) {
             return {

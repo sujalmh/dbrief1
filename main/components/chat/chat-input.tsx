@@ -38,7 +38,9 @@ export function ChatInput() {
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault()
-            onSend()
+            if (!isLoading) {
+                onSend()
+            }
         }
     }
 
@@ -72,8 +74,9 @@ export function ChatInput() {
                     value={input}
                     onChange={handleInput}
                     onKeyDown={handleKeyDown}
+                    disabled={isLoading}
                     placeholder="Ask about race strategy..."
-                    className="min-h-[50px] w-full resize-none border-none bg-transparent p-1 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-base custom-scrollbar max-h-[200px] placeholder:text-muted-foreground font-medium"
+                    className="min-h-[50px] w-full resize-none border-none bg-transparent p-1 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 text-base custom-scrollbar max-h-[200px] placeholder:text-muted-foreground font-medium disabled:opacity-50"
                     rows={1}
                 />
 

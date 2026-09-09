@@ -219,14 +219,29 @@ def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """Generates embeddings for multiple text chunks in a single API call."""
     if not OPENAI_API_KEY:
         return [[0.0] * EMBEDDING_DIM for _ in texts]
-    
+
     try:
         # OpenAI supports up to 2048 inputs per request for embeddings
         response = client.embeddings.create(
             input=texts,
             model=EMBEDDING_MODEL
         )
-        return [item.embedding for item in response.data]
+        embeddings = [item.embedding for item in response.data]
+
+        # Validate dimension matches our configured EMBEDDING_DIM.
+        # If OpenAI silently changes the model, or if EMBEDDING_MODEL is
+        # out of sync with EMBEDDING_DIM, fail loudly here so we don't
+        # poison the vector index.
+        if embeddings and len(embeddings[0]) != EMBEDDING_DIM:
+            raise ValueError(
+                f"Embedding dimension mismatch: EMBEDDING_DIM={EMBEDDING_DIM} "
+                f"but model '{EMBEDDING_MODEL}' returned {len(embeddings[0])}-dim "
+                f"vectors. Update EMBEDDING_MODEL/EMBEDDING_DIM in both "
+                f"ingestion/retreive.py and main/lib/embedding-config.ts."
+            )
+        return embeddings
+    except (openai.RateLimitError, openai.APITimeoutError) as e:
+        raise e
     except Exception as e:
         logger.error(f"Error generating embeddings batch: {e}")
         # Fallback to individual embeddings if batch fails

@@ -18,33 +18,124 @@
  */
 
 import { NextRequest } from "next/server";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { StructuredTool } from "@langchain/core/tools";
 
-import { getPlannerModel, getResponderModel, chatContentToText, Provider } from "@/lib/llm";
-import { decidePlan, createFallbackPlan, Plan } from "@/lib/planner";
+import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type Provider } from "@/lib/llm";
+import { decidePlan, createFallbackPlan, type Plan } from "@/lib/planner";
 import { executeSteps, aggregateContext } from "@/lib/executor";
+import { UsageAccumulator, getModelId } from "@/lib/llm-usage";
 import { f1Tools } from "@/lib/tools/fastf1";
 import { getSearchTools } from "@/lib/tools/search";
 import { getRegulationTools } from "@/lib/tools/regulation";
 import { getSimulationTools } from "@/lib/tools/simulation";
+import { ResearchManager } from "@/lib/research/manager";
+import { IntentAnalyzer, IntentAnalyzerUnavailableError } from "@/lib/research/agents/intent-analyzer";
+import { classifyLlmError, isNonRecoverable, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
 import { adminAuth } from "@/lib/firebase/admin";
+
+// =============================================================================
+// Simple in-process rate limiter
+// =============================================================================
+//
+// Prevents a single client from spamming the chat endpoint and exhausting
+// the LLM API quota. Tracks per-key (uid when authenticated, else remote IP)
+// request timestamps in a sliding window. Suitable for a single-instance
+// dev/staging deployment; a real production deployment should swap this for
+// a shared store (Redis, Upstash Ratelimit, etc.).
+
+interface RateLimitOptions {
+    windowMs: number;
+    maxRequests: number;
+}
+
+const CHAT_RATE_LIMIT: RateLimitOptions = {
+    windowMs: 60_000, // 1 minute
+    maxRequests: 20,   // 20 requests / minute / key
+};
+
+const rateLimitBuckets = new Map<string, number[]>();
+const RATE_LIMIT_MAX_KEYS = 5000;
+
+function pruneRateLimitBuckets(now: number, windowMs: number): void {
+    // Bound memory: evict keys whose window has fully expired, and if the
+    // map is still huge (many distinct IPs), drop the oldest entries.
+    for (const [key, stamps] of rateLimitBuckets) {
+        if (stamps.length === 0 || stamps[stamps.length - 1] <= now - windowMs) {
+            rateLimitBuckets.delete(key);
+        }
+    }
+    if (rateLimitBuckets.size > RATE_LIMIT_MAX_KEYS) {
+        const overflow = rateLimitBuckets.size - RATE_LIMIT_MAX_KEYS;
+        const keys = rateLimitBuckets.keys();
+        for (let i = 0; i < overflow; i++) {
+            const k = keys.next();
+            if (k.done) break;
+            rateLimitBuckets.delete(k.value);
+        }
+    }
+}
+
+function checkRateLimit(key: string, opts: RateLimitOptions): { allowed: boolean; retryAfterMs: number } {
+    const now = Date.now();
+    if (rateLimitBuckets.size > RATE_LIMIT_MAX_KEYS) {
+        pruneRateLimitBuckets(now, opts.windowMs);
+    }
+    const cutoff = now - opts.windowMs;
+    const bucket = rateLimitBuckets.get(key) || [];
+    // Drop timestamps outside the current window.
+    const recent = bucket.filter((t) => t > cutoff);
+    if (recent.length >= opts.maxRequests) {
+        const oldest = recent[0];
+        return { allowed: false, retryAfterMs: Math.max(0, opts.windowMs - (now - oldest)) };
+    }
+    recent.push(now);
+    rateLimitBuckets.set(key, recent);
+    return { allowed: true, retryAfterMs: 0 };
+}
+
+function getClientKey(request: NextRequest, userId: string | null): string {
+    if (userId) return `u:${userId}`;
+    const forwarded = request.headers.get("x-forwarded-for");
+    const ip = forwarded?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "anon";
+    return `ip:${ip}`;
+}
 
 // =============================================================================
 // Request Validation
 // =============================================================================
 
 const ChatRequestSchema = z.object({
-    message: z.string().min(1, "Message is required"),
+    message: z.string().min(1, "Message is required").max(4000, "Message too long (max 4000 chars)"),
     provider: z.enum(["gemini", "openrouter", "huggingface", "zen", "go"]).default("gemini"),
     model: z.string().default("gemini-2.0-flash"),
+    /**
+     * Optional dedicated planner model. When present, the server
+     * uses this for intent analysis + step decomposition. When
+     * empty, the server falls back to the provider's built-in
+     * cheap planner model (so the feature is fully opt-in).
+     */
+    plannerModel: z.string().optional(),
+    /**
+     * Optional planner provider. Defaults to the main `provider`
+     * so most users only need to pick one provider. The split
+     * exists so future enhancements (e.g. Gemini for planning
+     * + OpenRouter for the answer) can be enabled without a
+     * schema change.
+     */
+    plannerProvider: z.enum(["gemini", "openrouter", "huggingface", "zen", "go"]).optional(),
     apiKey: z.string().optional(),
     deepResearchMode: z.boolean().default(false),
     web_search: z.boolean().default(false),
-    images: z.array(z.string()).default([]),
-    sessionId: z.string().optional(),
+    images: z.array(z.string().max(7_000_000)).max(5).default([]),
+    sessionId: z.string().max(128).optional(),
     isFirstMessage: z.boolean().default(false),
+    history: z.array(z.object({
+        role: z.enum(["user", "assistant", "system"]),
+        content: z.string().max(8000),
+    })).max(50).default([]),
 });
 
 type ChatRequest = z.infer<typeof ChatRequestSchema>;
@@ -61,13 +152,14 @@ const RESPONDER_SYSTEM_PROMPT = `You are an expert Formula 1 AI assistant with d
 - Be conversational but precise
 - Format responses nicely with markdown when appropriate
 
-## Guidelines
-1. Use the provided F1 data context to answer questions accurately
-2. If data is incomplete or missing, say so honestly
-3. For comparisons, highlight the key differences
-4. Use driver abbreviations (VER, HAM, LEC) when referring to drivers
-5. Format lap times properly (e.g., 1:23.456)
-6. Be concise but thorough
+## Anti-Hallucination Rules (CRITICAL)
+1. CRITICAL: You must answer ONLY from the F1 Data Context provided below. Do NOT use your training data or parametric knowledge for any factual claim.
+2. If the F1 Data Context is empty, says "No data was retrieved", or does not contain information relevant to the question, respond: "I don't have data to answer this question. The data retrieval may have failed or this query may not be supported. Please try rephrasing."
+3. Every factual statement (driver name, position, lap time, points) must be traceable to the data context. If you cannot find it in the context, say "Data not available."
+4. Never guess driver codes, GP names, or session results. If the data doesn't contain it, say so.
+5. For comparisons, highlight the key differences using the data provided.
+6. Use driver abbreviations (VER, HAM, LEC) when referring to drivers — but only if those abbreviations appear in the data context.
+7. Format lap times properly (e.g., 1:23.456) — using values from the data context only.
 
 ## Response Format
 - Use markdown formatting for readability
@@ -104,7 +196,43 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        const { message, provider, model, apiKey, deepResearchMode, web_search, sessionId, isFirstMessage } = validationResult.data as ChatRequest;
+        // 2. Rate limit per client key (uid when authenticated, else IP).
+        //    Runs before any expensive work (model init, LLM calls) so spam
+        //    can't burn through quotas.
+        const clientKey = getClientKey(request, userId);
+        const rl = checkRateLimit(clientKey, CHAT_RATE_LIMIT);
+        if (!rl.allowed) {
+            return Response.json(
+                {
+                    error: "Rate limit exceeded. Please slow down.",
+                    retryAfterMs: rl.retryAfterMs,
+                },
+                {
+                    status: 429,
+                    headers: {
+                        "Retry-After": Math.ceil(rl.retryAfterMs / 1000).toString(),
+                    },
+                }
+            );
+        }
+
+        const { message, provider, model, plannerModel: plannerModelId, plannerProvider, apiKey, deepResearchMode, web_search, sessionId, isFirstMessage, history } = validationResult.data as ChatRequest;
+
+        // Resolve the planner provider once, up front. The user may
+        // pick a different provider for the planner (e.g. Gemini for
+        // cheap planning, OpenRouter for the final answer). For now
+        // we keep the planner on the same provider as the responder
+        // unless explicitly overridden; future enhancements can
+        // surface the split in the UI without another schema bump.
+        const effectivePlannerProvider = (plannerProvider ?? provider) as Provider;
+
+        // Gateway session id for OpenCode Zen/Go (`x-opencode-session`
+        // header: routing + prompt caching). The client sends its chat
+        // sessionId when one exists, but logged-out / first-message
+        // requests have none — and Go REJECTS requests without the header
+        // (400). Fall back to a per-request id so gateway calls never 400;
+        // prompt caching just degrades to no caching for those requests.
+        const gatewaySessionId = sessionId ?? randomUUID();
 
         // If sessionId is provided, and we have userId, verify ownership (optional but recommended)
         // SKIPPED: Admin SDK credentials missing in local dev. Client-side rules are verified by Firebase.
@@ -140,9 +268,22 @@ export async function POST(request: NextRequest) {
                 try {
                     // 1. Initialize the cheap planner model. The responder is
                     // created lazily later — conversational messages never need it.
+                    //
+                    // The planner and responder are configured independently:
+                    // the user can pick a cheap fast model for intent analysis
+                    // + step decomposition (plannerModel/plannerProvider schema
+                    // fields) and a more capable model for the final answer.
+                    // When `plannerModel` is empty we fall back to the
+                    // provider's built-in cheap planner model inside
+                    // getPlannerModel, so the feature is fully opt-in.
                     let plannerModel;
                     try {
-                        plannerModel = await getPlannerModel(provider as Provider, apiKey, sessionId);
+                        plannerModel = await getPlannerModel(
+                            effectivePlannerProvider,
+                            apiKey,
+                            plannerModelId || undefined,
+                            gatewaySessionId
+                        );
                     } catch (error) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
@@ -151,16 +292,241 @@ export async function POST(request: NextRequest) {
                         return;
                     }
 
-                    // 2. Decide + plan in a SINGLE model call.
-                    // needs_plan=false carries a direct reply (greetings, thanks,
-                    // capability questions) — streamed back with no tool calls
-                    // and no second LLM call. needs_plan=true carries steps.
-                    // In Deep Research Mode, force web search to be enabled.
-                    const effectiveWebSearch = deepResearchMode ? true : web_search;
+                    // Track usage across every LLM call we make in this
+                    // request (created once the responder model exists —
+                    // see below). Per the OpenRouter docs, usage is reported
+                    // automatically on the last chunk of every stream, so we
+                    // sum it up and emit a single `usage` SSE event at the
+                    // end. We capture BOTH the planner and the responder
+                    // model ids so the footer can show "planner → answer"
+                    // when the user picked different models for each role.
+                    let usage: UsageAccumulator | null = null;
 
+                    /**
+                     * Emit the `usage` SSE event with the aggregated
+                     * totals. No-op until the accumulator is created
+                     * (conversational fast path never creates one).
+                     */
+                    const emitUsage = () => {
+                        if (!usage) return;
+                        const u = usage.finalize()
+                        sendEvent("usage", {
+                            provider: u.provider,
+                            model: u.model,
+                            plannerModel: u.plannerModel ?? null,
+                            promptTokens: u.promptTokens,
+                            completionTokens: u.completionTokens,
+                            reasoningTokens: u.reasoningTokens,
+                            cachedTokens: u.cachedTokens,
+                            totalTokens: u.totalTokens,
+                            cost: u.cost,
+                            upstreamCost: u.upstreamCost,
+                        })
+                    }
+
+                    // =================================================================
+                    // Deep Research Mode: delegate to the four-agent ResearchManager.
+                    // The manager yields ResearchEvents that we forward as SSE events
+                    // so the frontend's existing handler (research_start, plan_iteration,
+                    // task_update, evidence, reflection, confidence, chart_specs, token,
+                    // visualization, done) lights up the full deep research UI.
+                    // =================================================================
+                    if (deepResearchMode) {
+                        // Deep mode always needs the responder (the manager's
+                        // Synthesizer generates the final answer with it).
+                        let responderModel;
+                        try {
+                            responderModel = await getResponderModel(provider as Provider, model, true, apiKey, gatewaySessionId);
+                        } catch (error) {
+                            const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
+                            console.error("[API] Model initialization error:", errorMessage);
+                            sendEvent("error", { message: errorMessage });
+                            safeClose();
+                            return;
+                        }
+                        usage = new UsageAccumulator(
+                            provider,
+                            getModelId(responderModel),
+                            getModelId(plannerModel)
+                        );
+                        try {
+                            const researchManager = new ResearchManager(plannerModel, responderModel, {
+                                deepResearch: true,
+                                // Always allow web search in deep mode; the
+                                // planner and reasoner decide whether to use it.
+                                webSearch: true,
+                                maxTasks: 50,
+                                maxIterations: 20,
+                            },
+                            // Pass the shared UsageAccumulator so the
+                            // Synthesizer can record its raw LLM chunks.
+                            usage,
+                            );
+
+                            for await (const ev of researchManager.run(message, history)) {
+                                if (controllerClosed) break;
+
+                                switch (ev.type) {
+                                    case "research_start":
+                                        sendEvent("research_start", {
+                                            researchType: ev.researchType,
+                                            objective: ev.objective,
+                                            strategy: ev.strategy,
+                                        });
+                                        break;
+                                    case "intent_analysis":
+                                        sendEvent("intent_analysis", {
+                                            intentAnalysis: ev.intentAnalysis,
+                                        });
+                                        break;
+                                    case "plan_iteration":
+                                        sendEvent("plan_iteration", {
+                                            iteration: ev.iteration,
+                                            tasks: ev.tasks,
+                                            reasoning: ev.reasoning,
+                                        });
+                                        break;
+                                    case "task_update":
+                                        sendEvent("task_update", {
+                                            taskId: ev.taskId,
+                                            status: ev.status,
+                                            data: ev.data,
+                                            evidenceId: ev.evidenceId,
+                                        });
+                                        break;
+                                    case "evidence":
+                                        sendEvent("evidence", { evidence: ev.evidence });
+                                        break;
+                                    case "reflection":
+                                        sendEvent("reflection", {
+                                            reflection: ev.reflection,
+                                            iteration: ev.iteration,
+                                        });
+                                        break;
+                                    case "confidence":
+                                        sendEvent("confidence", ev.confidence);
+                                        break;
+                                    case "chart_specs":
+                                        sendEvent("chart_specs", { specs: ev.specs });
+                                        break;
+                                    case "visualization":
+                                        sendEvent("visualization", { data: ev.data });
+                                        break;
+                                    case "verification":
+                                        sendEvent("verification", { result: ev.result });
+                                        break;
+                                    case "token":
+                                        sendEvent("token", { content: ev.content });
+                                        break;
+                                    case "degraded":
+                                        sendEvent("degraded", {
+                                            stage: ev.stage,
+                                            kind: ev.kind,
+                                            message: ev.message,
+                                        });
+                                        break;
+                                    case "done":
+                                        sendEvent("done", { result: ev.result });
+                                        break;
+                                    case "error":
+                                        sendEvent("error", { message: ev.message });
+                                        break;
+                                }
+                            }
+
+                            // Emit aggregated usage accounting for deep
+                            // research mode. For OpenRouter this
+                            // includes the cost of the Synthesizer
+                            // stream. Other LLM calls in the manager
+                            // (Planner, Reasoner, Critic, etc.) use
+                            // .invoke() with structured output, which
+                            // doesn't reliably expose usage — capturing
+                            // them would require deeper plumbing than
+                            // is in scope here.
+                            emitUsage()
+
+                            safeClose();
+                            return;
+                        } catch (error) {
+                            console.error("[ResearchManager] Error:", error);
+                            const cls = classifyLlmError(error, "ResearchManager.run");
+                            if (isNonRecoverable(cls)) {
+                                sendEvent("error", {
+                                    message: cls.userMessage,
+                                    stage: "research_manager",
+                                    kind: cls.kind,
+                                });
+                            } else {
+                                const errorMessage = error instanceof Error ? error.message : "Deep research failed";
+                                sendEvent("error", { message: errorMessage, stage: "research_manager" });
+                            }
+                            safeClose();
+                            return;
+                        }
+                    }
+
+                    // 2. Decide + plan in a SINGLE model call (preceded by the
+                    // IntentAnalyzer pass above, which gives the planner
+                    // structured entity/data-need guidance).
                     let plan: Plan;
                     let directReply: string | undefined;
+                    let intentUnavailableError: IntentAnalyzerUnavailableError | null = null;
                     try {
+                        // --- Intent Analysis (normal mode) ---
+                        // Run the IntentAnalyzer before planning to give the
+                        // planner structured entity/data-need guidance.
+                        //
+                        // If the IntentAnalyzer throws an unavailable error
+                        // (rate limit / auth / network) we still try the
+                        // planner because it has its own structured call, but
+                        // we'll surface the error to the user at the end of
+                        // the stream so they know the response may be
+                        // degraded (heuristic routing, no structured entity
+                        // context, etc.).
+                        try {
+                            const intentAnalyzer = new IntentAnalyzer(plannerModel);
+                            const intentAnalysis = await intentAnalyzer.analyze(message, history);
+                            sendEvent("intent_analysis", { intentAnalysis });
+                            // NOTE: We deliberately don't try to capture
+                            // usage from the IntentAnalyzer. It calls
+                            // `.withStructuredOutput().invoke()` which
+                            // uses tool calls under the hood, and LangChain
+                            // does not reliably preserve OpenRouter's
+                            // `usage` block on the resulting AIMessage.
+                            // The intent pass is small (typically 1-2k
+                            // tokens on free models) and the responder
+                            // stream is the dominant cost driver, so this
+                            // omission is acceptable.
+                        } catch (intentError) {
+                            if (intentError instanceof IntentAnalyzerUnavailableError) {
+                                console.warn(
+                                    "[API] Intent analysis unavailable:",
+                                    intentError.kind,
+                                    intentError.cause instanceof Error ? intentError.cause.message : intentError.cause
+                                );
+                                intentUnavailableError = intentError;
+                                // Inform the frontend that the structured
+                                // intent pass was skipped so it can show a
+                                // degraded-mode indicator on the message.
+                                sendEvent("intent_analysis_unavailable", {
+                                    kind: intentError.kind,
+                                    message: intentError.userMessage,
+                                });
+                            } else {
+                                console.warn(
+                                    "[API] Intent analysis failed (recoverable):",
+                                    intentError instanceof Error ? intentError.message : intentError
+                                );
+                            }
+                        }
+
+                        // In Deep Research Mode, force web search to be enabled
+                        const effectiveWebSearch = deepResearchMode ? true : web_search;
+
+                        // needs_plan=false carries a direct reply (greetings,
+                        // thanks, capability questions) — streamed back with no
+                        // tool calls and no second LLM call. needs_plan=true
+                        // carries steps.
                         const decision = await decidePlan(
                             plannerModel,
                             message,
@@ -170,6 +536,26 @@ export async function POST(request: NextRequest) {
                         plan = decision.plan;
                         directReply = decision.needsPlan ? undefined : decision.reply;
                     } catch (error) {
+                        // Distinguish "LLM is unavailable" (rate limit, auth,
+                        // network) from "LLM returned bad JSON". The former
+                        // is terminal — there's no point falling back to a
+                        // heuristic plan if the responder will also fail on
+                        // the same root cause. Surface it instead.
+                        const cls = classifyLlmError(error, "Planner");
+                        if (isNonRecoverable(cls)) {
+                            console.error(
+                                "[Planner] Non-recoverable LLM error:",
+                                cls.kind,
+                                error instanceof Error ? error.message : error
+                            );
+                            sendEvent("error", {
+                                message: cls.userMessage,
+                                stage: "planner",
+                                kind: cls.kind,
+                            });
+                            safeClose();
+                            return;
+                        }
                         console.error("[Planner] Error:", error);
                         plan = createFallbackPlan(message);
                     }
@@ -186,7 +572,7 @@ export async function POST(request: NextRequest) {
                         if (isFirstMessage && sessionId) {
                             try {
                                 const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
-                                const metadata = await generateSessionMetadata(message, provider, model, apiKey, sessionId);
+                                const metadata = await generateSessionMetadata(message, provider, model, apiKey, gatewaySessionId);
                                 sendEvent("metadata", metadata);
                             } catch (error) {
                                 console.error("Error generating session metadata:", error);
@@ -201,7 +587,8 @@ export async function POST(request: NextRequest) {
                     let tools: Record<string, StructuredTool>;
 
                     if (deepResearchMode) {
-                        // Deep Research Mode: All agents enabled
+                        // Deep Research Mode: All agents enabled (regulation
+                        // search re-enabled — the FIA vector store is back).
                         tools = {
                             ...f1Tools,
                             ...getRegulationTools(),
@@ -209,17 +596,24 @@ export async function POST(request: NextRequest) {
                             ...getSearchTools(), // Always include in deep mode
                         };
                     } else {
-                        // Normal Mode: Limited agents only (Data API + Retrieval)
+                        // Normal Mode: Data API + Retrieval + Simulation.
+                        // run_simulation is included (not gated on deep mode)
+                        // because the planner advertises what-if queries for
+                        // every request — and it is a local deterministic
+                        // tool with no backend cost. Web search stays
+                        // deep-mode-only (or explicit opt-in) to avoid
+                        // surprise external calls.
                         tools = {
                             ...f1Tools,
                             ...getRegulationTools(),
+                            ...getSimulationTools(),
                         };
                     }
 
                     // Responder is only needed for tool-backed questions.
                     let responderModel;
                     try {
-                        responderModel = await getResponderModel(provider as Provider, model, deepResearchMode, apiKey, sessionId);
+                        responderModel = await getResponderModel(provider as Provider, model, deepResearchMode, apiKey, gatewaySessionId);
                     } catch (error) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
@@ -227,6 +621,12 @@ export async function POST(request: NextRequest) {
                         safeClose();
                         return;
                     }
+
+                    usage = new UsageAccumulator(
+                        provider,
+                        getModelId(responderModel),
+                        getModelId(plannerModel)
+                    );
 
                     const executionContext = await executeSteps(
                         plan.steps,
@@ -255,17 +655,33 @@ export async function POST(request: NextRequest) {
                             if (result.tool === "retrieve_regulations" && result.success && result.data) {
                                 try {
                                     // Parse data if it's a string (executor might stringify it)
-                                    const data = typeof result.data === 'string' ? JSON.parse(result.data) : result.data;
+                                    let data: unknown = result.data;
+                                    if (typeof result.data === 'string') {
+                                        try {
+                                            data = JSON.parse(result.data) as unknown;
+                                        } catch {
+                                            data = null;
+                                        }
+                                    }
 
-                                    if (data.retrieved_documents && Array.isArray(data.retrieved_documents)) {
-                                        data.retrieved_documents.forEach((doc: { source?: unknown; doc_type?: unknown }) => {
-                                            if (typeof doc.source === "string" && doc.source) {
+                                    // New Qdrant schema carries `doc_type` ("regulation" |
+                                    // "decision"); fall back to legacy `type`, then default.
+                                    if (
+                                        typeof data === "object" && data !== null &&
+                                        "retrieved_documents" in data &&
+                                        Array.isArray((data as { retrieved_documents: unknown }).retrieved_documents)
+                                    ) {
+                                        for (const doc of (data as { retrieved_documents: Array<{ source?: unknown; doc_type?: unknown; type?: unknown }> }).retrieved_documents) {
+                                            if (typeof doc === "object" && doc !== null && typeof doc.source === "string" && doc.source) {
+                                                const kind = typeof doc.doc_type === "string" ? doc.doc_type
+                                                    : typeof doc.type === "string" ? doc.type
+                                                        : "regulation";
                                                 citations.push({
                                                     source: doc.source,
-                                                    type: typeof doc.doc_type === "string" ? doc.doc_type : "regulation"
+                                                    type: kind
                                                 });
                                             }
-                                        });
+                                        }
                                     }
                                 } catch (e) {
                                     console.error("Error parsing citations:", e);
@@ -282,6 +698,25 @@ export async function POST(request: NextRequest) {
                     const contextString = aggregateContext(executionContext);
                     const currentDate = new Date().toISOString().split('T')[0];
 
+                    // --- Refuse-on-empty guardrail ---
+                    // If all steps failed or the context is empty, stream a
+                    // refusal message directly instead of calling the responder
+                    // LLM (which would hallucinate from training data).
+                    const allFailed = executionContext.failureCount > 0 && executionContext.successCount === 0;
+                    const contextEmpty = !contextString || contextString.trim() === "" || contextString.includes("No data was retrieved");
+                    if (allFailed || contextEmpty) {
+                        const refusalMsg = "I was unable to retrieve any F1 data for your query. This may be due to an invalid Grand Prix name, session type, or year. Please verify the details and try again.\n\n**What went wrong:**\n" +
+                            executionContext.results
+                                .filter((r) => !r.success)
+                                .map((r) => `- Step ${r.step} (${r.tool}): ${r.error || "unknown error"}`)
+                                .join("\n");
+                        sendEvent("token", { content: refusalMsg });
+                        sendEvent("done", {});
+                        safeClose();
+                        return;
+                    }
+
+                    // Build the user message context (question + current date + retrieved F1 data).
                     const userMessageContext = `## User Question
 ${message}
 
@@ -293,20 +728,138 @@ ${contextString}
 
 Please answer the user's question based on the F1 data provided above.`;
 
+                    // Build messages with conversation history for follow-up context
+                    const historyMessages = (history || []).map((m) => {
+                        if (m.role === "assistant") return new HumanMessage(`Assistant: ${m.content}`);
+                        return new HumanMessage(`User: ${m.content}`);
+                    });
+
                     const messages = [
                         new SystemMessage(RESPONDER_SYSTEM_PROMPT),
+                        ...historyMessages,
                         new HumanMessage(userMessageContext),
                     ];
 
                     // Stream Response
-                    const response = await responderModel.stream(messages);
+                    let assistantContent = "";
+                    let responderError: ClassifiedLlmError | null = null;
+                    // `usage` was created right after the responder model
+                    // above; capture it locally so the loop below sees a
+                    // non-null accumulator.
+                    const activeUsage = usage;
+                    try {
+                        // Hang protection (see lib/llm.ts): a stalled stream
+                        // aborts instead of spinning the UI forever.
+                        const response = await responderModel.stream(messages, {
+                            signal: AbortSignal.timeout(LLM_TIMEOUT_MS.responder),
+                        });
 
-                    for await (const chunk of response) {
-                        const content = chatContentToText(chunk.content);
-                        if (content) {
-                            sendEvent("token", { content });
+                        // Walk the stream ourselves (rather than using
+                        // trackUsage) so we can both forward tokens to the
+                        // client AND record usage from each chunk. The
+                        // OpenRouter docs guarantee that the final chunk
+                        // carries the full `usage` block, but other
+                        // providers (Anthropic, Gemini via OpenRouter) may
+                        // also attach usage metadata to the last few
+                        // chunks — addChunk() is idempotent so duplicate
+                        // totals are safe (we take the last non-null
+                        // value for cost, and we *add* token counts which
+                        // is a no-op when both are the same final number).
+                        for await (const chunk of response) {
+                            try {
+                                activeUsage?.addChunk(chunk as Parameters<UsageAccumulator["addChunk"]>[0])
+                            } catch {
+                                // best-effort: never let usage tracking
+                                // break the main flow.
+                            }
+                            // chatContentToText handles both string content
+                            // (chat/completions) and content blocks
+                            // (responses-API models, e.g. Go Contributor).
+                            const content = chatContentToText(chunk.content);
+                            if (content) {
+                                assistantContent += content;
+                                sendEvent("token", { content });
+                            }
+                        }
+                    } catch (streamError) {
+                        // The responder model failed mid-stream. Classify the
+                        // error: if it's non-recoverable (rate limit, auth,
+                        // network, etc.) surface a clear error event so the
+                        // frontend stops the spinner and the user sees what
+                        // happened, rather than staring at a half-rendered
+                        // bubble forever.
+                        const cls = classifyLlmError(streamError, "Responder.stream");
+                        if (isNonRecoverable(cls)) {
+                            console.error(
+                                "[Responder] Non-recoverable LLM error during stream:",
+                                cls.kind,
+                                streamError instanceof Error ? streamError.message : streamError
+                            );
+                            responderError = cls;
+                            // If we got *some* tokens before the failure,
+                            // keep them — a partial answer is still useful.
+                            // But always emit the error event so the UI can
+                            // present the failure clearly.
+                            sendEvent("error", {
+                                message: cls.userMessage,
+                                stage: "responder",
+                                kind: cls.kind,
+                                partial: assistantContent.length > 0,
+                            });
+                        } else {
+                            // Recoverable (parse) error mid-stream: just log
+                            // and end normally with whatever we streamed.
+                            console.warn(
+                                "[Responder] Recoverable error mid-stream:",
+                                streamError instanceof Error ? streamError.message : streamError
+                            );
                         }
                     }
+
+                    // --- Degraded-mode note ---
+                    // If the IntentAnalyzer was unavailable (rate limit /
+                    // auth), the planner still produced a plan, the executor
+                    // ran, and the responder may have answered — but the
+                    // answer was produced without structured entity context.
+                    // Append a brief, friendly note to the answer so the
+                    // user knows the response is best-effort, then emit a
+                    // dedicated SSE event the UI can use to render a badge.
+                    if (intentUnavailableError) {
+                        const note = `\n\n_Note: ${intentUnavailableError.userMessage} Some details may be off because the request was routed with limited information._`;
+                        assistantContent += note;
+                        sendEvent("token", { content: note });
+                        sendEvent("degraded", {
+                            stage: "intent_analysis",
+                            kind: intentUnavailableError.kind,
+                            message: intentUnavailableError.userMessage,
+                        });
+                    }
+
+                    // If the responder itself failed non-recoverably and we
+                    // have *no* content, end the stream now so the frontend
+                    // renders the error message inline.
+                    if (responderError && assistantContent.trim() === "") {
+                        // Still emit a usage event with whatever we
+                        // managed to capture — the user may want to know
+                        // they were charged for the prompt even if no
+                        // completion tokens were produced. If the
+                        // accumulator never saw any usage data, skip
+                        // the event entirely (the footer just won't
+                        // show for this turn).
+                        if (usage.hasData()) {
+                            emitUsage()
+                        }
+                        sendEvent("done", {});
+                        safeClose();
+                        return;
+                    }
+
+                    // Emit aggregated usage accounting (token counts +
+                    // cost). For OpenRouter the cost is real; for other
+                    // providers `cost` is null and the footer just
+                    // shows tokens. The frontend stores this on the
+                    // message and renders a small footer in the bubble.
+                    emitUsage()
 
                     sendEvent("done", {});
 
@@ -314,7 +867,7 @@ Please answer the user's question based on the F1 data provided above.`;
                     if (isFirstMessage && sessionId) {
                         try {
                             const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
-                            const metadata = await generateSessionMetadata(message, provider, model, apiKey, sessionId);
+                            const metadata = await generateSessionMetadata(message, provider, model, apiKey, gatewaySessionId);
 
                             // Emit metadata update event to client
                             // The client will handle persisting this to Firestore
@@ -328,8 +881,17 @@ Please answer the user's question based on the F1 data provided above.`;
 
                 } catch (error) {
                     console.error("[Stream Error]", error);
-                    const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred";
-                    sendEvent("error", { message: errorMessage });
+                    const cls = classifyLlmError(error, "OuterStream");
+                    if (isNonRecoverable(cls)) {
+                        sendEvent("error", {
+                            message: cls.userMessage,
+                            stage: "stream",
+                            kind: cls.kind,
+                        });
+                    } else {
+                        const errorMessage = error instanceof Error ? error.message : "An unexpected error occurred";
+                        sendEvent("error", { message: errorMessage, stage: "stream" });
+                    }
                     safeClose();
                 }
             }

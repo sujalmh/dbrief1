@@ -1,5 +1,89 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import { get, set, del } from 'idb-keyval'
+
+const idbStorage = {
+    getItem: async (name: string): Promise<string | null> => {
+        return (await get(name)) || null
+    },
+    setItem: async (name: string, value: string): Promise<void> => {
+        await set(name, value)
+    },
+    removeItem: async (name: string): Promise<void> => {
+        await del(name)
+    },
+}
+
+export interface ResearchEvidence {
+    id: string
+    type: string
+    source: { tool: string; taskId: string; args: Record<string, unknown> }
+    race?: string
+    season?: number
+    driver?: string
+    summary: string
+    confidence: number
+}
+
+export interface ResearchReflection {
+    useful: boolean
+    answeredPart: string
+    stillMissing: string[]
+    nextAction: 'call_tool' | 'stop'
+    nextStrategy?: string
+    reasoning: string
+    iteration: number
+}
+
+export interface ResearchIteration {
+    iteration: number
+    tasks: {
+        id: string
+        description: string
+        tool: string
+        status: 'pending' | 'running' | 'success' | 'failed' | 'skipped'
+        evidenceId?: string
+    }[]
+    reasoning?: string
+}
+
+export interface ConfidenceScore {
+    overall: number
+    factors: {
+        sourceCount: number
+        completeness: number
+        conflicts: number
+        missingData: string[]
+        dataQuality: number
+    }
+}
+
+export interface ChartSpec {
+    id: string
+    type:
+    | 'line'
+    | 'bar'
+    | 'scatter'
+    | 'heatmap'
+    | 'histogram'
+    | 'horizontal_bar'
+    | 'area'
+    | 'stacked_bar'
+    | 'dumbbell'
+    | 'box_plot'
+    | 'telemetry_multi'
+    | 'kpi'
+    title: string
+    subtitle?: string
+    dataSource: string
+    xField: string
+    yField: string
+    groupField?: string
+    purpose?: string
+    question?: string
+    insight?: string
+    config: Record<string, unknown>
+}
 
 export interface Message {
     id: string
@@ -19,39 +103,93 @@ export interface Message {
         source: string
         type: string
     }[]
-    visualizationData?: VisualizationResultItem[]
-}
-
-/** A single tool result forwarded to the visualization layer. */
-export interface VisualizationResultItem {
-    tool: string
-    args?: Record<string, unknown>
-    success: boolean
-    data?: unknown
-    error?: string | null
-}
-
-/** A persisted chat session (mirrors the Firestore document). */
-export interface StoredSession {
-    id: string
-    userId?: string
-    title?: string
-    type?: string
-    createdAt?: unknown
-    lastMessageAt?: unknown
-    context?: Record<string, unknown>
+    visualizationData?: unknown
+    /**
+     * Non-fatal warning(s) emitted by the backend indicating that the
+     * response was produced in a degraded mode (e.g. intent analysis
+     * unavailable due to rate limit). Displayed as a small badge in the
+     * message bubble so the user knows the answer may be best-effort.
+     */
+    degradedWarnings?: {
+        stage: string
+        kind: string
+        message: string
+    }[]
+    /**
+     * Per-message usage accounting (OpenRouter returns this natively per
+     * the docs: prompt/completion tokens + cost in credits). When
+     * `provider === 'openrouter'`, `cost` is real. For Gemini / HuggingFace
+     * `cost` is null and only the token counts are populated.
+     *
+     * `model` is captured here (not just from settings) because the user
+     * can change models mid-conversation — we want to display the model
+     * that actually produced this response, not the current selection.
+     */
+    usage?: {
+        provider: string
+        model: string
+        /**
+         * Model id used by the planner (intent + step
+         * decomposition). When planner and responder use
+         * different models, the footer surfaces both so the
+         * user knows which model handled which stage. The
+         * aggregated token / cost fields still cover the
+         * whole request — we don't try to split them per
+         * stage because OpenRouter's `usage` block doesn't
+         * make that easy to do accurately.
+         */
+        plannerModel?: string
+        promptTokens: number
+        completionTokens: number
+        reasoningTokens?: number
+        cachedTokens?: number
+        totalTokens: number
+        /** Cost in USD (credits). Null when the provider doesn't report it. */
+        cost: number | null
+        /** Upstream inference cost from OpenRouter (raw provider-side cost). */
+        upstreamCost?: number | null
+    }
+    // Deep research mode fields
+    researchType?: string
+    iterations?: ResearchIteration[]
+    evidence?: ResearchEvidence[]
+    confidence?: ConfidenceScore
+    reflections?: ResearchReflection[]
+    chartSpecs?: ChartSpec[]
 }
 
 interface Settings {
     apiKey: string
     provider: string
     model: string
+    /**
+     * Dedicated model used by the query planner (intent analysis,
+     * step decomposition, structured-output tool calls). Kept
+     * separate from `model` (the responder) so the user can pick
+     * a cheap fast model for planning and a more capable model
+     * for the final answer, mirroring the split used by coding
+     * assistants like Cursor / Continue / Aider.
+     *
+     * When empty, the server falls back to the provider's
+     * built-in cheap planner model so the feature is fully
+     * opt-in.
+     */
+    plannerModel: string
     temperature: number
     maxTokens: number
     deepResearchMode: boolean
     webSearchEnabled: boolean
     visualizeEnabled: boolean
     developerMode: boolean
+    /**
+     * User-curated list of additional model IDs (typically from
+     * OpenRouter) that should appear in the model picker alongside
+     * the built-in presets. Each entry is just the model id string
+     * (e.g. "anthropic/claude-3.5-sonnet"). The picker can also
+     * accept a free-text "Add custom model" entry — in that case
+     * the id is appended to this list.
+     */
+    customModels: string[]
 }
 
 export interface GraphHistoryItem {
@@ -62,12 +200,40 @@ export interface GraphHistoryItem {
     timestamp: number
 }
 
+/**
+ * A single tool result forwarded to the visualization layer.
+ * (Mirrors the `visualization` SSE payload items sent by /api/chat.)
+ */
+export interface VisualizationResultItem {
+    tool: string
+    args?: Record<string, unknown>
+    success: boolean
+    data?: unknown
+    error?: string | null
+}
+
+/**
+ * Session row kept in the client store. Mirrors the Firestore ChatSession
+ * shape but stays decoupled so the store doesn't import firebase types.
+ * All fields optional except `id` so Firestore snapshots (which always
+ * carry an id plus a subset of fields) assign cleanly in both directions.
+ */
+export interface StoredSession {
+    id: string
+    title?: string
+    type?: string
+    userId?: string
+    createdAt?: unknown
+    lastMessageAt?: unknown
+    context?: Record<string, unknown>
+}
+
 interface ChatStore {
     messages: Message[]
     isLoading: boolean
     input: string
     settings: Settings
-    visualizationData: VisualizationResultItem[] | null
+    visualizationData: unknown
     graphHistory: GraphHistoryItem[]
 
     activeMessageId: string | null
@@ -97,30 +263,72 @@ interface ChatStore {
     updateMessage: (id: string, content: string, isError?: boolean) => void
     updateMessageSteps: (id: string, steps: Message['steps']) => void
     updateMessageReasoning: (id: string, reasoning: string) => void
-    updateMessageVisualization: (id: string, data: VisualizationResultItem[] | undefined) => void
+    updateMessageVisualization: (id: string, data: unknown) => void
     updateMessageCitations: (id: string, citations: { source: string; type: string }[]) => void
-    setVisualizationData: (data: VisualizationResultItem[] | null) => void
+    /**
+     * Append a non-fatal degraded-mode warning to a message. The message
+     * is updated incrementally — existing warnings are preserved. Used to
+     * surface situations like "intent analysis was skipped due to rate
+     * limit" so the user knows the answer may be best-effort.
+     */
+    addMessageDegradedWarning: (id: string, warning: { stage: string; kind: string; message: string }) => void
+    /**
+     * Attach usage accounting to a message. Replaces any prior usage
+     * payload — only the final aggregated values should be sent.
+     * Used by the chat handler when it receives the backend's `usage`
+     * SSE event.
+     */
+    setMessageUsage: (
+        id: string,
+        usage: NonNullable<Message['usage']>
+    ) => void
+    setVisualizationData: (data: unknown) => void
     addGraphToHistory: (name: string, type: GraphHistoryItem['type'], data: unknown) => void
     removeGraphFromHistory: (id: string) => void
     clearMessages: () => void
     deleteMessage: (id: string) => void
 
+    // Deep research mode actions
+    updateMessageResearchType: (id: string, researchType: string) => void
+    addResearchIteration: (id: string, iteration: ResearchIteration) => void
+    updateResearchTaskStatus: (id: string, iteration: number, taskId: string, status: string, evidenceId?: string) => void
+    addResearchEvidence: (id: string, evidence: ResearchEvidence) => void
+    addResearchReflection: (id: string, reflection: ResearchReflection) => void
+    setResearchConfidence: (id: string, confidence: ConfidenceScore) => void
+    setResearchChartSpecs: (id: string, specs: ChartSpec[]) => void
+
     // Global Error State
     error: string | null
     setError: (error: string | null) => void
+
+    // Monotonic message counter — independent of the system clock so
+    // message ordering and IDs stay stable even if Date.now() jumps
+    // backwards (NTP sync, timezone change, VM clock drift).
+    messageCounter: number
+    nextMessageId: () => string
 }
 
 const defaultSettings: Settings = {
     apiKey: '',
     provider: 'openrouter',
     model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+    plannerModel: '',
     temperature: 0.7,
-    maxTokens: 1000,
+    // Note: the API route (getResponderModel) overrides this to 8192.
+    // This value is kept for the settings UI but is not used by the API.
+    maxTokens: 8192,
     deepResearchMode: false,
     webSearchEnabled: false,
     visualizeEnabled: false,
     developerMode: false,
+    customModels: [],
 }
+
+// Monotonic counter for graphHistory IDs. Lives outside the store
+// factory so it survives both `clearMessages` and zustand's persist
+// rehydration (Date.now() can collide when two graphs are added in
+// the same millisecond).
+let graphCounter = 0;
 
 export const useChatStore = create<ChatStore>()(
     persist(
@@ -138,6 +346,9 @@ export const useChatStore = create<ChatStore>()(
             error: null,
             currentSessionId: null,
             sessions: [],
+            // Monotonic counter starts above Date.now() so any timestamps we
+            // serialize later (Firestore, debugging) stay comparable.
+            messageCounter: Date.now(),
 
             setSettingsOpen: (isOpen) => set({ isSettingsOpen: isOpen }),
             updateVisualizationWidth: (width) => set({ visualizationWidth: width }),
@@ -149,6 +360,21 @@ export const useChatStore = create<ChatStore>()(
             setCurrentSessionId: (id) => set({ currentSessionId: id }),
             setSessions: (sessions) => set({ sessions }),
             setInput: (input) => set({ input }),
+            // nextMessageId bumps the monotonic counter; we never use
+            // Date.now() here so two messages created in the same tick
+            // still get distinct, comparable IDs.
+            nextMessageId: () => {
+                let nextId: string | undefined
+                set((state) => {
+                    const n = state.messageCounter + 1
+                    nextId = `m_${n}`
+                    return { messageCounter: n }
+                })
+                // set() is synchronous in zustand, so nextId is always
+                // assigned by the time we read it. Fall back to a fresh
+                // timestamp in the (impossible) edge case it isn't.
+                return nextId ?? `m_${Date.now()}`
+            },
             addMessage: (message) => set((state) => ({ messages: [...state.messages, message] })),
             setMessages: (messages) => set({ messages }),
             setLoading: (isLoading) => set({ isLoading }),
@@ -185,10 +411,35 @@ export const useChatStore = create<ChatStore>()(
                         msg.id === id ? { ...msg, citations } : msg
                     )
                 })),
+            addMessageDegradedWarning: (id, warning) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id
+                            ? {
+                                  ...msg,
+                                  degradedWarnings: [
+                                      ...(msg.degradedWarnings ?? []),
+                                      warning,
+                                  ],
+                              }
+                            : msg
+                    )
+                })),
+            setMessageUsage: (id, usage) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id
+                            ? { ...msg, usage }
+                            : msg
+                    )
+                })),
             setVisualizationData: (data) => set({ visualizationData: data }),
             addGraphToHistory: (name, type, data) => set((state) => ({
                 graphHistory: [
-                    { id: Date.now().toString(), name, type, data, timestamp: Date.now() },
+                    // Use a monotonically increasing counter instead of
+                    // Date.now() so two graphs added in the same
+                    // millisecond don't collide on the same ID.
+                    { id: `g_${++graphCounter}`, name, type, data, timestamp: Date.now() },
                     ...state.graphHistory
                 ]
             })),
@@ -199,10 +450,110 @@ export const useChatStore = create<ChatStore>()(
             deleteMessage: (id) => set((state) => ({
                 messages: state.messages.filter(msg => msg.id !== id)
             })),
+
+            // Deep research mode actions
+            updateMessageResearchType: (id, researchType) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id ? { ...msg, researchType } : msg
+                    )
+                })),
+            addResearchIteration: (id, iteration) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id
+                            ? { ...msg, iterations: [...(msg.iterations || []), iteration] }
+                            : msg
+                    )
+                })),
+            updateResearchTaskStatus: (id, iterationNum, taskId, status, evidenceId) =>
+                set((state) => ({
+                    messages: state.messages.map(msg => {
+                        if (msg.id !== id || !msg.iterations) return msg
+                        return {
+                            ...msg,
+                            iterations: msg.iterations.map(iter => {
+                                if (iter.iteration !== iterationNum) return iter
+                                return {
+                                    ...iter,
+                                    tasks: iter.tasks.map(task =>
+                                        task.id === taskId ? { ...task, status: status as ResearchIteration['tasks'][number]['status'], evidenceId } : task
+                                    )
+                                }
+                            })
+                        }
+                    })
+                })),
+            addResearchEvidence: (id, evidence) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id
+                            ? { ...msg, evidence: [...(msg.evidence || []), evidence] }
+                            : msg
+                    )
+                })),
+            addResearchReflection: (id, reflection) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id
+                            ? { ...msg, reflections: [...(msg.reflections || []), reflection] }
+                            : msg
+                    )
+                })),
+            setResearchConfidence: (id, confidence) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id ? { ...msg, confidence } : msg
+                    )
+                })),
+            setResearchChartSpecs: (id, specs) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id ? { ...msg, chartSpecs: specs } : msg
+                    )
+                })),
         }),
         {
             name: 'f1-chat-storage',
-            partialize: (state) => ({ settings: state.settings, messages: state.messages }),
+            storage: createJSONStorage(() => idbStorage),
+            // Persist settings, messages (which carry chartSpecs for
+            // deep-research mode), the active visualization payload, the
+            // graph history, and the panel UI state. We deliberately
+            // exclude ephemeral per-message UI state (currentIndex,
+            // localWidth during resize, etc.) and the loading flag.
+            partialize: (state) => ({
+                settings: state.settings,
+                messages: state.messages,
+                visualizationData: state.visualizationData,
+                graphHistory: state.graphHistory,
+                isVisualizationCollapsed: state.isVisualizationCollapsed,
+                visualizationWidth: state.visualizationWidth,
+            }),
+            // Bump the version when the persisted shape changes so old
+            // clients drop stale data instead of crashing on load.
+            version: 4,
+            // v2 -> v3: Settings gained a `customModels: string[]` field.
+            // v3 -> v4: Settings gained a `plannerModel: string` field
+            //   (the dedicated planner model, separate from `model`).
+            // We backfill both on the fly so existing users keep their
+            // messages (with the new optional `usage.plannerModel`
+            // field left as undefined, which the UI handles by hiding
+            // the planner row in the footer).
+            migrate: (persistedState) => {
+                const state = (persistedState ?? {}) as Partial<{
+                    settings: Partial<Settings>
+                    messages: Message[]
+                }>
+                if (state.settings) {
+                    if (!Array.isArray(state.settings.customModels)) {
+                        state.settings = { ...state.settings, customModels: [] }
+                    }
+                    if (typeof (state.settings as Partial<Settings>).plannerModel !== "string") {
+                        state.settings = { ...state.settings, plannerModel: "" }
+                    }
+                }
+                return state as { settings?: Partial<Settings>; messages?: Message[] }
+            },
         }
     )
 )

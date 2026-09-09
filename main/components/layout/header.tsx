@@ -1,6 +1,6 @@
 "use client"
 
-import { Flag, Settings, Sun, Moon, Info } from "lucide-react"
+import { Flag, Settings, Sun, Moon, Info, Download, FileText, FileJson } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { useChatStore } from "@/lib/store"
@@ -10,7 +10,16 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from "@/components/ui/tooltip"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { useMemo } from "react"
+import { exportConversation } from "@/lib/utils/export-conversation"
 
 export function Header() {
     const { setSettingsOpen, activeMessageId, messages, sessions, currentSessionId } = useChatStore()
@@ -27,15 +36,22 @@ export function Header() {
 
     // Derive context from the active message
     const context = useMemo(() => {
-        const results = activeMessage?.visualizationData
+        // visualizationData is untyped at the store boundary (tool-result
+        // array in standard mode, ChartSpec[] in deep-research mode).
+        // Only the tool-result shape carries success/tool for mode detection.
+        const rawData: unknown = activeMessage?.visualizationData
+        const results = Array.isArray(rawData) ? rawData : []
         const currentSession = sessions.find(s => s.id === currentSessionId)
 
         // Use session title if available, otherwise "NEW CHAT"
-        const sessionString = currentSession?.title ? currentSession.title.toUpperCase() : "NEW CHAT"
+        const sessionTitle: string = typeof currentSession?.title === "string" ? currentSession.title : "NEW CHAT"
+        const sessionString = sessionTitle.toUpperCase()
         let mode = "Telemetry" // Default
 
         // Detect mode from the first successful tool result
-        const firstResult = results?.find(r => r.success)
+        const firstResult = results.find((r): r is { success?: unknown; tool?: unknown } =>
+            typeof r === "object" && r !== null && (r as { success?: unknown }).success === true
+        )
         if (firstResult) {
             const toolModes: Record<string, string> = {
                 get_telemetry: "Telemetry",
@@ -51,12 +67,14 @@ export function Header() {
                 get_track_status: "Insights",
                 retrieve_regulations: "Insights",
             }
-            mode = toolModes[firstResult.tool] ?? mode
+            const tool = typeof firstResult.tool === "string" ? firstResult.tool : ""
+            mode = toolModes[tool] ?? mode
         }
 
         // If the session has a type, use that to override the mode
-        if (currentSession?.type) {
-            mode = currentSession.type.charAt(0).toUpperCase() + currentSession.type.slice(1)
+        const sessionType: string | undefined = typeof currentSession?.type === "string" ? currentSession.type : undefined
+        if (sessionType) {
+            mode = sessionType.charAt(0).toUpperCase() + sessionType.slice(1)
         }
 
         return { sessionString, mode }
@@ -103,6 +121,53 @@ export function Header() {
 
                 {/* Right: Controls Cluster */}
                 <div className="flex items-center gap-3">
+
+                    {/* Export Conversation Dropdown */}
+                    <DropdownMenu>
+                        {/* NOTE: A Radix Tooltip wrapping a DropdownMenuTrigger
+                            silently breaks the dropdown click in some browsers
+                            because the two components compete for pointer
+                            events. The button's own `title` and the visible
+                            icon give enough affordance. */}
+                        <DropdownMenuTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="btn-wheel btn-wheel-green h-10 w-10"
+                                disabled={messages.length === 0}
+                                title="Export Conversation"
+                            >
+                                <Download className="h-5 w-5" />
+                                <span className="sr-only">Export Conversation</span>
+                            </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56">
+                            <DropdownMenuLabel>Download as</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                                onClick={() =>
+                                    exportConversation(messages, "markdown", {
+                                        title: sessions.find((s) => s.id === currentSessionId)?.title,
+                                    })
+                                }
+                                className="cursor-pointer"
+                            >
+                                <FileText className="mr-2 h-4 w-4" />
+                                <span>Markdown (.md)</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                                onClick={() =>
+                                    exportConversation(messages, "json", {
+                                        title: sessions.find((s) => s.id === currentSessionId)?.title,
+                                    })
+                                }
+                                className="cursor-pointer"
+                            >
+                                <FileJson className="mr-2 h-4 w-4" />
+                                <span>JSON (.json)</span>
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
 
                     {/* Info Button */}
                     <Tooltip>

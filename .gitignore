@@ -1,8 +1,59 @@
 .DS_Store
+Thumbs.db
 test_*
 cache/
 .pytest_cache/
 temp_pdfs/
 .env
-.vercel
+.env.local
+.env.*.local
 .env*
+.vercel
+
+# Node / Next
+node_modules/
+main/node_modules/
+main/.next/
+main/out/
+main/build/
+main/coverage/
+*.tsbuildinfo
+main/next-env.d.ts
+
+# Logs & debug output
+*.log
+main/*.log
+main/vitest*.log
+main/tsc-*.txt
+main/test-*.txt
+test-out*.txt
+*-out.txt
+
+# Local notes / scratch (never commit)
+API backend.txt
+backend.txt
+frontend.txt
+date.txt
+research.txt
+tools and agents.txt
+parse-test-result.txt
+Project_Review_Checklists.md
+RE_ENABLE_FIA_REGS.md
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+ingestion/__pycache__/
+
+# Misc local tooling
+.kilo/
+main/.e2e-logs/

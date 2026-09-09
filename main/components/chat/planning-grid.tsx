@@ -2,20 +2,141 @@
 
 import { memo, useState } from "react"
 import { cn } from "@/lib/utils"
-import { Check, X, Loader2, ChevronDown, ChevronUp, Brain } from "lucide-react"
+import { Check, X, Loader2, ChevronDown, ChevronUp, Brain, Layers } from "lucide-react"
+import type { ResearchIteration } from "@/lib/store"
 
 interface PlanningGridProps {
-    steps: {
+    steps?: {
         description: string
         tool: string
         status: 'pending' | 'running' | 'success' | 'failed'
         result?: string
     }[]
     reasoning?: string
+    // Deep research mode props
+    iterations?: ResearchIteration[]
+    researchType?: string
 }
 
-function PlanningGridComponent({ steps, reasoning }: PlanningGridProps) {
+function PlanningGridComponent({ steps, reasoning, iterations, researchType }: PlanningGridProps) {
     const [isReasoningExpanded, setIsReasoningExpanded] = useState(false)
+    const [expandedIterations, setExpandedIterations] = useState<Set<number>>(new Set([1]))
+
+    // Deep research mode: render iterations
+    if (iterations && iterations.length > 0) {
+        const totalTasks = iterations.reduce((acc, it) => acc + it.tasks.length, 0)
+        const completedTasks = iterations.reduce(
+            (acc, it) => acc + it.tasks.filter(t => t.status === 'success' || t.status === 'failed' || t.status === 'skipped').length,
+            0
+        )
+
+        return (
+            <div className="relative z-10 w-full mb-3 select-none">
+                {/* Research Type Badge */}
+                {researchType && (
+                    <div className="mb-2 flex items-center gap-2">
+                        <Layers className="h-3 w-3 text-purple-400" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">
+                            {researchType.replace(/_/g, " ")}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                            · {iterations.length} iterations · {completedTasks}/{totalTasks} tasks done
+                        </span>
+                    </div>
+                )}
+
+                {/* Iteration Sections */}
+                <div className="space-y-2">
+                    {iterations.map((iter) => {
+                        const isExpanded = expandedIterations.has(iter.iteration)
+                        const iterComplete = iter.tasks.every(
+                            t => t.status === 'success' || t.status === 'failed' || t.status === 'skipped'
+                        )
+
+                        return (
+                            <div key={iter.iteration} className="rounded-lg border border-border/50 bg-background/50 overflow-hidden">
+                                <button
+                                    onClick={() => {
+                                        const next = new Set(expandedIterations)
+                                        if (next.has(iter.iteration)) next.delete(iter.iteration)
+                                        else next.add(iter.iteration)
+                                        setExpandedIterations(next)
+                                    }}
+                                    className="w-full flex items-center gap-2 p-2 hover:bg-muted/50 transition-colors"
+                                >
+                                    <span className="flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold bg-purple-500/20 text-purple-400">
+                                        {iter.iteration}
+                                    </span>
+                                    <span className="text-xs font-medium">
+                                        Iteration {iter.iteration}
+                                    </span>
+                                    {iterComplete && <Check className="h-3 w-3 text-[var(--f1-green)]" />}
+                                    <span className="text-[10px] text-muted-foreground">
+                                        {iter.tasks.filter(t => t.status === 'success').length}/{iter.tasks.length} done
+                                    </span>
+                                    {isExpanded ? <ChevronUp className="h-3 w-3 text-muted-foreground ml-auto" /> : <ChevronDown className="h-3 w-3 text-muted-foreground ml-auto" />}
+                                </button>
+
+                                {isExpanded && (
+                                    <div className="px-2 pb-2">
+                                        {iter.reasoning && (
+                                            <div className="text-[10px] text-muted-foreground/60 italic mb-2 px-2">
+                                                {iter.reasoning}
+                                            </div>
+                                        )}
+                                        {/* Progress bar */}
+                                        <div className="flex h-1 w-full gap-0.5 mb-2">
+                                            {iter.tasks.map((task) => (
+                                                <div
+                                                    key={task.id}
+                                                    className={cn(
+                                                        "flex-1 rounded-full transition-colors",
+                                                        task.status === 'pending' && "bg-muted",
+                                                        task.status === 'running' && "bg-[var(--f1-yellow)]",
+                                                        task.status === 'success' && "bg-[var(--f1-green)]",
+                                                        task.status === 'failed' && "bg-[var(--f1-red)]",
+                                                        task.status === 'skipped' && "bg-muted/50"
+                                                    )}
+                                                />
+                                            ))}
+                                        </div>
+                                        {/* Task list */}
+                                        <div className="space-y-1">
+                                            {iter.tasks.map((task) => (
+                                                <div key={task.id} className="flex items-center gap-2 text-xs">
+                                                    <div className="shrink-0">
+                                                        {task.status === 'pending' && <span className="text-[10px] text-muted-foreground/50">○</span>}
+                                                        {task.status === 'running' && <Loader2 className="h-3 w-3 animate-spin text-[var(--f1-yellow)]" />}
+                                                        {task.status === 'success' && <Check className="h-3 w-3 text-[var(--f1-green)]" />}
+                                                        {task.status === 'failed' && <X className="h-3 w-3 text-[var(--f1-red)]" />}
+                                                        {task.status === 'skipped' && <span className="text-[10px] text-muted-foreground/50">⊘</span>}
+                                                    </div>
+                                                    <span className={cn(
+                                                        "font-mono",
+                                                        task.status === 'pending' && "text-muted-foreground",
+                                                        task.status === 'success' && "text-foreground/80",
+                                                        task.status === 'failed' && "text-[var(--f1-red)]",
+                                                        task.status === 'skipped' && "text-muted-foreground/50"
+                                                    )}>
+                                                        {task.description}
+                                                    </span>
+                                                    <span className="text-[10px] text-muted-foreground/40 ml-auto">
+                                                        {task.tool}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    })}
+                </div>
+            </div>
+        )
+    }
+
+    // Normal mode: render flat steps (existing behavior)
     if (!steps || steps.length === 0) return null
 
     // Determine overall state for container styling
@@ -58,7 +179,7 @@ function PlanningGridComponent({ steps, reasoning }: PlanningGridProps) {
                 <div className="flex h-1.5 w-full gap-1 overflow-hidden rounded-full bg-muted/20">
                     {steps.map((step, index) => (
                         <div
-                            key={index}
+                            key={step.description || index}
                             className={cn(
                                 "relative flex-1 transition-colors duration-300",
                                 // Background base
@@ -93,7 +214,7 @@ function PlanningGridComponent({ steps, reasoning }: PlanningGridProps) {
                         <div className="space-y-1">
                             {steps.map((step, index) => (
                                 <div
-                                    key={index}
+                                    key={step.description || index}
                                     className={cn(
                                         "flex items-start justify-between rounded px-2 py-2 text-xs font-mono transition-colors",
                                         step.status === 'running' && "bg-muted/50",

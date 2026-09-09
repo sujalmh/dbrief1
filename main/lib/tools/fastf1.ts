@@ -14,6 +14,11 @@ import { tool, StructuredTool } from "@langchain/core/tools";
 
 const F1_API_BASE = process.env.F1_API_URL || "http://localhost:8000";
 const TOOL_TIMEOUT_MS = 60000;
+// Cap on response body size (bytes) accepted from the F1 API.
+// Telemetry responses can be many MB; we refuse anything larger to avoid
+// running the server out of memory. 50MB is enough for any reasonable
+// telemetry request via the /f1/telemetry endpoint.
+const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
 
 // =============================================================================
 // Helper Functions
@@ -34,7 +39,7 @@ async function f1Get(endpoint: string): Promise<unknown> {
         throw new Error(error.error || `F1 API error: ${response.status}`);
     }
 
-    return response.json();
+    return parseResponseBody(response);
 }
 
 /**
@@ -53,16 +58,50 @@ async function f1Post(endpoint: string, body: unknown): Promise<unknown> {
         throw new Error(error.error || `F1 API error: ${response.status}`);
     }
 
-    return response.json();
+    return parseResponseBody(response);
+}
+
+/**
+ * Read a fetch response body, enforcing a size cap to prevent OOM.
+ * If the body exceeds MAX_RESPONSE_BYTES, throws a descriptive error.
+ */
+async function parseResponseBody(response: Response): Promise<unknown> {
+    // Prefer Content-Length when available so we can reject before buffering.
+    const contentLength = response.headers.get("content-length");
+    if (contentLength !== null) {
+        const length = Number(contentLength);
+        if (Number.isFinite(length) && length > MAX_RESPONSE_BYTES) {
+            throw new Error(
+                `F1 API response too large: ${length} bytes exceeds ` +
+                `limit of ${MAX_RESPONSE_BYTES} bytes`
+            );
+        }
+    }
+
+    // Read as ArrayBuffer so we can enforce a hard size cap regardless of
+    // whether the server sent a Content-Length header.
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > MAX_RESPONSE_BYTES) {
+        throw new Error(
+            `F1 API response too large: ${buffer.byteLength} bytes exceeds ` +
+            `limit of ${MAX_RESPONSE_BYTES} bytes`
+        );
+    }
+    return JSON.parse(new TextDecoder().decode(buffer));
 }
 
 // =============================================================================
 // Zod Schemas for Tool Inputs
 // =============================================================================
-
-const YearSchema = z.number().int().min(1950).max(2025).describe("F1 season year (1950-2025)");
-const GpSchema = z.string().describe("Grand Prix name (e.g., 'Monaco', 'Silverstone')");
-const SessionSchema = z.string().describe("Session type: FP1, FP2, FP3, Q, R");
+//
+// The maximum year is computed dynamically (current year + 2) so that the
+// LLM-facing schema description always reflects the current season. The
+// /f1/seasons endpoint on the backend uses the same logic, so they stay
+// in sync.
+const FASTF1_MAX_YEAR = new Date().getFullYear() + 2;
+const YearSchema = z.number().int().min(1950).max(FASTF1_MAX_YEAR).describe(`F1 season year (1950-${FASTF1_MAX_YEAR})`);
+const GpSchema = z.string().describe("Grand Prix name. Use the `canonical` field from `get_gp_names` or the `EventName` from `get_events`. Examples: 'Monaco', 'Monaco Grand Prix', 'British', 'Abu Dhabi'. Do NOT include the year.");
+const SessionSchema = z.enum(["FP1", "FP2", "FP3", "Q", "SQ", "SS", "S", "R"]).describe("Session type code. Must be exactly one of: FP1, FP2, FP3, Q (qualifying), SQ (sprint qualifying), SS (sprint shootout), S (sprint), R (race).");
 const DriverSchema = z.string().describe("Driver code (e.g., 'VER', 'HAM', 'LEC')");
 
 // =============================================================================
@@ -74,11 +113,11 @@ const DriverSchema = z.string().describe("Driver code (e.g., 'VER', 'HAM', 'LEC'
  */
 export const getSeasonsTool = tool(
     async () => {
-        return await f1Get("/f1/seasons");
+        return JSON.stringify(await f1Get("/f1/seasons"));
     },
     {
         name: "get_seasons",
-        description: "Get the list of available F1 seasons (1950-2025)",
+        description: `Get the list of available F1 seasons (1950-${FASTF1_MAX_YEAR})`,
         schema: z.object({}),
     }
 );
@@ -88,7 +127,7 @@ export const getSeasonsTool = tool(
  */
 export const getEventsTool = tool(
     async ({ year }) => {
-        return await f1Get(`/f1/events?year=${year}`);
+        return JSON.stringify(await f1Get(`/f1/events?year=${year}`));
     },
     {
         name: "get_events",
@@ -104,7 +143,7 @@ export const getEventsTool = tool(
  */
 export const getSessionsTool = tool(
     async ({ year, gp }) => {
-        return await f1Get(`/f1/sessions?year=${year}&gp=${encodeURIComponent(gp)}`);
+        return JSON.stringify(await f1Get(`/f1/sessions?year=${year}&gp=${encodeURIComponent(gp)}`));
     },
     {
         name: "get_sessions",
@@ -121,7 +160,7 @@ export const getSessionsTool = tool(
  */
 export const getResultsTool = tool(
     async ({ year, gp, session }) => {
-        return await f1Post("/f1/results", { year, gp, session });
+        return JSON.stringify(await f1Post("/f1/results", { year, gp, session }));
     },
     {
         name: "get_results",
@@ -139,11 +178,11 @@ export const getResultsTool = tool(
  */
 export const getQualifyingTool = tool(
     async ({ year, gp }) => {
-        return await f1Post("/f1/qualifying", { year, gp, session: "Q" });
+        return JSON.stringify(await f1Post("/f1/qualifying", { year, gp, session: "Q" }));
     },
     {
         name: "get_qualifying",
-        description: "Get qualifying results with Q1, Q2, Q3 times for a Grand Prix",
+        description: "Get qualifying results (Q session) with Q1, Q2, Q3 times for a Grand Prix. NOTE: This always fetches the 'Q' session. For sprint races or other sessions, use `get_results` with session='SQ' or 'S'.",
         schema: z.object({
             year: YearSchema,
             gp: GpSchema,
@@ -156,11 +195,11 @@ export const getQualifyingTool = tool(
  */
 export const getRaceTool = tool(
     async ({ year, gp }) => {
-        return await f1Post("/f1/race", { year, gp, session: "R" });
+        return JSON.stringify(await f1Post("/f1/race", { year, gp, session: "R" }));
     },
     {
         name: "get_race",
-        description: "Get race results including positions, times, and status for a Grand Prix",
+        description: "Get race results (R session) including positions, times, and status for a Grand Prix. NOTE: This always fetches the 'R' session. For sprint races, use `get_results` with session='S'.",
         schema: z.object({
             year: YearSchema,
             gp: GpSchema,
@@ -173,14 +212,14 @@ export const getRaceTool = tool(
  */
 export const getLapsTool = tool(
     async ({ year, gp, session, driver, lap_start, lap_end }) => {
-        return await f1Post("/f1/laps", {
+        return JSON.stringify(await f1Post("/f1/laps", {
             year,
             gp,
             session,
             driver: driver || undefined,
             lap_start: lap_start || undefined,
             lap_end: lap_end || undefined,
-        });
+        }));
     },
     {
         name: "get_laps",
@@ -201,12 +240,12 @@ export const getLapsTool = tool(
  */
 export const getFastestLapTool = tool(
     async ({ year, gp, session, driver }) => {
-        return await f1Post("/f1/laps/fastest", {
+        return JSON.stringify(await f1Post("/f1/laps/fastest", {
             year,
             gp,
             session,
             driver: driver || undefined,
-        });
+        }));
     },
     {
         name: "get_fastest_lap",
@@ -225,13 +264,13 @@ export const getFastestLapTool = tool(
  */
 export const getTelemetryTool = tool(
     async ({ year, gp, session, driver, lap }) => {
-        return await f1Post("/f1/telemetry", {
+        return JSON.stringify(await f1Post("/f1/telemetry", {
             year,
             gp,
             session,
             driver,
             lap: lap ? String(lap) : "fastest",
-        });
+        }));
     },
     {
         name: "get_telemetry",
@@ -251,13 +290,13 @@ export const getTelemetryTool = tool(
  */
 export const getTelemetrySummaryTool = tool(
     async ({ year, gp, session, driver, lap }) => {
-        return await f1Post("/f1/telemetry/summary", {
+        return JSON.stringify(await f1Post("/f1/telemetry/summary", {
             year,
             gp,
             session,
             driver,
             lap: lap ? String(lap) : "fastest",
-        });
+        }));
     },
     {
         name: "get_telemetry_summary",
@@ -278,7 +317,7 @@ export const getTelemetrySummaryTool = tool(
  */
 export const getWeatherTool = tool(
     async ({ year, gp, session }) => {
-        return await f1Post("/f1/weather", { year, gp, session });
+        return JSON.stringify(await f1Post("/f1/weather", { year, gp, session }));
     },
     {
         name: "get_weather",
@@ -296,7 +335,7 @@ export const getWeatherTool = tool(
  */
 export const getRaceControlTool = tool(
     async ({ year, gp, session }) => {
-        return await f1Post("/f1/race-control", { year, gp, session });
+        return JSON.stringify(await f1Post("/f1/race-control", { year, gp, session }));
     },
     {
         name: "get_race_control",
@@ -314,12 +353,12 @@ export const getRaceControlTool = tool(
  */
 export const getTyresTool = tool(
     async ({ year, gp, session, driver }) => {
-        return await f1Post("/f1/tyres", {
+        return JSON.stringify(await f1Post("/f1/tyres", {
             year,
             gp,
             session,
             driver: driver || undefined,
-        });
+        }));
     },
     {
         name: "get_tyres",
@@ -339,10 +378,10 @@ export const getTyresTool = tool(
  */
 export const getDriverStandingsTool = tool(
     async ({ year, driver }) => {
-        return await f1Post("/f1/standings/drivers", {
+        return JSON.stringify(await f1Post("/f1/standings/drivers", {
             year,
             driver: driver || undefined,
-        });
+        }));
     },
     {
         name: "get_driver_standings",
@@ -359,11 +398,28 @@ export const getDriverStandingsTool = tool(
 // =============================================================================
 
 /**
+ * Get canonical GP names for a season
+ */
+export const getGpNamesTool = tool(
+    async ({ year }) => {
+        return JSON.stringify(await f1Get(`/f1/gp-names?year=${year}`));
+    },
+    {
+        name: "get_gp_names",
+        description: "Get canonical Grand Prix names for a specific season year. Use this FIRST to discover valid GP names before calling session-specific tools. Returns round number, event name, location, country, and canonical name.",
+        schema: z.object({
+            year: YearSchema,
+        }),
+    }
+);
+
+/**
  * All available F1 data tools
  */
 export const f1Tools: Record<string, StructuredTool> = {
     get_seasons: getSeasonsTool,
     get_events: getEventsTool,
+    get_gp_names: getGpNamesTool,
     get_sessions: getSessionsTool,
     get_results: getResultsTool,
     get_qualifying: getQualifyingTool,

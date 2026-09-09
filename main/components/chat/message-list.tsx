@@ -36,11 +36,20 @@ export function MessageList() {
         )
     }
 
+    // Compute the ID of the last assistant message
+    const lastAssistantMessageId = messages
+        .filter(m => m.role === 'assistant')
+        .pop()?.id;
+
     return (
         <div className="h-full p-4">
             <div className="flex flex-col gap-6 pb-32 max-w-3xl mx-auto">
                 {messages.map((msg) => (
-                    <MessageBubble key={msg.id} message={msg} />
+                    <MessageBubble 
+                        key={msg.id} 
+                        message={msg} 
+                        isLastAssistant={msg.role === 'assistant' && msg.id === lastAssistantMessageId}
+                    />
                 ))}
                 {/* Loading indicator removed in favor of MessageBubble internal state */}
                 <div ref={bottomRef} />

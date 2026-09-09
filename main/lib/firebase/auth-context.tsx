@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from "react";
 import {
-    onAuthStateChanged,
+    onIdTokenChanged,
     User,
     GoogleAuthProvider,
     signInWithPopup,
@@ -26,14 +26,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                setUser(user);
-                const token = await user.getIdToken();
-                setCookie("firebaseToken", token, { maxAge: 60 * 60 * 24 }); // 1 day
+        let isMounted = true;
 
-                // Save/Update user profile via Client SDK
+        const unsubscribe = onIdTokenChanged(auth, async (user) => {
+            if (!isMounted) return;
+
+            if (user) {
+                if (isMounted) setUser(user);
+                
                 try {
+                    const token = await user.getIdToken();
+                    if (isMounted) {
+                        setCookie("firebaseToken", token, { maxAge: 60 * 60 * 24 }); // 1 day
+                    }
+
+                    // Save/Update user profile via Client SDK
                     await saveUserProfile({
                         uid: user.uid,
                         email: user.email,
@@ -41,16 +48,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         photoURL: user.photoURL
                     });
                 } catch (err) {
-                    console.error("Error saving user profile:", err);
+                    console.error("Error saving user profile or getting token:", err);
                 }
             } else {
-                setUser(null);
-                deleteCookie("firebaseToken");
+                if (isMounted) {
+                    setUser(null);
+                    deleteCookie("firebaseToken");
+                }
             }
-            setLoading(false);
+            if (isMounted) setLoading(false);
         });
 
-        return () => unsubscribe();
+        return () => {
+            isMounted = false;
+            unsubscribe();
+        };
     }, []);
 
     const signInWithGoogle = async () => {

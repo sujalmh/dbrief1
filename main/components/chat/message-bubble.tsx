@@ -2,7 +2,7 @@
 
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { BrainCircuit, AlertTriangle, Copy, Check, RotateCcw, Trash2, FileText } from "lucide-react"
+import { BrainCircuit, AlertTriangle, Copy, Check, RotateCcw, Trash2, FileText, ShieldCheck, AlertOctagon } from "lucide-react"
 import { Message, useChatStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -13,14 +13,20 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { PlanningGrid } from "@/components/chat/planning-grid"
+import { EvidencePanel } from "@/components/chat/evidence-panel"
+import { ReflectionTrace } from "@/components/chat/reflection-trace"
 import { RadioWave } from "@/components/chat/radio-wave"
-import { useEffect, useRef, useMemo, memo, useCallback, useState } from "react"
+import { UsageFooter } from "@/components/chat/usage-footer"
+import { useEffect, useRef, memo, useCallback, useState } from "react"
 import { useChatHandler } from "@/lib/hooks/use-chat-handler"
 import { getDriverColor, DRIVER_REGEX } from "@/lib/f1-colors"
 import type { Components } from "react-markdown"
 
+import rehypeSanitize from "rehype-sanitize"
+
 interface MessageBubbleProps {
     message: Message
+    isLastAssistant?: boolean
 }
 
 // --- HELPER: Highlights driver names in text ---
@@ -87,6 +93,7 @@ const markdownComponents = createMarkdownComponents();
 
 // Memoized remark plugins array
 const remarkPlugins = [remarkGfm];
+const rehypePlugins = [rehypeSanitize];
 
 // Inner component for the message content - heavily memoized
 const MessageContent = memo(function MessageContent({
@@ -102,6 +109,7 @@ const MessageContent = memo(function MessageContent({
         return (
             <ReactMarkdown
                 remarkPlugins={remarkPlugins}
+                rehypePlugins={rehypePlugins}
                 components={markdownComponents}
             >
                 {content}
@@ -132,21 +140,14 @@ const MessageContent = memo(function MessageContent({
  * @param message - The message to render, including role, content, optional steps, reasoning, citations, visualizationData, and error flag.
  * @returns A JSX element representing the message bubble ready for rendering in the chat UI.
  */
-function MessageBubbleComponent({ message }: MessageBubbleProps) {
+function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBubbleProps) {
     const isUser = message.role === "user"
     const isError = message.isError
     const containerRef = useRef<HTMLDivElement>(null)
     const [isCopied, setIsCopied] = useState(false)
 
-    const { messages, deleteMessage } = useChatStore()
+    const deleteMessage = useChatStore(state => state.deleteMessage)
     const { handleSend, isLoading } = useChatHandler()
-
-    // Determine if this is the last assistant message
-    const isLastAssistant = useMemo(() => {
-        if (isUser) return false
-        const assistantMessages = messages.filter(m => m.role === 'assistant')
-        return assistantMessages[assistantMessages.length - 1]?.id === message.id
-    }, [messages, message.id, isUser])
 
     // Use stable selector to avoid re-renders from unrelated store changes
     const setActiveMessageId = useChatStore(
@@ -160,7 +161,8 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
     }, [message.content])
 
     const handleRetry = useCallback(async () => {
-        // Find the user message immediately preceding this assistant message
+        // We get the current messages from the store to avoid subscribing to them
+        const messages = useChatStore.getState().messages;
         const msgIndex = messages.findIndex(m => m.id === message.id)
         if (msgIndex <= 0) return
 
@@ -172,7 +174,7 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
 
         // Regenerate
         await handleSend(prevUserMsg.content)
-    }, [message.id, messages, deleteMessage, handleSend])
+    }, [message.id, deleteMessage, handleSend])
 
     // Memoize the intersection observer callback
     const handleIntersection = useCallback((entries: IntersectionObserverEntry[]) => {
@@ -197,9 +199,36 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
     }, [isUser, handleIntersection])
 
     // Memoize the visualization button click handler
+    //
+    // The visualization panel renders whichever assistant message is
+    // currently "active" (tracked via `activeMessageId`). For "Show Chart"
+    // to actually do something we must:
+    //   1. Make this message the active one (otherwise the panel may
+    //      show stale data from a previous message, or be empty).
+    //   2. Expand the panel if it's collapsed.
+    //   3. Auto-enable visualization if the user hasn't already
+    //      (otherwise the panel renders nothing).
+    //   4. Push the data so the standard-mode panel has something to
+    //      synthesize from.
+    //
+    // We read all current state via getState() to avoid re-rendering the
+    // message bubble whenever the panel state changes.
     const handleShowChart = useCallback(() => {
-        useChatStore.getState().setVisualizationData(message.visualizationData ?? null)
-    }, [message.visualizationData])
+        const store = useChatStore.getState();
+        // Prefer chartSpecs from the message (deep research) when present;
+        // fall back to raw visualizationData (standard mode).
+        const payload = message.chartSpecs && message.chartSpecs.length > 0
+            ? message.chartSpecs
+            : message.visualizationData;
+        store.setActiveMessageId(message.id);
+        if (!store.settings.visualizeEnabled) {
+            store.updateSettings({ visualizeEnabled: true });
+        }
+        if (store.isVisualizationCollapsed) {
+            store.toggleVisualizationCollapse(false);
+        }
+        store.setVisualizationData(payload);
+    }, [message.id, message.visualizationData, message.chartSpecs])
 
     const ActionsToolbar = (
         <div className={cn(
@@ -287,6 +316,59 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
 
                 {message.steps && message.steps.length > 0 && <PlanningGrid steps={message.steps} reasoning={message.reasoning} />}
 
+                {/* Deep research mode: iterative planning grid */}
+                {message.iterations && message.iterations.length > 0 && (
+                    <PlanningGrid
+                        iterations={message.iterations}
+                        researchType={message.researchType}
+                        reasoning={message.reasoning}
+                    />
+                )}
+
+                {/* Deep research mode: reflection trace */}
+                {message.reflections && message.reflections.length > 0 && (
+                    <ReflectionTrace reflections={message.reflections} />
+                )}
+
+                {/* Degraded-mode warning badge.
+                    Renders when the backend reports that one or more LLM
+                    steps could not be completed (e.g. intent analysis was
+                    skipped because the provider rate-limited us). The
+                    answer may be best-effort — the user should know. */}
+                {message.degradedWarnings && message.degradedWarnings.length > 0 && (
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <div
+                                data-testid="degraded-warning"
+                                className="mt-2 flex items-center gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/5 px-3 py-2 text-xs"
+                            >
+                                <AlertOctagon className="h-3.5 w-3.5 text-yellow-400 shrink-0" />
+                                <span className="font-bold uppercase tracking-wider text-yellow-400">
+                                    Degraded Mode
+                                </span>
+                                <span className="text-muted-foreground">
+                                    {message.degradedWarnings.length === 1
+                                        ? "Some LLM steps were skipped — the answer may be less precise."
+                                        : `${message.degradedWarnings.length} LLM steps were skipped — the answer may be less precise.`}
+                                </span>
+                            </div>
+                        </TooltipTrigger>
+                        <TooltipContent
+                            side="bottom"
+                            className="max-w-xs text-[11px] px-3 py-2 space-y-1"
+                        >
+                            {message.degradedWarnings.map((w, idx) => (
+                                <div key={idx} className="space-y-0.5">
+                                    <div className="font-bold uppercase text-yellow-400">
+                                        {w.stage} ({w.kind})
+                                    </div>
+                                    <div className="text-muted-foreground">{w.message}</div>
+                                </div>
+                            ))}
+                        </TooltipContent>
+                    </Tooltip>
+                )}
+
                 <div className={cn("prose prose-sm break-words dark:prose-invert max-w-none leading-relaxed", isUser ? "text-foreground" : "text-foreground")}>
                     <MessageContent
                         content={message.content}
@@ -295,6 +377,45 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
                     />
                 </div>
 
+                {/* Confidence Badge (deep research mode) */}
+                {message.confidence && (
+                    <div className="mt-2 flex items-center gap-2">
+                        <ShieldCheck className={cn(
+                            "h-3.5 w-3.5",
+                            message.confidence.overall > 0.7 ? "text-green-400" :
+                            message.confidence.overall > 0.4 ? "text-yellow-400" : "text-red-400"
+                        )} />
+                        <span className={cn(
+                            "text-xs font-bold",
+                            message.confidence.overall > 0.7 ? "text-green-400" :
+                            message.confidence.overall > 0.4 ? "text-yellow-400" : "text-red-400"
+                        )}>
+                            Confidence: {(message.confidence.overall * 100).toFixed(0)}%
+                        </span>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <span className="text-[10px] text-muted-foreground cursor-help">
+                                    ({message.confidence.factors.sourceCount} sources · {message.confidence.factors.completeness > 0 ? `${(message.confidence.factors.completeness * 100).toFixed(0)}% complete` : "no expectations"})
+                                    {message.confidence.factors.missingData.length > 0 && ` · missing: ${message.confidence.factors.missingData.join(", ")}`}
+                                </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom" className="text-[10px] px-2 py-1">
+                                <div className="space-y-1">
+                                    <div>Sources: {message.confidence.factors.sourceCount}</div>
+                                    <div>Completeness: {(message.confidence.factors.completeness * 100).toFixed(0)}%</div>
+                                    <div>Conflicts: {message.confidence.factors.conflicts}</div>
+                                    <div>Data Quality: {(message.confidence.factors.dataQuality * 100).toFixed(0)}%</div>
+                                </div>
+                            </TooltipContent>
+                        </Tooltip>
+                    </div>
+                )}
+
+                {/* Deep research mode: evidence panel */}
+                {message.evidence && message.evidence.length > 0 && (
+                    <EvidencePanel evidence={message.evidence} />
+                )}
+
                 {isError && (
                     <div className="mt-2 flex items-center gap-2 text-xs font-bold uppercase">
                         <AlertTriangle className="h-3 w-3" />
@@ -302,7 +423,8 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
                     </div>
                 )}
 
-                {message.visualizationData && (
+                {(message.visualizationData ||
+                    (message.chartSpecs && message.chartSpecs.length > 0)) && (
                     <div className="mt-3 pt-3 border-t border-border/50">
                         <button
                             onClick={handleShowChart}
@@ -334,6 +456,19 @@ function MessageBubbleComponent({ message }: MessageBubbleProps) {
                     </div>
                 )}
 
+                {/* Per-message usage footer (model + tokens + cost).
+                    The backend populates `usage` via the `usage` SSE
+                    event (per the OpenRouter Usage Accounting docs).
+                    We render it on every assistant message that has
+                    a usage payload — including streaming messages
+                    that errored mid-stream, so users can still see
+                    what they were charged for. The footer sits below
+                    the citations/actions to stay out of the way of
+                    the answer itself. */}
+                {message.usage && !isUser && (
+                    <UsageFooter usage={message.usage} />
+                )}
+
                 {/* Message Actions Toolbar - Inside for Assistant */}
                 {!isUser && ActionsToolbar}
             </div>
@@ -357,6 +492,18 @@ export const MessageBubble = memo(MessageBubbleComponent, (prevProps, nextProps)
         prev.isError === next.isError &&
         prev.reasoning === next.reasoning &&
         prev.visualizationData === next.visualizationData &&
-        JSON.stringify(prev.steps) === JSON.stringify(next.steps)
+        prev.researchType === next.researchType &&
+        prev.confidence === next.confidence &&
+        // Usage is a single object set once per message via
+        // setMessageUsage. Reference equality is sufficient; if
+        // someone ever starts mutating it in place we'd need a
+        // deeper check, but the store always replaces the whole
+        // message object.
+        prev.usage === next.usage &&
+        prevProps.isLastAssistant === nextProps.isLastAssistant &&
+        JSON.stringify(prev.steps) === JSON.stringify(next.steps) &&
+        JSON.stringify(prev.iterations) === JSON.stringify(next.iterations) &&
+        JSON.stringify(prev.evidence) === JSON.stringify(next.evidence) &&
+        JSON.stringify(prev.reflections) === JSON.stringify(next.reflections)
     );
 });

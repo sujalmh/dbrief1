@@ -7,6 +7,9 @@ export default defineConfig({
         environment: 'node',
         include: ['__tests__/**/*.test.ts'],
         exclude: ['node_modules', '.next'],
+        // Polyfill IndexedDB so the persisted zustand store (which
+        // uses idb-keyval) can be imported under the Node test env.
+        setupFiles: ['./__tests__/setup.ts'],
         testTimeout: 120000, // 120s timeout for real LLM calls (GLM 4.5 Air uses reasoning tokens)
         hookTimeout: 30000,
         coverage: {

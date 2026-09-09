@@ -187,6 +187,49 @@ describe('Step Executor', () => {
 
             expect(aggregated).toContain('No data was retrieved')
         })
+
+        it('should row-truncate large results lists instead of nuking them', () => {
+            // Regression test (E2E 2026-09-08): a 20-driver get_race payload
+            // used to collapse to "[Data too large, truncated]", forcing the
+            // responder to refuse a question it had the data for.
+            const results = Array.from({ length: 20 }, (_, i) => ({
+                Position: String(i + 1),
+                Abbreviation: `D${i + 1}`,
+            }))
+            const context: ExecutionContext = {
+                results: [
+                    { step: 1, tool: 'get_race', args: {}, success: true, data: { session_name: 'Race', results }, durationMs: 100 }
+                ],
+                successCount: 1,
+                failureCount: 0,
+                totalDurationMs: 100
+            }
+
+            const aggregated = aggregateContext(context)
+
+            expect(aggregated).toContain('D1')
+            expect(aggregated).toContain('truncated_from')
+            expect(aggregated).not.toContain('Data too large, truncated')
+        })
+
+        it('should name telemetry sample counts unambiguously', () => {
+            // telemetry_points (not total_points) so the responder does not
+            // misread a sample count as championship points.
+            const data = Array.from({ length: 60 }, (_, i) => ({ Distance: i * 10, Speed: 200 }));
+            const context: ExecutionContext = {
+                results: [
+                    { step: 1, tool: 'get_telemetry', args: {}, success: true, data: { driver: 'VER', lap_number: 45, data }, durationMs: 100 }
+                ],
+                successCount: 1,
+                failureCount: 0,
+                totalDurationMs: 100
+            }
+
+            const aggregated = aggregateContext(context)
+
+            expect(aggregated).toContain('telemetry_points')
+            expect(aggregated).not.toContain('total_points')
+        })
     })
 
     describe('Timing', () => {
@@ -200,6 +243,81 @@ describe('Step Executor', () => {
             const context = await executeSteps(steps, tools)
 
             expect(context.results[0].durationMs).toBeGreaterThanOrEqual(100)
+        })
+    })
+
+    // ===================================================================
+    // Cross-model tool name robustness (2026-07-14)
+    // ===================================================================
+    //
+    // Free-tier open-source models on OpenRouter (Nemotron, Poolside, Cohere,
+    // Llama) frequently hallucinate tool names that are close to but not
+    // exactly the canonical name. The executor's resolveTool() helper
+    // applies an alias table + fuzzy match. These tests lock that in.
+
+    describe('Tool name alias resolution', () => {
+        it('remaps get_lap_times to get_laps', async () => {
+            const mockTool = createMockTool('get_laps', { laps: [] })
+            const tools = { get_laps: mockTool }
+            const steps: Step[] = [
+                { description: 'Get laps', tool: 'get_lap_times', args: {} },
+            ]
+            const context = await executeSteps(steps, tools)
+            expect(context.results[0].success).toBe(true)
+            // The original hallucinated tool name is still recorded, but
+            // the tool that ran was get_laps (visible via the data).
+            expect(context.results[0].data).toEqual({ laps: [] })
+        })
+
+        it('remaps get_telemetry_data to get_telemetry', async () => {
+            const mockTool = createMockTool('get_telemetry', { data: [] })
+            const tools = { get_telemetry: mockTool }
+            const steps: Step[] = [
+                { description: 'Get telemetry', tool: 'get_telemetry_data', args: {} },
+            ]
+            const context = await executeSteps(steps, tools)
+            expect(context.results[0].success).toBe(true)
+        })
+
+        it('remaps simulate to run_simulation', async () => {
+            const mockTool = createMockTool('run_simulation', { ok: 1 })
+            const tools = { run_simulation: mockTool }
+            const steps: Step[] = [
+                { description: 'Sim', tool: 'simulate', args: {} },
+            ]
+            const context = await executeSteps(steps, tools)
+            expect(context.results[0].success).toBe(true)
+        })
+
+        it('remaps get_championship_standings to get_driver_standings', async () => {
+            const mockTool = createMockTool('get_driver_standings', { standings: [] })
+            const tools = { get_driver_standings: mockTool }
+            const steps: Step[] = [
+                { description: 'Standings', tool: 'get_championship_standings', args: {} },
+            ]
+            const context = await executeSteps(steps, tools)
+            expect(context.results[0].success).toBe(true)
+        })
+
+        it('case-insensitive match: GET_LAPS -> get_laps', async () => {
+            const mockTool = createMockTool('get_laps', { laps: [] })
+            const tools = { get_laps: mockTool }
+            const steps: Step[] = [
+                { description: 'Get laps', tool: 'GET_LAPS', args: {} },
+            ]
+            const context = await executeSteps(steps, tools)
+            expect(context.results[0].success).toBe(true)
+        })
+
+        it('fails gracefully for completely unknown tool names', async () => {
+            const mockTool = createMockTool('get_laps', { laps: [] })
+            const tools = { get_laps: mockTool }
+            const steps: Step[] = [
+                { description: 'No such tool', tool: 'fetch_lunch_order', args: {} },
+            ]
+            const context = await executeSteps(steps, tools)
+            expect(context.results[0].success).toBe(false)
+            expect(context.results[0].error).toContain('Unknown tool')
         })
     })
 })

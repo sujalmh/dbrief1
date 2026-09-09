@@ -230,7 +230,10 @@ interface QdrantPoint {
     score: number;
     payload: {
         doc_type: string;
-        season: number;
+        // NOTE: the live collection stores season as a STRING ("2024"),
+        // not a number — the filter below stringifies, and the mapping
+        // coerces back to number for the typed output contract.
+        season: number | string;
         section?: string | null;
         event?: string | null;
         title?: string | null;
@@ -282,7 +285,8 @@ export async function retrieveFromQdrant(
         const searchUrl = `${qdrantUrl}/collections/fia_documents/points/search`;
 
         const must: Record<string, unknown>[] = [
-            { key: "season", match: { value: season } },
+            // Season is a KEYWORD (string) payload in the live collection.
+            { key: "season", match: { value: String(season) } },
             { key: "doc_type", match: { value: doc_type } },
         ];
 
@@ -326,7 +330,7 @@ export async function retrieveFromQdrant(
         // Map Qdrant response to internal document format
         return data.result.map((point) => ({
             id: point.id,
-            season: point.payload.season,
+            season: Number(point.payload.season),
             doc_type: point.payload.doc_type,
             section: point.payload.section ?? null,
             event: point.payload.event ?? null,

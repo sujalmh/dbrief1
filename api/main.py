@@ -14,8 +14,12 @@ Features:
 
 import asyncio
 import os
-from functools import lru_cache
+import logging
+from collections import OrderedDict
 from typing import Optional
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 import fastf1
 from fastf1.ergast import Ergast
@@ -28,14 +32,16 @@ from fastapi.responses import JSONResponse
 from schemas import (
     CarDataRequest,
     CarDataResponse,
-    CarDataResponse,
     DriverLapsRequest,
+    DriverLapsResponse,
     DriversResponse,
     DriverStandingsRequest,
     DriverStandingsResponse,
     ErrorResponse,
     EventsResponse,
     EventInfo,
+    GpNamesResponse,
+    GpNameInfo,
     FastestLapRequest,
     FastestLapResponse,
     LapsRequest,
@@ -71,7 +77,6 @@ from utils import (
     format_session_results,
     format_timedelta,
     get_track_status_description,
-    safe_get_attr,
     sanitize_value,
 )
 
@@ -81,7 +86,27 @@ from utils import (
 
 from datetime import datetime
 
-CURRENT_YEAR = datetime.now().year
+# Allow a small future window so users can ask about the next scheduled
+# race weekend. The actual gate for "live" data is the days_diff check in
+# get_session() below, not this bound.
+_MAX_YEAR_BUFFER_YEARS = 2
+
+def _get_max_season_year() -> int:
+    """Largest year we will accept in API requests.
+
+    We allow the current calendar year plus a small forward buffer so users
+    can ask about the next announced season (e.g. user asks in late 2025
+    about the 2026 schedule). Telemetry data only exists for completed
+    sessions; the live-session gate in get_session() still blocks in-flight
+    races, so the buffer is safe.
+    """
+    return datetime.now().year + _MAX_YEAR_BUFFER_YEARS
+
+# Cost protection: only block sessions that are still in-flight (future or
+# within the last 24 hours). Completed sessions from the current year are
+# always served from the FastF1 cache.
+_LIVE_SESSION_BLOCK_HOURS = 24
+
 MAX_TELEMETRY_POINTS = 5000  # Hard cap on telemetry data points
 
 # =============================================================================
@@ -97,12 +122,31 @@ app = FastAPI(
 )
 
 # CORS middleware for cross-origin requests
+# Allow origins are restricted to a configurable allowlist; credentials are not
+# combined with "*" (browser-incompatible and a security misconfiguration).
+_ALLOWED_ORIGINS_ENV = os.getenv("ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _ALLOWED_ORIGINS_ENV.split(",") if o.strip()]
+if not ALLOWED_ORIGINS:
+    # Safe defaults for local development. In production, set ALLOWED_ORIGINS
+    # to a comma-separated list of allowed origins (e.g. "https://app.example.com").
+    if os.getenv("ENV", "development").lower() == "production":
+        logger.warning(
+            "ALLOWED_ORIGINS is empty in production. CORS will reject all "
+            "cross-origin browser requests. Set ALLOWED_ORIGINS to a "
+            "comma-separated list of allowed origins."
+        )
+    ALLOWED_ORIGINS = [
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8080",
+    ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Enable Fast-F1 disk cache (create directory if it doesn't exist)
@@ -112,12 +156,71 @@ fastf1.Cache.enable_cache("cache")
 # Mutex for session loading (prevent concurrent loads)
 session_load_lock = asyncio.Lock()
 
+# Bounded in-memory cache of loaded sessions to avoid repeated expensive loads.
+# FastF1 session objects can each consume hundreds of MB, so we cap the cache
+# size and evict the least-recently-used entry when the cap is exceeded.
+_SESSION_CACHE_MAX_SIZE = int(os.getenv("SESSION_CACHE_MAX_SIZE", "8"))
+
+
+def _session_cache_key(year: int, gp: str, session_type: str) -> tuple:
+    return (year, str(gp).lower().strip(), str(session_type).upper().strip())
+
+
+_session_cache: "OrderedDict[tuple, fastf1.core.Session]" = OrderedDict()
+_session_cache_lock = asyncio.Lock()
+
+
+async def _session_cache_get(key: tuple):
+    async with _session_cache_lock:
+        if key in _session_cache:
+            _session_cache.move_to_end(key)
+            return _session_cache[key]
+    return None
+
+
+async def _session_cache_put(key: tuple, session) -> None:
+    async with _session_cache_lock:
+        if key in _session_cache:
+            _session_cache.move_to_end(key)
+            _session_cache[key] = session
+            return
+        _session_cache[key] = session
+        while len(_session_cache) > _SESSION_CACHE_MAX_SIZE:
+            evicted_key, evicted_session = _session_cache.popitem(last=False)
+            _release_session(evicted_session)
+            logger.info("Evicted cached session %s (cache size=%d)", evicted_key, len(_session_cache))
+
+
+def _release_session(session) -> None:
+    """
+    Best-effort cleanup of a FastF1 session object to free memory.
+
+    FastF1 sessions can each hold hundreds of MB (telemetry, weather, laps,
+    car data). When we evict one from the in-memory cache we drop references
+    to the heavy sub-DataFrames and call gc.collect() so the OS can reclaim
+    the pages.
+    """
+    if session is None:
+        return
+    try:
+        # Drop heavy DataFrame attributes if present
+        for attr in ("laps", "results", "weather_data", "race_control_messages",
+                     "track_status", "car_data", "pos_data", "session_status"):
+            try:
+                if hasattr(session, attr):
+                    setattr(session, attr, None)
+            except Exception:
+                pass
+        import gc
+        gc.collect()
+    except Exception as cleanup_exc:  # pragma: no cover - defensive
+        logger.warning("Failed to release session cleanly: %s", cleanup_exc)
+
 # =============================================================================
 # Session Management
 # =============================================================================
 
 
-@lru_cache(maxsize=32)
 def _load_session_sync(year: int, gp: str, session_type: str) -> fastf1.core.Session:
     """
     Load and cache a session synchronously.
@@ -132,34 +235,94 @@ async def get_session(year: int, gp: str, session_type: str) -> fastf1.core.Sess
     """
     Get a loaded session with mutex protection.
     Blocks live sessions to prevent cost spikes.
+    Uses a bounded in-memory cache to avoid reloading frequently used sessions
+    while keeping memory usage bounded.
     """
+    _validate_year(year)
+    validate_gp_param(gp)
+    cache_key = _session_cache_key(year, gp, session_type)
+
+    # Fast path: cache hit
+    cached = await _session_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     async with session_load_lock:
+        # Double-checked: another coroutine may have populated the cache while
+        # we were waiting for the lock.
+        cached = await _session_cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         # Run the blocking load in a thread pool
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         session = await loop.run_in_executor(
             None, _load_session_sync, year, gp, session_type
         )
-        
-        # COST PROTECTION: Block live sessions
-        if session.date and session.date.year == CURRENT_YEAR:
-            # Check if session is live or upcoming (within 7 days)
+
+        # COST PROTECTION: Block only in-flight (live / future) sessions
+        # for the current calendar year. Sessions that have already finished
+        # are served from the FastF1 cache and cost nothing extra, so they
+        # are always allowed regardless of year.
+        if session.date:
             session_datetime = pd.Timestamp(session.date)
             now = pd.Timestamp.now(tz=session_datetime.tz)
-            days_diff = (session_datetime - now).total_seconds() / 86400
-            
-            # Block if session is in the future or within last 24 hours
-            if days_diff > -1:
+            hours_diff = (session_datetime - now).total_seconds() / 3600
+
+            # Block if session is in the future or within the last
+            # _LIVE_SESSION_BLOCK_HOURS hours (i.e. still in progress / just
+            # ended, where live timing data is volatile and expensive to
+            # refetch).
+            if hours_diff > -_LIVE_SESSION_BLOCK_HOURS:
                 raise HTTPException(
                     status_code=403,
-                    detail=f"Live/recent sessions are disabled for cost protection. Session date: {session.date.isoformat()}"
+                    detail=(
+                        f"Live/in-progress sessions are disabled for cost "
+                        f"protection. Session date: "
+                        f"{session.date.isoformat()}"
+                    ),
                 )
-        
+
+        await _session_cache_put(cache_key, session)
         return session
 
 
 def get_event_schedule(year: int) -> pd.DataFrame:
     """Get event schedule for a year."""
+    _validate_year(year)
     return fastf1.get_event_schedule(year)
+
+
+def validate_gp_param(gp: str) -> str:
+    """
+    Validate a Grand Prix identifier to prevent path traversal and SQL-injection-style
+    abuse. The FastF1 library treats this as a string label, but we still need to
+    ensure the value cannot escape the cache directory or trigger unexpected lookups.
+    """
+    if not gp or not isinstance(gp, str):
+        raise HTTPException(status_code=400, detail="Invalid Grand Prix identifier")
+    # Reject path separators and traversal patterns
+    if "/" in gp or "\\" in gp or ".." in gp or "\x00" in gp:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Grand Prix identifier: path separators are not allowed",
+        )
+    # Cap length to keep downstream lookups bounded
+    if len(gp) > 128:
+        raise HTTPException(status_code=400, detail="Grand Prix identifier too long")
+    return gp
+
+
+def _validate_year(year: int) -> int:
+    """Runtime year guard (Query le=2100 is static; enforce dynamic
+    current-year+buffer policy here so long processes never go stale)."""
+    max_year = _get_max_season_year()
+    if year < 1950 or year > max_year:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Year must be between 1950 and {max_year}",
+        )
+    return year
 
 async def get_driver_lap(session: fastf1.core.Session, driver: str, lap_identifier: str):
     """
@@ -233,12 +396,20 @@ async def get_driver_standings(request: DriverStandingsRequest):
                     "team": str(entry.get("constructorId", ""))
                 })
         
+        if not data:
+            raise HTTPException(status_code=404, detail=f"No standings found for year {request.year}")
+
         return {
             "year": request.year,
             "standings": data
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
 # =============================================================================
@@ -248,11 +419,22 @@ async def get_driver_standings(request: DriverStandingsRequest):
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request, exc):
-    """Handle all uncaught exceptions with clean JSON response."""
-    error_message = str(exc) if str(exc) else "Internal server error"
+    """Handle all uncaught exceptions with a safe, generic JSON response.
+
+    The full exception details are logged server-side for debugging, but the
+    client only receives a generic message so internal paths, library
+    versions, and stack frames never leak through HTTP responses.
+    """
+    logger.error(
+        "Unhandled exception for %s %s: %s",
+        request.method if hasattr(request, "method") else "?",
+        request.url.path if hasattr(request, "url") else "?",
+        exc,
+        exc_info=True,
+    )
     return JSONResponse(
         status_code=500,
-        content={"error": error_message}
+        content={"error": "Internal server error"},
     )
 
 
@@ -287,14 +469,17 @@ async def get_seasons():
     Get list of available seasons.
     Fast-F1 supports seasons from 2018 onwards with full telemetry.
     """
-    # Ergast API supports 1950-2017 (standings/results only)
-    # Fast-F1 supports 2018-2025 for full telemetry data
-    seasons = list(range(1950, 2026))
+    # The list is dynamic: 1950 (earliest season in the Ergast/FastF1
+    # records) up to the current calendar year plus a small forward
+    # buffer. This way the seasons list never goes stale and the LLM
+    # planner never thinks the current year is "unavailable".
+    end_year = _get_max_season_year()
+    seasons = list(range(1950, end_year + 1))
     return {"seasons": seasons}
 
 
 @app.get("/f1/events", response_model=EventsResponse)
-async def get_events(year: int = Query(..., ge=1950, le=2025)):
+async def get_events(year: int = Query(..., ge=1950, le=2100)):
     """
     Get all events (Grand Prix) for a specific year.
     """
@@ -322,19 +507,57 @@ async def get_events(year: int = Query(..., ge=1950, le=2025)):
             events.append(event_info)
         
         return {"year": year, "events": events}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/f1/gp-names", response_model=GpNamesResponse)
+async def get_gp_names(year: int = Query(..., ge=1950, le=2100)):
+    """
+    Get canonical Grand Prix names for a specific season year.
+    Returns round number, event name, location, country, and the canonical
+    name accepted by get_session(). This endpoint is designed for LLM tool
+    consumption — it lets the planner discover valid GP names before calling
+    session-specific tools.
+    """
+    try:
+        schedule = get_event_schedule(year)
+        grand_prix = []
+
+        for _, event in schedule.iterrows():
+            event_name = str(event.get("EventName", ""))
+            gp_info = GpNameInfo(
+                round=int(event.get("RoundNumber", 0)),
+                event_name=event_name,
+                location=str(event.get("Location", "")),
+                country=str(event.get("Country", "")),
+                canonical=event_name,
+            )
+            grand_prix.append(gp_info)
+
+        return {"year": year, "grand_prix": grand_prix}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/f1/sessions", response_model=SessionsResponse)
 async def get_sessions(
-    year: int = Query(..., ge=1950, le=2025),
+    year: int = Query(..., ge=1950, le=2100),
     gp: str = Query(..., description="Grand Prix name or round number")
 ):
     """
     Get available sessions for a specific event.
     """
     try:
+        gp = validate_gp_param(gp)
         schedule = get_event_schedule(year)
         
         # Find the event
@@ -382,7 +605,10 @@ async def get_sessions(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -407,8 +633,13 @@ async def load_session(request: SessionRequest):
             total_laps=session.total_laps if hasattr(session, 'total_laps') else None,
             f1_api_support=session.f1_api_support if hasattr(session, 'f1_api_support') else True
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -429,11 +660,16 @@ async def get_results(request: SessionRequest):
             "session_name": session.name,
             "results": results
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/f1/qualifying")
+@app.post("/f1/qualifying", response_model=ResultsResponse)
 async def get_qualifying(request: SessionRequest):
     """
     Get qualifying results with Q1, Q2, Q3 times.
@@ -442,16 +678,21 @@ async def get_qualifying(request: SessionRequest):
         # Force session type to Qualifying
         session = await get_session(request.year, request.gp, "Q")
         results = format_session_results(session.results)
-        
+
         return {
             "session_name": session.name,
             "results": results
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/f1/race")
+@app.post("/f1/race", response_model=ResultsResponse)
 async def get_race(request: SessionRequest):
     """
     Get race results with grid position, status, fastest lap.
@@ -460,13 +701,18 @@ async def get_race(request: SessionRequest):
         # Force session type to Race
         session = await get_session(request.year, request.gp, "R")
         results = format_session_results(session.results)
-        
+
         return {
             "session_name": session.name,
             "results": results
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -506,11 +752,16 @@ async def get_laps(request: LapsRequest):
             "total_laps": len(lap_data),
             "laps": lap_data
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/f1/laps/driver")
+@app.post("/f1/laps/driver", response_model=DriverLapsResponse)
 async def get_driver_laps(request: DriverLapsRequest):
     """
     Get all laps for a specific driver.
@@ -533,8 +784,13 @@ async def get_driver_laps(request: DriverLapsRequest):
             "total_laps": len(lap_data),
             "laps": lap_data
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/f1/laps/fastest", response_model=FastestLapResponse)
@@ -569,7 +825,10 @@ async def get_fastest_lap(request: FastestLapRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -612,8 +871,13 @@ async def get_sectors(request: SectorsRequest):
             "session_name": session.name,
             "sectors": sectors
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -646,8 +910,10 @@ async def get_telemetry(request: TelemetryRequest):
                     # Select relevant columns
                     corners_df = corners_df[['Number', 'Distance', 'Letter', 'Angle']]
                     corners_data = df_to_json(corners_df)
+        except HTTPException:
+            raise
         except Exception as e:
-            print(f"Warning: Failed to fetch circuit info: {e}")
+            logger.warning("Failed to fetch circuit info: %s", e)
             # Non-critical, continue without corners
         
         # Filter channels
@@ -677,7 +943,10 @@ async def get_telemetry(request: TelemetryRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -686,14 +955,32 @@ async def get_telemetry(request: TelemetryRequest):
 
 
 def calculate_channel_summary(values: list) -> dict:
-    """Calculate min/max/avg for a list of numeric values."""
-    clean_values = [v for v in values if v is not None and not np.isnan(v)]
+    """
+    Calculate min/max/avg for a list of numeric values.
+
+    NaN and None entries are filtered out before aggregation. If no usable
+    values remain (empty list, all-NaN, all-None) the summary returns None
+    for each field so the client can distinguish "no data" from "all zero".
+    """
+    clean_values: list = []
+    for v in values:
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(fv) or np.isinf(fv):
+            continue
+        clean_values.append(fv)
+
     if not clean_values:
-        return {"min": 0.0, "max": 0.0, "avg": 0.0}
+        return {"min": None, "max": None, "avg": None}
+
     return {
-        "min": round(float(min(clean_values)), 2),
-        "max": round(float(max(clean_values)), 2),
-        "avg": round(float(sum(clean_values) / len(clean_values)), 2),
+        "min": round(min(clean_values), 2),
+        "max": round(max(clean_values), 2),
+        "avg": round(sum(clean_values) / len(clean_values), 2),
     }
 
 
@@ -754,8 +1041,10 @@ async def get_telemetry_summary(request: TelemetryRequest):
                                     "min_speed": round(corner_speed, 1)
                                 })
                     corner_min_speeds = corner_speeds
+        except HTTPException:
+            raise
         except Exception as e:
-            print(f"Warning: Failed to calculate corner speeds: {e}")
+            logger.warning("Failed to calculate corner speeds: %s", e)
             # Non-critical, continue without corners
         
         # Not real sector formula used in F1, consider changing in future
@@ -789,7 +1078,10 @@ async def get_telemetry_summary(request: TelemetryRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -853,7 +1145,10 @@ async def get_car_data(request: CarDataRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -899,8 +1194,13 @@ async def get_weather(request: WeatherRequest):
             "session_name": session.name,
             "data": data
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -928,8 +1228,13 @@ async def get_race_control(request: RaceControlRequest):
             "session_name": session.name,
             "messages": messages
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/f1/track-status", response_model=TrackStatusResponse)
@@ -958,8 +1263,13 @@ async def get_track_status(request: TrackStatusRequest):
             "session_name": session.name,
             "status": data
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -1002,8 +1312,13 @@ async def get_tyres(request: TyresRequest):
             "session_name": session.name,
             "tyres": tyre_data
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/f1/stints", response_model=StintsResponse)
@@ -1049,8 +1364,13 @@ async def get_stints(request: StintsRequest):
             "session_name": session.name,
             "stints": stint_data
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================
@@ -1060,7 +1380,7 @@ async def get_stints(request: StintsRequest):
 
 @app.get("/f1/drivers", response_model=DriversResponse)
 async def get_drivers(
-    year: int = Query(..., ge=1950, le=2025),
+    year: int = Query(..., ge=1950, le=2100),
     gp: Optional[str] = Query(None, description="Grand Prix name (optional, defaults to first race)")
 ):
     """
@@ -1071,6 +1391,8 @@ async def get_drivers(
         # For pre-2018, use Ergast API
         if year < 2018:
             ergast = Ergast()
+            if gp is not None:
+                gp = validate_gp_param(gp)
             
             # Get drivers for the season
             try:
@@ -1097,8 +1419,13 @@ async def get_drivers(
                     "gp": gp,
                     "drivers": drivers
                 }
+            except HTTPException:
+                raise
             except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Failed to fetch drivers for {year}: {str(e)}")
+
+                logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+                raise HTTPException(status_code=500, detail="Internal server error")
         
         # For 2018+, use FastF1 (original logic)
         # Get the first event if no GP specified
@@ -1107,7 +1434,9 @@ async def get_drivers(
             if schedule.empty:
                 raise HTTPException(status_code=404, detail=f"No events found for {year}")
             gp = schedule.iloc[0]["EventName"]
-        
+        else:
+            gp = validate_gp_param(gp)
+
         session = await get_session(year, gp, "R")
         
         drivers = []
@@ -1133,12 +1462,15 @@ async def get_drivers(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/f1/teams", response_model=TeamsResponse)
 async def get_teams(
-    year: int = Query(..., ge=1950, le=2025),
+    year: int = Query(..., ge=1950, le=2100),
     gp: Optional[str] = Query(None, description="Grand Prix name (optional, defaults to first race)")
 ):
     """
@@ -1151,7 +1483,9 @@ async def get_teams(
             if schedule.empty:
                 raise HTTPException(status_code=404, detail=f"No events found for {year}")
             gp = schedule.iloc[0]["EventName"]
-        
+        else:
+            gp = validate_gp_param(gp)
+
         session = await get_session(year, gp, "R")
         
         # Group drivers by team
@@ -1176,7 +1510,10 @@ async def get_teams(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # =============================================================================

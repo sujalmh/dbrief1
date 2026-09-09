@@ -36,17 +36,19 @@ try:
                 distance=models.Distance.COSINE
             )
         )
-        print(f"✅ Created collection '{COLLECTION_NAME}'")
+        print(f"OK: Created collection '{COLLECTION_NAME}'")
     else:
         print(f"Collection '{COLLECTION_NAME}' already exists.")
 except Exception as e:
-    print(f"❌ Error checking/creating collection: {e}")
+    print(f"FAIL: Error checking/creating collection: {e}")
 
 print(f"\nCreating payload indexes for collection '{COLLECTION_NAME}'...")
 
-# Payload indexes used by the RAG retriever's filters
+# Payload indexes used by the RAG retriever's filters.
+# NOTE: `season` is a KEYWORD index, not integer — the live collection
+# stores season as a string ("2024"). An integer index never matches.
 INDEXES = [
-    ("season", "integer"),    # season == year filter
+    ("season", "keyword"),  # season filter (string match)
     ("section", "keyword"),   # Sporting / Technical / Financial (+ variants)
     ("doc_type", "keyword"),  # regulation | decision
     ("event", "keyword"),     # Grand Prix event name (decisions)
@@ -60,9 +62,9 @@ for field_name, field_schema in INDEXES:
             field_name=field_name,
             field_schema=field_schema,
         )
-        print(f"✅ Created index for '{field_name}' ({field_schema})")
+        print(f"OK: Created index for '{field_name}' ({field_schema})")
     except Exception as e:
-        print(f"⚠️  Index for '{field_name}' might already exist or failed: {e}")
+        print(f"WARN:  Index for '{field_name}' might already exist or failed: {e}")
 
-print("\n✅ Payload indexes check/creation complete!")
+print("\nOK: Payload indexes check/creation complete!")
 print("\nYou can now run queries filtered on season, section, doc_type, and event.")

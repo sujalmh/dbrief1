@@ -103,14 +103,33 @@ export const PROVIDERS: ProviderMeta[] = [
         label: "Go",
         menuLabel: "OpenCode Go",
         models: [
-            // Ordered cheapest-first (Go allowance); Contributor is
-            // responses-only. See: https://opencode.ai/docs/go/#usage-limits
+            // Full catalog per https://opencode.ai/docs/go#endpoints
+            // (OpenAI-compatible subset only: chat/completions + responses.
+            // Anthropic-messages models — MiniMax M3/M2.7/M2.5, Qwen
+            // 3.8/3.7 series — are intentionally omitted: our ChatOpenAI
+            // client cannot speak that protocol).
+            // Ordered cheapest-first (Go allowance); responses-only models
+            // are flagged so the factory enables LangChain's responses API.
             { id: "muse-spark-1.3-contributor", label: "Muse Spark 1.3 Contributor (Cheapest)", responsesApi: true },
+            { id: "muse-spark-1.2-contributor", label: "Muse Spark 1.2 Contributor (Cheapest)", responsesApi: true },
             { id: "mimo-v2.5", label: "MiMo V2.5" },
+            { id: "mimo-v2.5-pro", label: "MiMo V2.5 Pro" },
             { id: "longcat-2.0", label: "LongCat 2.0" },
             { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+            { id: "deepseek-v4-flash-vision-exp", label: "DeepSeek V4 Flash Vision" },
+            { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
             { id: "glm-5.3-flash", label: "GLM 5.3 Flash" },
+            { id: "glm-5.3", label: "GLM 5.3" },
+            { id: "glm-5.2", label: "GLM 5.2" },
+            { id: "glm-5.1", label: "GLM 5.1" },
+            { id: "kimi-k3", label: "Kimi K3" },
             { id: "kimi-k2.7-code", label: "Kimi K2.7 Code" },
+            { id: "kimi-k2.6", label: "Kimi K2.6" },
+            { id: "hy4-preview", label: "Hy4 Preview" },
+            { id: "hy3", label: "Hy3" },
+            { id: "omen-alpha", label: "Omen Alpha" },
+            { id: "gpt-5.6-luna", label: "GPT 5.6 Luna", responsesApi: true },
+            { id: "grok-4.6", label: "Grok 4.6", responsesApi: true },
         ],
         defaultModel: "mimo-v2.5",
         plannerModel: "mimo-v2.5",

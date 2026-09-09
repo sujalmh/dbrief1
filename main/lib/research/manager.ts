@@ -1,0 +1,580 @@
+/**
+ * Research Manager
+ * ================
+ *
+ * Orchestrates the four-agent iterative research loop:
+ *
+ *   Reasoner.classify → Planner.createTasks → Executor.executeBatch
+ *     → EvidenceStore.add + Memory.update → Reasoner.reflect
+ *     → (loop if continue) → ConfidenceCalculator → VisualizationPlanner
+ *     → Synthesizer.generate
+ *
+ * The Manager owns the loop, budget tracking, and event emission (for SSE
+ * streaming to the frontend). It yields ResearchEvent objects that the API
+ * route maps to SSE events.
+ */
+
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import type { AIMessageChunk } from "@langchain/core/messages";
+import { getPlannerModel, getResponderModel, type Provider } from "@/lib/llm";
+import { ToolRegistry, createToolRegistry } from "./tool-registry";
+import { EvidenceStore } from "./evidence-store";
+import { ResearchMemory } from "./memory";
+import { Reasoner } from "./agents/reasoner";
+import { Planner } from "./agents/planner";
+import { Executor } from "./agents/executor";
+import { Synthesizer } from "./agents/synthesizer";
+import { IntentAnalyzer, IntentAnalyzerUnavailableError, type ChatMessage } from "./agents/intent-analyzer";
+import { Critic } from "./agents/critic";
+import { ConfidenceCalculator } from "./confidence";
+import { VisualizationPlanner } from "./agents/visualization-planner";
+import { classifyLlmError, isNonRecoverable } from "@/lib/utils/llm-errors";
+import type { UsageAccumulator } from "@/lib/llm-usage";
+import type {
+    ResearchEvent,
+    ResearchOptions,
+    ResearchType,
+    ResearchBudget,
+    Task,
+    Reflection,
+    IntentAnalysis,
+} from "./types";
+
+// =============================================================================
+// Configuration
+// =============================================================================
+
+/**
+ * Hard wall-clock cap on the entire research session. Even if the budget
+ * would otherwise allow more iterations, we stop once this elapses so a
+ * single slow tool/plan/reflect call cannot hang the user forever.
+ */
+const OVERALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+// =============================================================================
+// Research Manager
+// =============================================================================
+
+export class ResearchManager {
+    private registry: ToolRegistry;
+    private evidenceStore: EvidenceStore;
+    private memory: ResearchMemory;
+    private reasoner: Reasoner;
+    private planner: Planner;
+    private executor: Executor;
+    private synthesizer: Synthesizer;
+    private intentAnalyzer: IntentAnalyzer;
+    private critic: Critic;
+    private confidenceCalc: ConfidenceCalculator;
+    private vizPlanner: VisualizationPlanner;
+
+    constructor(
+        private plannerModel: BaseChatModel,
+        private responderModel: BaseChatModel,
+        private options: ResearchOptions,
+        /**
+         * Optional external usage accumulator. When provided, the
+         * Synthesizer threads its raw LLM chunks into the accumulator
+         * so the API route can emit a single `usage` SSE event with
+         * the final aggregated totals (prompt/completion tokens +
+         * cost, per the OpenRouter Usage Accounting docs).
+         *
+         * The manager itself never inspects the accumulator — it
+         * merely passes the `onChunk` callback down. This keeps the
+         * research flow decoupled from the accounting concern.
+         */
+        private usage?: UsageAccumulator | null
+        /**
+         * The synthesizer receives the accumulator as an opaque
+         * `onChunk` callback so it doesn't need to know about
+         * UsageAccumulator directly. This keeps the research flow
+         * decoupled from the accounting concern — the manager never
+         * reads the accumulator, only forwards chunks into it.
+         */
+    ) {
+        this.registry = createToolRegistry(options.deepResearch);
+        this.evidenceStore = new EvidenceStore();
+        this.memory = new ResearchMemory();
+        this.reasoner = new Reasoner(plannerModel);
+        this.planner = new Planner(plannerModel, this.registry);
+        this.executor = new Executor(this.registry, this.evidenceStore, this.memory);
+        this.synthesizer = new Synthesizer(responderModel);
+        this.intentAnalyzer = new IntentAnalyzer(plannerModel);
+        this.critic = new Critic(responderModel);
+        this.confidenceCalc = new ConfidenceCalculator();
+        this.vizPlanner = new VisualizationPlanner(plannerModel);
+    }
+
+    /**
+     * Run the research loop. Yields ResearchEvent objects for SSE streaming.
+     *
+     * @param objective - The user's question
+     * @param history - Optional conversation history for follow-up resolution
+     */
+    async *run(objective: string, history?: ChatMessage[]): AsyncGenerator<ResearchEvent> {
+        const maxTasks = this.options.maxTasks || 50;
+        const maxIterations = this.options.maxIterations || 20;
+        const startTime = Date.now();
+
+        const budget: ResearchBudget = {
+            maxTasks,
+            maxIterations,
+            tasksExecuted: 0,
+            iterationsCompleted: 0,
+        };
+
+        let researchType: ResearchType = "factual";
+        let strategy = "";
+        let consecutiveStops = 0;
+        let timedOut = false;
+
+        try {
+            // --- Step 1: Classify ---
+            let classification: { researchType: string; strategy: string };
+            try {
+                classification = await this.reasoner.classify(objective);
+            } catch (classifyError) {
+                const cls = classifyLlmError(classifyError, "ResearchManager.Reasoner.classify");
+                if (isNonRecoverable(cls)) {
+                    // The very first LLM call failed in a way that has no
+                    // reasonable fallback. We can't even start the research
+                    // loop without a researchType, so surface the error
+                    // immediately.
+                    yield {
+                        type: "error",
+                        message: cls.userMessage,
+                    };
+                    return;
+                }
+                throw classifyError;
+            }
+            researchType = classification.researchType as ResearchType;
+            strategy = classification.strategy;
+
+            yield {
+                type: "research_start",
+                researchType,
+                objective,
+                strategy,
+            };
+
+            // --- Step 1.5: Intent Analysis ---
+            // Produce a structured breakdown of the user's question (entities,
+            // data needs, ambiguities, suggested tools) BEFORE planning.
+            // This gives the Planner much better inputs than the raw strategy
+            // string, improving first-try quality.
+            let intentAnalysis: IntentAnalysis | null = null;
+            try {
+                intentAnalysis = await this.intentAnalyzer.analyze(objective, history);
+                yield { type: "intent_analysis", intentAnalysis };
+                // Derive a richer strategy from the intent analysis
+                const { deriveStrategy } = await import("./types");
+                const derivedStrategy = deriveStrategy(intentAnalysis);
+                if (derivedStrategy) {
+                    strategy = derivedStrategy;
+                }
+            } catch (intentError) {
+                if (intentError instanceof IntentAnalyzerUnavailableError) {
+                    // The IntentAnalyzer couldn't reach the LLM at all
+                    // (rate limit, auth, network). The downstream agents
+                    // (Planner, Synthesizer) will likely hit the same
+                    // failure — but Reasoner.classify has already
+                    // succeeded, so we have a usable researchType and
+                    // strategy. Continue with a degraded-mode signal so
+                    // the UI can warn the user that downstream steps may
+                    // fail.
+                    console.warn(
+                        "[ResearchManager] Intent analysis unavailable, continuing with classify-only strategy:",
+                        intentError.kind,
+                        intentError.cause instanceof Error ? intentError.cause.message : intentError.cause
+                    );
+                    yield {
+                        type: "degraded",
+                        stage: "intent_analysis",
+                        kind: intentError.kind,
+                        message: intentError.userMessage,
+                    } as ResearchEvent;
+                } else {
+                    console.warn(
+                        "[ResearchManager] Intent analysis failed (recoverable), proceeding with classify strategy:",
+                        intentError instanceof Error ? intentError.message : intentError
+                    );
+                }
+            }
+
+            // --- Step 2: Iterative loop ---
+            let iteration = 0;
+            let shouldContinue = true;
+
+            while (shouldContinue) {
+                iteration++;
+                budget.iterationsCompleted = iteration;
+
+                // Budget check
+                if (iteration > maxIterations) {
+                    break;
+                }
+                if (budget.tasksExecuted >= maxTasks) {
+                    break;
+                }
+
+                // Wall-clock check — if we've blown past the overall budget,
+                // stop iterating and proceed to confidence/synthesis with
+                // whatever evidence we have. A single slow LLM call must
+                // not hang the user indefinitely.
+                if (Date.now() - startTime > OVERALL_TIMEOUT_MS) {
+                    timedOut = true;
+                    console.warn(
+                        `[ResearchManager] Overall timeout of ${OVERALL_TIMEOUT_MS}ms reached after ${iteration} iterations.`
+                    );
+                    break;
+                }
+
+                // --- Plan ---
+                let tasks: Task[];
+                let reasoning: string;
+                try {
+                    const planned = await this.planner.createTasks(strategy, {
+                        objective,
+                        researchType,
+                        evidenceStore: this.evidenceStore,
+                        memory: this.memory,
+                        budget,
+                        iteration,
+                        deepResearch: this.options.deepResearch,
+                        intentAnalysis: iteration === 1 ? intentAnalysis : undefined,
+                    });
+                    tasks = planned.tasks;
+                    reasoning = planned.reasoning;
+                } catch (planError) {
+                    const cls = classifyLlmError(planError, "ResearchManager.Planner");
+                    if (isNonRecoverable(cls)) {
+                        console.error(
+                            "[ResearchManager] Planner LLM unavailable:",
+                            cls.kind,
+                            planError instanceof Error ? planError.message : planError
+                        );
+                        yield {
+                            type: "error",
+                            message: cls.userMessage,
+                        };
+                        yield {
+                            type: "degraded",
+                            stage: "planner",
+                            kind: cls.kind,
+                            message: cls.userMessage,
+                        } as ResearchEvent;
+                        // Stop the loop; synthesize with whatever evidence
+                        // we already have (possibly none on iteration 1).
+                        shouldContinue = false;
+                        break;
+                    }
+                    // Recoverable: rethrow so the outer try/catch logs and
+                    // yields a generic error. The deterministic planner
+                    // fallback inside the Planner agent will produce *some*
+                    // tasks (probably empty for edge cases), so this is
+                    // rare.
+                    throw planError;
+                }
+
+                yield {
+                    type: "plan_iteration",
+                    iteration,
+                    tasks: tasks.map((t) => ({ ...t, result: undefined })),
+                    reasoning,
+                };
+
+                if (tasks.length === 0) {
+                    // No tasks generated — stop
+                    consecutiveStops++;
+                    if (consecutiveStops >= 2) break;
+                    continue;
+                }
+
+                // --- Execute ---
+                const results = await this.executor.executeBatch(tasks, () => {
+                    // Emit task updates (handled by caller via the generator)
+                    // We collect these synchronously — the caller reads them
+                });
+
+                // Emit task updates and evidence
+                for (const result of results) {
+                    yield {
+                        type: "task_update",
+                        taskId: result.taskId,
+                        status: result.success ? "success" : "failed",
+                        data: result.data,
+                        evidenceId: this.evidenceStore.getById(
+                            this.memory.getCachedEvidenceId(result.tool, result.args) || ""
+                        )?.id,
+                    };
+                }
+
+                // Emit evidence for new items
+                const evidenceMap = new Map<string, string>();
+                for (const result of results) {
+                    if (!result.success) continue;
+                    const evidenceId = this.memory.getCachedEvidenceId(result.tool, result.args);
+                    if (evidenceId) {
+                        evidenceMap.set(result.taskId, evidenceId);
+                        const evidence = this.evidenceStore.getById(evidenceId);
+                        if (evidence) {
+                            yield { type: "evidence", evidence };
+                        }
+                    }
+                }
+
+                // Update memory
+                this.memory.updateFromResults(results, evidenceMap);
+
+                // Update budget
+                budget.tasksExecuted += results.length;
+
+                // --- Reflect ---
+                let reflection: Reflection;
+                try {
+                    reflection = await this.reasoner.reflect({
+                        objective,
+                        researchType,
+                        evidenceStore: this.evidenceStore,
+                        memory: this.memory,
+                        budget,
+                        iteration,
+                    });
+                } catch (reflectError) {
+                    const cls = classifyLlmError(reflectError, "ResearchManager.Reasoner");
+                    if (isNonRecoverable(cls)) {
+                        console.error(
+                            "[ResearchManager] Reasoner.reflect LLM unavailable:",
+                            cls.kind,
+                            reflectError instanceof Error ? reflectError.message : reflectError
+                        );
+                        yield {
+                            type: "error",
+                            message: cls.userMessage,
+                        };
+                        yield {
+                            type: "degraded",
+                            stage: "reflection",
+                            kind: cls.kind,
+                            message: cls.userMessage,
+                        } as ResearchEvent;
+                        shouldContinue = false;
+                        break;
+                    }
+                    throw reflectError;
+                }
+
+                yield { type: "reflection", reflection, iteration };
+
+                if (reflection.nextAction === "stop") {
+                    consecutiveStops++;
+                    if (consecutiveStops >= 2) {
+                        shouldContinue = false;
+                    } else {
+                        // One more chance — but only if we have budget
+                        if (budget.tasksExecuted >= maxTasks || iteration >= maxIterations) {
+                            shouldContinue = false;
+                        }
+                    }
+                } else {
+                    consecutiveStops = 0;
+                    strategy = reflection.nextStrategy || strategy;
+                }
+            }
+
+            // --- Step 3: Compute confidence ---
+            const confidence = this.confidenceCalc.compute(
+                this.evidenceStore,
+                researchType,
+                objective
+            );
+            yield { type: "confidence", confidence };
+
+            // --- Step 4: Plan visualizations ---
+            const chartSpecs = await this.vizPlanner.plan(
+                this.evidenceStore,
+                researchType,
+                objective
+            );
+            yield { type: "chart_specs", specs: chartSpecs };
+
+            // Also emit visualization data in the format the VisualizationPanel expects
+            // (array of {tool, args, success, data}) so charts actually render
+            const vizData = this.evidenceStore.getAll().map((e) => ({
+                tool: e.source.tool,
+                args: e.source.args,
+                success: true,
+                data: e.data,
+            }));
+            if (vizData.length > 0) {
+                yield { type: "visualization", data: vizData };
+            }
+
+            // --- Step 5: Synthesize final report ---
+            // The synthesizer now buffers internally (for citation validation
+            // + refuse-on-empty), then streams validated tokens.
+            //
+            // If the synthesizer's underlying LLM is unavailable (rate
+            // limit, auth, network), we yield a clear error event and stop.
+            // We deliberately do NOT silently fall back here — without
+            // evidence-backed text, the user would just see a generic
+            // answer that wasn't grounded in the data they asked for.
+            let reportStream: AsyncGenerator<string> | null = null;
+            try {
+                reportStream = this.synthesizer.generate({
+                    objective,
+                    researchType,
+                    evidenceStore: this.evidenceStore,
+                    memory: this.memory,
+                    confidence,
+                    chartSpecs,
+                    // Forward every raw LLM chunk to the usage
+                    // accumulator so the API route can emit a single
+                    // `usage` SSE event at the end of the deep
+                    // research stream. The callback is a no-op when
+                    // no accumulator was provided (e.g. in unit tests).
+                    onChunk: (chunk) => {
+                        try { this.usage?.addChunk(chunk as AIMessageChunk) } catch { /* best-effort */ }
+                    },
+                });
+            } catch (synthError) {
+                const cls = classifyLlmError(synthError, "ResearchManager.Synthesizer.start");
+                if (isNonRecoverable(cls)) {
+                    console.error(
+                        "[ResearchManager] Synthesizer unavailable:",
+                        cls.kind,
+                        synthError instanceof Error ? synthError.message : synthError
+                    );
+                    yield {
+                        type: "error",
+                        message: cls.userMessage,
+                    };
+                    yield {
+                        type: "degraded",
+                        stage: "synthesizer",
+                        kind: cls.kind,
+                        message: cls.userMessage,
+                    } as ResearchEvent;
+                    // Fall through to emit "done" with the evidence we
+                    // have, so the frontend still gets a clean stream
+                    // end. The error event above is what the user will
+                    // actually see.
+                } else {
+                    throw synthError;
+                }
+            }
+
+            if (reportStream) {
+                // Buffer the full report so the Critic can verify it
+                // before we emit "done". We still stream tokens to the
+                // client in real-time for UX, but we keep a copy for
+                // post-generation verification.
+                let fullReport = "";
+                let synthErrored = false;
+                try {
+                    for await (const token of reportStream) {
+                        fullReport += token;
+                        yield { type: "token", content: token };
+                    }
+                } catch (streamErr) {
+                    const cls = classifyLlmError(streamErr, "ResearchManager.Synthesizer.stream");
+                    if (isNonRecoverable(cls)) {
+                        console.error(
+                            "[ResearchManager] Synthesizer stream errored:",
+                            cls.kind,
+                            streamErr instanceof Error ? streamErr.message : streamErr
+                        );
+                        synthErrored = true;
+                        yield {
+                            type: "error",
+                            message: cls.userMessage,
+                        };
+                        yield {
+                            type: "degraded",
+                            stage: "synthesizer",
+                            kind: cls.kind,
+                            message: cls.userMessage,
+                        } as ResearchEvent;
+                    } else {
+                        throw streamErr;
+                    }
+                }
+
+                // --- Step 5.5: Critic verification ---
+                // Skip verification if the synthesizer errored — there's
+                // nothing meaningful to verify.
+                if (!synthErrored) {
+                    try {
+                        const criticResult = await this.critic.review(
+                            fullReport,
+                            this.evidenceStore,
+                            objective
+                        );
+                        yield { type: "verification", result: criticResult };
+
+                        if (criticResult.severity === "major") {
+                            const warning =
+                                "\n\n---\n⚠️ **Verification note:** Some claims in this answer could not be fully verified against the retrieved data. Please cross-check with official F1 sources.";
+                            yield { type: "token", content: warning };
+                        }
+                    } catch (criticError) {
+                        console.warn(
+                            "[ResearchManager] Critic verification failed:",
+                            criticError instanceof Error ? criticError.message : criticError
+                        );
+                    }
+                }
+            }
+
+            // --- Done ---
+            yield {
+                type: "done",
+                result: {
+                    researchType,
+                    iterations: budget.iterationsCompleted,
+                    tasksExecuted: budget.tasksExecuted,
+                    evidenceCount: this.evidenceStore.size(),
+                    confidence: confidence.overall,
+                },
+            };
+            if (timedOut) {
+                yield {
+                    type: "error",
+                    message: `Research reached the overall time limit (${Math.round(OVERALL_TIMEOUT_MS / 1000)}s) — synthesizing with the evidence gathered so far.`,
+                };
+            }
+        } catch (error) {
+            yield {
+                type: "error",
+                message: error instanceof Error ? error.message : "Research failed",
+            };
+        }
+    }
+}
+
+// =============================================================================
+// Factory
+// =============================================================================
+
+/**
+ * Create a ResearchManager with models from the given provider.
+ *
+ * @param provider - LLM provider
+ * @param apiKey - API key
+ * @param model - User-selected model name
+ * @param options - Research options
+ * @param reasoning - Whether to use a reasoning-capable model for the responder
+ */
+export async function createResearchManager(
+    provider: Provider,
+    apiKey: string | undefined,
+    model: string,
+    options: ResearchOptions,
+    reasoning: boolean = false
+): Promise<ResearchManager> {
+    const plannerModel = await getPlannerModel(provider, apiKey);
+    const responderModel = await getResponderModel(provider, model, reasoning, apiKey);
+
+    return new ResearchManager(plannerModel, responderModel, options);
+}

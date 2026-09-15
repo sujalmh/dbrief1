@@ -122,25 +122,9 @@ export interface Message {
         kind: string
         message: string
     }[]
-    /**
-     * Per-message usage accounting (token counts + optional cost
-     * reported by the provider). `provider` is the AI mode
-     * ("managed" | "byok"). `cost` is null when the provider
-     * doesn't report it.
-     *
-     * `model` is captured here (not just from settings) because the
-     * user can change settings mid-conversation — we want to display
-     * the model that actually produced this response.
-     */
     usage?: {
         provider: string
         model: string
-        /**
-         * Legacy: planner model id for messages produced before the
-         * managed/BYOK simplification (when planner and responder
-         * could differ). No longer populated — planner and responder
-         * always share one model now. Kept so old messages still render.
-         */
         plannerModel?: string
         promptTokens: number
         completionTokens: number
@@ -164,18 +148,9 @@ export interface Message {
 export type AiModeSetting = "managed" | "byok";
 
 interface Settings {
-    /**
-     * Exactly two options:
-     * - "managed": set up by the app owner via env vars (no user input).
-     * - "byok": brought by the user via Settings (base URL + model id
-     *   + display name; the API key lives in an httpOnly cookie).
-     */
     aiMode: AiModeSetting;
-    /** BYOK: OpenAI-compatible base URL (the "model url"). */
     byokBaseUrl: string;
-    /** BYOK: model identifier sent to the API. */
     byokModelId: string;
-    /** BYOK: friendly display name shown in the UI. */
     byokModelName: string;
     deepResearchMode: boolean
     webSearchEnabled: boolean
@@ -515,20 +490,7 @@ export const useChatStore = create<ChatStore>()(
                 isVisualizationCollapsed: state.isVisualizationCollapsed,
                 visualizationWidth: state.visualizationWidth,
             }),
-            // Bump the version when the persisted shape changes so old
-            // clients drop stale data instead of crashing on load.
-            // NOTE: version is intentionally hardcoded (not
-            // storeDefaults.storageVersion()) — v5 is the two-mode
-            // settings shape and must always trigger migration from
-            // older stored states.
             version: 5,
-            // v4 -> v5: Settings replaced provider/model/plannerModel/
-            //   temperature/maxTokens/apiKey/customModels with the
-            //   two-mode shape (aiMode + byokBaseUrl/byokModelId/
-            //   byokModelName). Old model-selection fields are dropped;
-            //   feature flags are preserved. Old `usage.plannerModel`
-            // values on messages are kept for history but no longer
-            // populated for new messages (planner == responder now).
             migrate: (persistedState) => {
                 const state = (persistedState ?? {}) as Partial<{
                     settings: Record<string, unknown>

@@ -1,8 +1,4 @@
-/**
- * LLM Two-Mode Unit Tests (managed / BYOK)
- * ========================================
- * Offline-safe: model construction performs no network calls.
- */
+/** Offline-safe: model construction performs no network calls. */
 
 import { describe, it, expect } from "vitest";
 import {

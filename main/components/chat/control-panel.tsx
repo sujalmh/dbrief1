@@ -20,7 +20,6 @@ export function ControlPanel() {
     return (
         <div className="flex items-center justify-between w-full pt-2">
             <div className="flex items-center gap-1">
-                {/* Deep Research Mode Toggle */}
                 <Tooltip>
                     <TooltipTrigger asChild>
                         <Button
@@ -40,7 +39,6 @@ export function ControlPanel() {
                     </TooltipContent>
                 </Tooltip>
 
-                {/* Web Search Toggle - Only visible in Deep Research Mode */}
                 {settings.deepResearchMode && (
                     <Tooltip>
                         <TooltipTrigger asChild>
@@ -62,7 +60,6 @@ export function ControlPanel() {
                     </Tooltip>
                 )}
 
-                {/* Visualization Toggle - Always visible */}
                 <Tooltip>
                     <TooltipTrigger asChild>
                         <Button
@@ -83,7 +80,6 @@ export function ControlPanel() {
                 </Tooltip>
             </div>
 
-            {/* AI mode badge — opens Settings. No provider/model dropdowns. */}
             <Button
                 variant="ghost"
                 size="sm"

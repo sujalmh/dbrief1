@@ -15,11 +15,6 @@ function cookieOptions() {
     };
 }
 
-/**
- * Save the user's BYOK API key to an httpOnly cookie.
- * The key never touches localStorage/IndexedDB — the browser sends it
- * automatically and the chat route reads it server-side.
- */
 export async function saveByokKeyAction(key: string) {
     const cookieStore = await cookies();
     if (!key) {
@@ -48,9 +43,6 @@ export async function clearByokKeyAction() {
     cookieStore.delete(LEGACY_COOKIE);
     return { success: true };
 }
-
-// --- Deprecated aliases (pre two-mode simplification) ---
-// Kept so any lingering imports don't break during the transition.
 
 /** @deprecated Use saveByokKeyAction instead. */
 export async function saveApiKeyAction(key: string) {

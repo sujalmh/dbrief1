@@ -1,22 +1,4 @@
-/**
- * Tests for the UsageAccumulator + aiMode/BYOK settings integration
- * =================================================================
- *
- * The accumulator is the core of the per-message usage accounting
- * that powers the model + cost footer in the chat bubble. It must:
- *   - Sum token counts correctly across multiple LLM chunks
- *   - Take the LATEST non-null cost (cost is reported once, on the
- *     final chunk, and is non-additive)
- *   - Tolerate chunks that have no usage info (most chunks don't)
- *   - Return zeroed-out totals when no usage was ever observed
- *     (so the API route can still emit a `usage` event)
- *   - Accept the provider `response_metadata.usage` shape
- *     and the LangChain `usage_metadata` shape interchangeably
- *
- * The aiMode + BYOK fields on settings (managed vs. byok, base URL,
- * model id/name) must default sensibly and round-trip through
- * updateSettings.
- */
+/** Usage accumulator + aiMode/BYOK settings tests. */
 
 import { describe, it, expect, beforeEach } from "vitest"
 import { UsageAccumulator, extractUsageFromChunk, getModelId } from "@/lib/llm-usage"

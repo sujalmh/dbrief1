@@ -127,9 +127,6 @@ export function useChatHandler() {
                 },
                 body: JSON.stringify({
                     message: messageText,
-                    // Two modes only: "managed" (server env) or "byok".
-                    // The BYOK API key lives in an httpOnly cookie and is
-                    // never sent from JS — the server reads it directly.
                     aiMode: state.settings.aiMode,
                     byokBaseUrl: state.settings.byokBaseUrl || undefined,
                     byokModel: state.settings.byokModelId || undefined,

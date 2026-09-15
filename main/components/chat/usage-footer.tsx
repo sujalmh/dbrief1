@@ -1,24 +1,6 @@
 "use client"
 
-/**
- * UsageFooter (BYOK only)
- * =======================
- *
- * Inline footer rendered at the bottom of BYOK assistant message
- * bubbles. Surfaces (a) the model that actually produced the response
- * and (b) the per-call usage accounting captured by the backend:
- *
- *   <model-id>  ·  <prompt + completion tokens>  ·  <cost in USD>
- *
- * Managed responses render nothing — the owner already knows which
- * model serves them, and showing per-response model/cost details only
- * adds noise. Cost is only shown when the provider reports it;
- * otherwise we show just token counts.
- *
- * The component is intentionally small and unobtrusive — it uses
- * tooltip on hover for the per-stage breakdown (reasoning tokens,
- * cached tokens) so the bubble itself stays visually quiet.
- */
+/** Per-message footer (model + tokens + cost). Renders for BYOK messages only. */
 
 import { useMemo } from "react"
 import { Coins, Cpu, Gauge, Wrench } from "lucide-react"
@@ -35,21 +17,11 @@ interface UsageFooterProps {
     className?: string
 }
 
-/**
- * Format a token count with a thousands separator. We never display
- * fractional tokens — the API reports them as integers.
- */
 function fmtTokens(n: number): string {
     if (n == null) return "0"
     return n.toLocaleString("en-US")
 }
 
-/**
- * Format a USD cost. OpenRouter returns cost in credits which is
- * treated as USD for our purposes. Show with 4 significant digits
- * for tiny values, 2 for normal ones, and drop the dollar sign on
- * sub-cent amounts to avoid visual noise.
- */
 function fmtCost(cost: number | null | undefined): string {
     if (cost == null) return ""
     if (cost === 0) return "Free"
@@ -58,21 +30,12 @@ function fmtCost(cost: number | null | undefined): string {
     return `$${cost.toFixed(2)}`
 }
 
-/**
- * The portion of a model id after the last slash, for readability.
- * "anthropic/claude-3.5-sonnet" -> "claude-3.5-sonnet". Falls back
- * to the full id if there's no slash (some providers use unprefixed
- * names like "mistralai/Mistral-7B-Instruct-v0.3" which we still
- * trim).
- */
 function shortModelId(id: string): string {
     if (!id) return ""
     return id.split("/").pop() || id
 }
 
 export function UsageFooter({ usage, className }: UsageFooterProps) {
-    // BYOK-only: managed responses (and any legacy pre-two-mode
-    // provider) render no footer — no model name, no cost.
     const isByok = usage.provider === "byok"
     const hasCached = useMemo(() => (usage.cachedTokens ?? 0) > 0, [usage.cachedTokens])
     const hasReasoning = useMemo(
@@ -80,9 +43,6 @@ export function UsageFooter({ usage, className }: UsageFooterProps) {
         [usage.reasoningTokens]
     )
     const costStr = fmtCost(usage.cost)
-    // Legacy: messages produced before the managed/BYOK simplification
-    // could carry a distinct `plannerModel`. New messages never set it
-    // (planner and responder share one model), so the row stays hidden.
     const hasPlanner = useMemo(
         () => !!usage.plannerModel && usage.plannerModel !== usage.model,
         [usage.plannerModel, usage.model]
@@ -98,10 +58,6 @@ export function UsageFooter({ usage, className }: UsageFooterProps) {
                 className
             )}
         >
-            {/* Planner model row — only rendered when the user
-                picked a different model for the planner role
-                (intent analysis + step decomposition). The icon
-                (Wrench) hints at the role. */}
             {hasPlanner && (
                 <div
                     data-testid="usage-planner-row"
@@ -120,10 +76,6 @@ export function UsageFooter({ usage, className }: UsageFooterProps) {
                 </div>
             )}
 
-            {/* Responder model row — always present. Same tooltip
-                affordance as before; we wrap the per-row content
-                in a flex container so the planner/responder rows
-                stack vertically. */}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span
                     className="inline-flex items-center gap-1"
@@ -138,7 +90,6 @@ export function UsageFooter({ usage, className }: UsageFooterProps) {
                     </span>
                 </span>
 
-            {/* Token counts with a tooltip showing the breakdown. */}
             <Tooltip>
                 <TooltipTrigger asChild>
                     <span
@@ -172,7 +123,6 @@ export function UsageFooter({ usage, className }: UsageFooterProps) {
                 </TooltipContent>
             </Tooltip>
 
-            {/* Cost — only rendered when the provider reported one. */}
             {costStr && (
                 <Tooltip>
                     <TooltipTrigger asChild>

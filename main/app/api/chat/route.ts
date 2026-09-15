@@ -18,10 +18,7 @@
  *   "images": []
  * }
  *
- * The BYOK API key is NOT sent in the body — it lives in the httpOnly
- * `byok_api_key` cookie (legacy `api_key` also accepted) and is read
- * server-side. `byokApiKey` in the body is accepted as a fallback for
- * non-browser clients.
+ * BYOK key comes from the httpOnly cookie, not the body.
  */
 
 import { NextRequest } from "next/server";
@@ -127,11 +124,6 @@ function getClientKey(request: NextRequest, userId: string | null): string {
     return `ip:${ip}`;
 }
 
-// =============================================================================
-// Request Validation (bounds from lib/config.ts routeConfig).
-// Two AI modes only: "managed" (server env) or "byok" (user-supplied
-// OpenAI-compatible endpoint + httpOnly-cookie key).
-// =============================================================================
 
 const ChatRequestSchema = z.object({
     message: z.string().min(1, "Message is required").max(routeConfig.messageMaxChars(), `Message too long (max ${routeConfig.messageMaxChars()} chars)`),
@@ -139,10 +131,8 @@ const ChatRequestSchema = z.object({
     byokBaseUrl: z.string().max(500).optional(),
     byokModel: z.string().max(200).optional(),
     byokModelName: z.string().max(200).optional(),
-    /** Fallback for non-browser clients; browsers use the httpOnly cookie. */
     byokApiKey: z.string().max(1000).optional(),
-    // --- Legacy fields (pre two-mode simplification). Accepted and ignored
-    // so old clients don't 400; the server always uses the aiMode path. ---
+    // Legacy fields, accepted and ignored so old clients don't 400.
     provider: z.string().optional(),
     model: z.string().optional(),
     plannerModel: z.string().optional(),
@@ -221,9 +211,6 @@ export async function POST(request: NextRequest) {
         const { message, aiMode, byokBaseUrl, byokModel, byokApiKey, apiKey: legacyApiKey, deepResearchMode, web_search, sessionId, isFirstMessage, history } = validationResult.data as ChatRequest;
         const mode = (aiMode ?? "managed") as AiMode;
 
-        // BYOK key resolution: explicit body field first, then the legacy
-        // `apiKey` body field, then the httpOnly cookies. Managed mode
-        // ignores all of these (server env provides the key).
         const cookieByokKey =
             request.cookies.get("byok_api_key")?.value?.trim() ||
             request.cookies.get("api_key")?.value?.trim() ||
@@ -280,10 +267,6 @@ export async function POST(request: NextRequest) {
                     // in normal mode — conversational messages never need it.
                     // In deep-research mode both models are needed, so init
                     // them in parallel (independent getChatModel calls).
-                    //
-                    // Planner and responder ALWAYS share one model now
-                    // (managed env model, or the user's BYOK model). There
-                    // is no separate planner picker.
                     let plannerModel;
                     // Pre-initialized responder for deep-research mode (parallel init below).
                     let deepResponderModel: Awaited<ReturnType<typeof getResponderModel>> | null = null;
@@ -304,10 +287,6 @@ export async function POST(request: NextRequest) {
                         return;
                     }
 
-                    // --- Session metadata (title + type) via LLM ---
-                    // Keyword heuristics were tried here and removed: they
-                    // misclassified session types too often. One small LLM
-                    // call on the first message only.
                     const sendLlmMetadata = async (text: string) => {
                         if (!isFirstMessage || !sessionId || controllerClosed) return;
                         try {
@@ -479,7 +458,6 @@ export async function POST(request: NextRequest) {
                             // is in scope here.
                             emitUsage()
 
-                            // Title + type for the chat list (first message only).
                             await sendLlmMetadata(message);
 
                             safeClose();
@@ -516,10 +494,7 @@ export async function POST(request: NextRequest) {
                     // of running sequentially afterwards.
                     let plan: Plan;
                     let directReply: string | undefined;
-                    // Every message goes through the LLM planner — a regex
-                    // short-circuit was tried here and removed: it
-                    // misclassified real questions as chit-chat.
-                    // The responder model init (dynamic import + client setup)
+                    // Responder init (dynamic import + client setup)
                     // is independent of planning, so it overlaps too instead
                     // of running sequentially afterwards.
                     const responderPromise = getResponderModel(mode, byok, deepResearchMode, gatewaySessionId).then(
@@ -530,10 +505,6 @@ export async function POST(request: NextRequest) {
                         // In Deep Research Mode, force web search to be enabled
                         const effectiveWebSearch = deepResearchMode ? true : web_search;
 
-                        // needs_plan=false carries a direct reply (greetings,
-                        // thanks, capability questions) — streamed back with no
-                        // tool calls and no second LLM call. needs_plan=true
-                        // carries steps.
                         const decision = await decidePlan(
                             plannerModel,
                             message,
@@ -575,7 +546,6 @@ export async function POST(request: NextRequest) {
                         sendEvent("token", { content: directReply });
                         sendEvent("done", {});
 
-                        // Title + type for the chat list (first message only).
                         await sendLlmMetadata(message);
 
                         safeClose();
@@ -782,9 +752,6 @@ Please answer the user's question based on the F1 data provided above.`;
                             if (picked.length > 0) {
                                 sendEvent("citations", { citations: picked });
                             }
-                            // Title + type for the chat list (first message
-                            // only), then close (shared tail path with the
-                            // early returns below).
                             await sendLlmMetadata(message);
                             safeClose();
                             return;
@@ -853,13 +820,10 @@ Please answer the user's question based on the F1 data provided above.`;
                     // Emit aggregated usage accounting (token counts +
                     // cost when reported). The frontend stores this on
                     // the message and renders a small footer in the
-                    // bubble (BYOK messages only).
                     emitUsage()
 
                     sendEvent("done", {});
 
-                    // 5. Title + type for the chat list (first message
-                    // only). The client persists it to Firestore.
                     await sendLlmMetadata(message);
 
                     safeClose();

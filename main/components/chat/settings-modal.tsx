@@ -54,11 +54,6 @@ export function SettingsModal() {
         })
     }
 
-    /**
-     * Verify the BYOK endpoint by hitting {baseUrl}/models with the key.
-     * Uses the live input values (not the httpOnly cookie) so the user
-     * can verify before saving.
-     */
     async function handleTestKey() {
         setTestResult(null)
         const key = apiKeyInput.trim()
@@ -72,7 +67,6 @@ export function SettingsModal() {
             setErrorMsg(configError)
             return
         }
-        // The key can come from the input (unsaved) or the saved cookie.
         if (!key && !hasKey) {
             setErrorMsg("Enter your API key (or save it first) to test the connection.")
             return
@@ -93,10 +87,6 @@ export function SettingsModal() {
             }
             const controller = new AbortController()
             const timeoutId = setTimeout(() => controller.abort(), 10_000)
-            // NOTE: without a key we still try the request — some
-            // self-hosted endpoints allow unauthenticated /models. The
-            // cookie key can't be read from JS, so an empty-input test
-            // after saving will exercise the endpoint shape only.
             const res = await fetch(`${baseUrl}/models`, {
                 method: "GET",
                 headers,
@@ -153,8 +143,6 @@ export function SettingsModal() {
                     return
                 }
             } else if (apiKeyInput.trim()) {
-                // Managed mode needs no key, but don't silently drop a
-                // pasted key — save it in case the user switches to BYOK.
                 const result = await saveByokKeyAction(apiKeyInput.trim())
                 if (result.success) {
                     setHasKey(true)
@@ -188,7 +176,6 @@ export function SettingsModal() {
                 </DialogHeader>
 
                 <div className="grid gap-5 px-2">
-                    {/* Mode selector — the only "model selection" left */}
                     <div className="grid grid-cols-2 gap-3">
                         <button
                             type="button"
@@ -358,7 +345,6 @@ export function SettingsModal() {
                         </div>
                     )}
 
-                    {/* Developer Mode */}
                     <div className="flex items-center justify-between rounded-lg border border-muted/40 p-3 bg-muted/5 mt-1">
                         <div className="space-y-0.5">
                             <Label className="text-sm font-medium">Developer Mode</Label>

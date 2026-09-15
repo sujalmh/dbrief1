@@ -601,15 +601,7 @@ export class ResearchManager {
 // Factory
 // =============================================================================
 
-/**
- * Create a ResearchManager for the given AI mode.
- * Planner and responder share one model (managed env model or BYOK).
- *
- * @param mode - "managed" | "byok"
- * @param byok - BYOK connection (baseUrl / model / apiKey) when mode is "byok"
- * @param options - Research options
- * @param reasoning - Adjusts responder sampling only (never the model id)
- */
+/** Planner and responder share one model (managed env model or BYOK). */
 export async function createResearchManager(
     mode: AiMode,
     byok: { baseUrl?: string; model?: string; apiKey?: string } | undefined,

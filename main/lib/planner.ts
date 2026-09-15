@@ -86,7 +86,7 @@ Available Tools (FastAPI):
 
 - get_driver_standings(year, driver?): Final driver standings (points, wins).
 - retrieve_regulations(query, season, section, doc_type?, event?): Search FIA regulations + stewards' decisions (section: Sporting, Technical, Financial; doc_type: regulation or decision; event e.g. "Austrian Grand Prix" for decisions). Returns relevant chunks with source citations.
-- web_search(query): For news/current events ONLY.
+- web_search(query): Web search. Use FIRST for anything time-sensitive — recent results, "yesterday"/"today"/"latest", current-season events after local data coverage, news, rumors. If the question can be fully answered from web results (e.g. "who won yesterday's race"), plan ONLY the web_search step and no F1 API steps. Phrase the query with concrete names and dates ("2026 Azerbaijan Grand Prix winner"), never relative terms like "yesterday".
 
 Simulation Tool:
 - run_simulation(scenario_id, horizon, metric, iterations?, base_value?, variance?, seed?): Run counterfactual/predictive simulations for "what-if" analysis.

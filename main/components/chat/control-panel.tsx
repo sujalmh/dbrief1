@@ -1,6 +1,6 @@
 "use client"
 
-import { Brain, Globe, BarChart3, Server, KeyRound } from "lucide-react"
+import { Brain, BarChart3, Server, KeyRound } from "lucide-react"
 import { useChatStore } from "@/lib/store"
 import {
     Tooltip,
@@ -38,27 +38,6 @@ export function ControlPanel() {
                         <p>{settings.deepResearchMode ? "Deep Research Mode" : "Normal Mode"}</p>
                     </TooltipContent>
                 </Tooltip>
-
-                {settings.deepResearchMode && (
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() =>
-                                    updateSettings({ webSearchEnabled: !settings.webSearchEnabled })
-                                }
-                                className="btn-wheel btn-wheel-green h-8 w-8"
-                                data-active={settings.webSearchEnabled}
-                            >
-                                <Globe className="h-4 w-4" />
-                            </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom">
-                            <p>Web Search</p>
-                        </TooltipContent>
-                    </Tooltip>
-                )}
 
                 <Tooltip>
                     <TooltipTrigger asChild>

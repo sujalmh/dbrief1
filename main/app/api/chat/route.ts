@@ -208,7 +208,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { message, aiMode, byokBaseUrl, byokModel, byokApiKey, apiKey: legacyApiKey, deepResearchMode, web_search, sessionId, isFirstMessage, history } = validationResult.data as ChatRequest;
+        const { message, aiMode, byokBaseUrl, byokModel, byokApiKey, apiKey: legacyApiKey, deepResearchMode, sessionId, isFirstMessage, history } = validationResult.data as ChatRequest;
         const mode = (aiMode ?? "managed") as AiMode;
 
         const cookieByokKey =
@@ -502,8 +502,7 @@ export async function POST(request: NextRequest) {
                         (e) => ({ ok: false as const, error: e }),
                     );
                     try {
-                        // In Deep Research Mode, force web search to be enabled
-                        const effectiveWebSearch = deepResearchMode ? true : web_search;
+                        const effectiveWebSearch = true;
 
                         let decision;
                         try {
@@ -577,17 +576,11 @@ export async function POST(request: NextRequest) {
                             ...getSearchTools(), // Always include in deep mode
                         };
                     } else {
-                        // Normal Mode: Data API + Retrieval + Simulation.
-                        // run_simulation is included (not gated on deep mode)
-                        // because the planner advertises what-if queries for
-                        // every request — and it is a local deterministic
-                        // tool with no backend cost. Web search stays
-                        // deep-mode-only (or explicit opt-in) to avoid
-                        // surprise external calls.
                         tools = {
                             ...f1Tools,
                             ...getRegulationTools(),
                             ...getSimulationTools(),
+                            ...getSearchTools(),
                         };
                     }
 
@@ -890,7 +883,7 @@ export async function GET() {
                     byokBaseUrl: "string (byok only, model URL)",
                     byokModel: "string (byok only, model identifier)",
                     byokModelName: "string (byok only, display name, optional)",
-                    web_search: "boolean (default: false)",
+                    web_search: "boolean (accepted but ignored, search is always available)",
                     images: "string[] (default: [])",
                 },
             },

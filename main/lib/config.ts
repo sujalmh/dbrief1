@@ -285,12 +285,8 @@ export const routeConfig = {
 
 export const searchConfig = {
     timeoutMs: () => envInt("SEARCH_TIMEOUT_MS", 15_000),
-    baseUrl: () =>
-        envStr(
-            "SEARCH_BASE_URL",
-            "https://api.duckduckgo.com/?q={query}&format=json&no_html=1&skip_disambig=1"
-        ),
-    relatedTopicsLimit: () => envInt("SEARCH_RELATED_TOPICS_LIMIT", 5),
+    baseUrl: () => envStr("SEARCH_BASE_URL", "https://agent.tinyfish.ai/v1/search"),
+    apiKey: () => envStr("TINYFISH_API_KEY", ""),
     resultsLimit: () => envInt("SEARCH_RESULTS_LIMIT", 5),
 };
 
@@ -426,7 +422,8 @@ const DEFAULT_RESPONDER_SYSTEM_PROMPT = `You are an expert Formula 1 AI assistan
 - Use tables for comparisons when appropriate
 - Bold important information
 - Keep responses focused and relevant
-- When the F1 Data Context contains \`retrieve_regulations\` results, base every regulation/decision claim on the retrieved documents, preferring higher \`relevance_score\` hits`;
+- When the F1 Data Context contains \`retrieve_regulations\` results, base every regulation/decision claim on the retrieved documents, preferring higher \`relevance_score\` hits
+- When the F1 Data Context contains \`web_search\` results, treat them as valid sources for recent/current events (winners, news). Cite what they state; never override them with training data`;
 
 export function responderSystemPrompt(): string {
     return envStr("F1_RESPONDER_SYSTEM_PROMPT", DEFAULT_RESPONDER_SYSTEM_PROMPT);

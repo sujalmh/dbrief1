@@ -1,94 +1,53 @@
-/**
- * Web Search Tool
- * ===============
- * Optional web search functionality using DuckDuckGo.
- * Used to supplement F1 data with current news and context.
- */
-
 import { z } from "zod";
 import { tool, StructuredTool } from "@langchain/core/tools";
 import { searchConfig } from "@/lib/config";
 
-// =============================================================================
-// Configuration (live — see lib/config.ts)
-// =============================================================================
-
-function searchTimeoutMs(): number {
-    return searchConfig.timeoutMs();
-}
-
-function searchUrlFor(query: string): string {
-    return searchConfig.baseUrl().replace("{query}", encodeURIComponent(query));
-}
-
-function relatedTopicsLimit(): number {
-    return searchConfig.relatedTopicsLimit();
-}
-
-function resultsLimit(): number {
-    return searchConfig.resultsLimit();
-}
-
-// =============================================================================
-// Search Tool
-// =============================================================================
-
-/**
- * Web search tool using DuckDuckGo Instant Answers
- * Note: This uses the free, no-API-key DuckDuckGo endpoint
- */
 export const webSearchTool = tool(
     async ({ query }) => {
         try {
-            // Search endpoint is config-driven (SEARCH_BASE_URL).
-            const response = await fetch(
-                searchUrlFor(query),
-                {
-                    signal: AbortSignal.timeout(searchTimeoutMs()),
-                }
-            );
+            const apiKey = searchConfig.apiKey();
+            if (!apiKey) {
+                return JSON.stringify({
+                    error: true,
+                    message: "Web search is not configured on the server (missing TINYFISH_API_KEY).",
+                    query,
+                });
+            }
+
+            const params = new URLSearchParams({
+                query,
+                purpose: "Answering a Formula 1 question; recent results and news matter most.",
+            });
+            const response = await fetch(`${searchConfig.baseUrl()}?${params.toString()}`, {
+                headers: { "X-API-Key": apiKey },
+                signal: AbortSignal.timeout(searchConfig.timeoutMs()),
+            });
 
             if (!response.ok) {
                 throw new Error(`Search failed: ${response.status}`);
             }
 
-            const data = await response.json();
-
-            // Extract relevant information (result caps are config-driven)
-            const topicsCap = relatedTopicsLimit();
-            const hitsCap = resultsLimit();
-            const result = {
-                abstract: data.Abstract || null,
-                abstract_source: data.AbstractSource || null,
-                abstract_url: data.AbstractURL || null,
-                heading: data.Heading || null,
-                answer: data.Answer || null,
-                related_topics: (data.RelatedTopics || [])
-                    .slice(0, topicsCap)
-                    .filter((topic: { Text?: string }) => topic.Text)
-                    .map((topic: { Text: string; FirstURL?: string }) => ({
-                        text: topic.Text,
-                        url: topic.FirstURL,
-                    })),
-                results: (data.Results || [])
-                    .slice(0, hitsCap)
-                    .map((result: { Text: string; FirstURL?: string }) => ({
-                        text: result.Text,
-                        url: result.FirstURL,
-                    })),
+            const data = await response.json() as {
+                results?: { title?: string; url?: string; snippet?: string; site_name?: string }[];
             };
+            const results = (data.results || [])
+                .map((r) => ({
+                    title: r.title || r.site_name || r.url || "",
+                    url: r.url || "",
+                    snippet: (r.snippet || "").slice(0, 500),
+                }))
+                .filter((r) => r.title)
+                .slice(0, searchConfig.resultsLimit());
 
-            // If no useful results, return a note
-            if (!result.abstract && !result.answer && result.related_topics.length === 0) {
+            if (results.length === 0) {
                 return JSON.stringify({
                     note: "No relevant web results found for this query",
                     query,
                 });
             }
 
-            return JSON.stringify(result);
+            return JSON.stringify({ results, query });
         } catch (error) {
-            // Return error info instead of throwing
             return JSON.stringify({
                 error: true,
                 message: error instanceof Error ? error.message : "Search failed",
@@ -99,24 +58,17 @@ export const webSearchTool = tool(
     {
         name: "web_search",
         description:
-            "Search the web for F1-related news, recent events, or information not available in historical data",
+            "Search the web for F1 news, recent events, or information not available in historical data. Returns sources with snippets.",
         schema: z.object({
             query: z
                 .string()
                 .describe(
-                    "Search query - be specific and include relevant F1 terms"
+                    "Search query - use concrete names and dates (e.g. '2026 Azerbaijan Grand Prix winner')"
                 ),
         }),
     }
 );
 
-// =============================================================================
-// Tool Registry
-// =============================================================================
-
-/**
- * Get the web search tool
- */
 export function getSearchTools(): Record<string, StructuredTool> {
     return {
         web_search: webSearchTool,

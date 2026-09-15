@@ -31,7 +31,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { StructuredTool } from "@langchain/core/tools";
 
 import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type AiMode } from "@/lib/llm";
-import { decidePlan, createFallbackPlan, tryConversationalFastPath, type Plan } from "@/lib/planner";
+import { decidePlan, createFallbackPlan, type Plan } from "@/lib/planner";
 import { executeSteps, aggregateContext } from "@/lib/executor";
 import { UsageAccumulator, getModelId } from "@/lib/llm-usage";
 import { f1Tools } from "@/lib/tools/fastf1";
@@ -304,49 +304,18 @@ export async function POST(request: NextRequest) {
                         return;
                     }
 
-                    // --- Session metadata (title + type): deterministic heuristic ---
-                    // The old path made a dedicated LLM call (+ model init) per
-                    // first message just to write a ≤40-char title and pick 1 of
-                    // 4 types. The heuristic below does both synchronously with
-                    // keyword rules — zero latency, zero tokens — and emits the
-                    // `metadata` event immediately so the chat list updates on
-                    // the first frame instead of mid-stream.
-                    let metadataPromise: Promise<{ title: string; type: string } | null> | null = null;
-                    let metadataSent = false;
-                    const emitMetadata = (metadata: { title: string; type: string } | null) => {
-                        if (metadata && !metadataSent && !controllerClosed) {
-                            metadataSent = true;
-                            sendEvent("metadata", metadata);
-                        }
-                    };
-                    if (isFirstMessage && sessionId) {
-                        const msg = message;
-                        metadataPromise = (async () => {
-                            const { heuristicSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
-                            return heuristicSessionMetadata(msg);
-                        })();
-                        // Fire-and-forget: emit as soon as ready (parallel
-                        // with planner + executor below). The final
-                        // `await metadataPromise` before close is only a
-                        // rendezvous so the stream doesn't close early.
-                        metadataPromise.then(emitMetadata, (err) =>
-                            console.error("Error generating session metadata:", err)
-                        );
-                    }
-                    /** Rendezvous before close: wait for the early metadata call (bounded). */
-                    const flushMetadata = async () => {
-                        if (!metadataPromise || metadataSent) return;
-                        let timer: ReturnType<typeof setTimeout> | undefined;
+                    // --- Session metadata (title + type) via LLM ---
+                    // Keyword heuristics were tried here and removed: they
+                    // misclassified session types too often. One small LLM
+                    // call on the first message only.
+                    const sendLlmMetadata = async (text: string) => {
+                        if (!isFirstMessage || !sessionId || controllerClosed) return;
                         try {
-                            const timeout = new Promise<null>((resolve) => {
-                                timer = setTimeout(() => resolve(null), routeConfig.metadataTimeoutMs());
-                            });
-                            const metadata = await Promise.race([metadataPromise, timeout]);
-                            emitMetadata(metadata);
+                            const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
+                            const metadata = await generateSessionMetadata(text, { mode, ...byok }, gatewaySessionId);
+                            if (!controllerClosed) sendEvent("metadata", metadata);
                         } catch (error) {
                             console.error("Error generating session metadata:", error);
-                        } finally {
-                            if (timer !== undefined) clearTimeout(timer);
                         }
                     };
 
@@ -510,9 +479,8 @@ export async function POST(request: NextRequest) {
                             // is in scope here.
                             emitUsage()
 
-                            // Flush the parallel session-metadata call so the
-                            // chat title updates even for deep-research turns.
-                            await flushMetadata();
+                            // Title + type for the chat list (first message only).
+                            await sendLlmMetadata(message);
 
                             safeClose();
                             return;
@@ -548,34 +516,32 @@ export async function POST(request: NextRequest) {
                     // of running sequentially afterwards.
                     let plan: Plan;
                     let directReply: string | undefined;
-                    // Zero-LLM short-circuit for pure conversation (greetings,
-                    // thanks, goodbyes, capability questions): answered
-                    // deterministically with no model call at all. Longer
-                    // messages always go to the LLM planner below.
-                    const fastConversational = tryConversationalFastPath(message);
-                    const responderPromise = fastConversational
-                        ? null
-                        : getResponderModel(mode, byok, deepResearchMode, gatewaySessionId).then(
-                            (m) => ({ ok: true as const, model: m }),
-                            (e) => ({ ok: false as const, error: e }),
-                        );
+                    // Every message goes through the LLM planner — a regex
+                    // short-circuit was tried here and removed: it
+                    // misclassified real questions as chit-chat.
+                    // The responder model init (dynamic import + client setup)
+                    // is independent of planning, so it overlaps too instead
+                    // of running sequentially afterwards.
+                    const responderPromise = getResponderModel(mode, byok, deepResearchMode, gatewaySessionId).then(
+                        (m) => ({ ok: true as const, model: m }),
+                        (e) => ({ ok: false as const, error: e }),
+                    );
                     try {
                         // In Deep Research Mode, force web search to be enabled
                         const effectiveWebSearch = deepResearchMode ? true : web_search;
 
-                        if (fastConversational) {
-                            plan = fastConversational.plan;
-                            directReply = fastConversational.reply;
-                        } else {
-                            const decision = await decidePlan(
-                                plannerModel,
-                                message,
-                                effectiveWebSearch,
-                                deepResearchMode
-                            );
-                            plan = decision.plan;
-                            directReply = decision.needsPlan ? undefined : decision.reply;
-                        }
+                        // needs_plan=false carries a direct reply (greetings,
+                        // thanks, capability questions) — streamed back with no
+                        // tool calls and no second LLM call. needs_plan=true
+                        // carries steps.
+                        const decision = await decidePlan(
+                            plannerModel,
+                            message,
+                            effectiveWebSearch,
+                            deepResearchMode
+                        );
+                        plan = decision.plan;
+                        directReply = decision.needsPlan ? undefined : decision.reply;
                     } catch (error) {
                         // Distinguish "LLM is unavailable" (rate limit, auth,
                         // network) from "LLM returned bad JSON". The former
@@ -609,10 +575,8 @@ export async function POST(request: NextRequest) {
                         sendEvent("token", { content: directReply });
                         sendEvent("done", {});
 
-                        // Session metadata (title + type) was kicked off in
-                        // parallel above — rendezvous here so the `metadata`
-                        // event is flushed before the stream closes.
-                        await flushMetadata();
+                        // Title + type for the chat list (first message only).
+                        await sendLlmMetadata(message);
 
                         safeClose();
                         return;
@@ -649,9 +613,7 @@ export async function POST(request: NextRequest) {
                     // above — just rendezvous here. Tool execution below does
                     // not need the responder, but awaiting now overlaps the
                     // init with the plan call that just finished.
-                    // (Non-null: the conversational fast path returns before
-                    // reaching here, so responderPromise is always set.)
-                    const responderSettled = await responderPromise!;
+                    const responderSettled = await responderPromise;
                     if (!responderSettled.ok) {
                         const errorMessage = responderSettled.error instanceof Error ? responderSettled.error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
@@ -820,9 +782,10 @@ Please answer the user's question based on the F1 data provided above.`;
                             if (picked.length > 0) {
                                 sendEvent("citations", { citations: picked });
                             }
-                            // Session metadata rendezvous + close (shared
-                            // tail path with the early returns below).
-                            await flushMetadata();
+                            // Title + type for the chat list (first message
+                            // only), then close (shared tail path with the
+                            // early returns below).
+                            await sendLlmMetadata(message);
                             safeClose();
                             return;
                         }
@@ -895,12 +858,9 @@ Please answer the user's question based on the F1 data provided above.`;
 
                     sendEvent("done", {});
 
-                    // 5. Session metadata (title + type) was kicked off in
-                    // parallel at request start and likely already emitted
-                    // mid-stream — rendezvous here so it isn't lost if the
-                    // stream would otherwise close first. The client persists
-                    // it to Firestore.
-                    await flushMetadata();
+                    // 5. Title + type for the chat list (first message
+                    // only). The client persists it to Firestore.
+                    await sendLlmMetadata(message);
 
                     safeClose();
 

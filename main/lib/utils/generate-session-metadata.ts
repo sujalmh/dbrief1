@@ -6,49 +6,6 @@ export interface SessionMetadata {
     type: "telemetry" | "comparison" | "strategy" | "insights";
 }
 
-/**
- * Deterministic heuristic session metadata — zero LLM calls.
- * Title: first ~40 chars of the query, cut at a word boundary.
- * Type: keyword rules mirroring the old LLM prompt (telemetry >
- * comparison > strategy > insights). Used by the chat route so the
- * `metadata` event emits synchronously instead of after an LLM round-trip.
- * Keyword sets and lengths are config-driven (SESSION_* env vars).
- */
-export function heuristicSessionMetadata(userQuery: string): SessionMetadata {
-    const text = userQuery.trim().replace(/\s+/g, " ");
-    const lower = text.toLowerCase();
-    const cfg = sessionMetadataConfig;
-
-    const matchesAny = (keywords: string[]) =>
-        keywords.some((k) => {
-            try {
-                return new RegExp(`\\b(${k})\\b`, "i").test(lower);
-            } catch {
-                return lower.includes(k.toLowerCase());
-            }
-        });
-
-    let type: SessionMetadata["type"] = "insights";
-    if (matchesAny(cfg.telemetryKeywords())) {
-        type = "telemetry";
-    } else if (matchesAny(cfg.comparisonKeywords())) {
-        type = "comparison";
-    } else if (matchesAny(cfg.strategyKeywords())) {
-        type = "strategy";
-    }
-
-    const maxChars = cfg.titleMaxChars();
-    const cutThreshold = cfg.wordCutThreshold();
-    let title = text.slice(0, maxChars);
-    if (text.length > maxChars) {
-        const cut = title.lastIndexOf(" ");
-        title = (cut > cutThreshold ? title.slice(0, cut) : title).trimEnd() + "...";
-    }
-    if (!title) title = cfg.fallbackTitle();
-
-    return { title, type };
-}
-
 export interface MetadataLlmRef {
     mode: AiMode;
     byokBaseUrl?: string;

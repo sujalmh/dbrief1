@@ -17,7 +17,7 @@ import { EvidencePanel } from "@/components/chat/evidence-panel"
 import { ReflectionTrace } from "@/components/chat/reflection-trace"
 import { RadioWave } from "@/components/chat/radio-wave"
 import { UsageFooter } from "@/components/chat/usage-footer"
-import { useEffect, useRef, memo, useCallback, useState } from "react"
+import { useEffect, useRef, memo, useCallback, useMemo, useState } from "react"
 import { useChatHandler } from "@/lib/hooks/use-chat-handler"
 import { getDriverColor, DRIVER_REGEX } from "@/lib/f1-colors"
 import type { Components } from "react-markdown"
@@ -99,12 +99,34 @@ const rehypePlugins = [rehypeSanitize];
 const MessageContent = memo(function MessageContent({
     content,
     isUser,
-    isError
+    isError,
+    steps,
+    iterations,
 }: {
     content: string;
     isUser: boolean;
     isError?: boolean;
+    steps?: Message['steps'];
+    iterations?: Message['iterations'];
 }) {
+    const statusLine = useMemo(() => {
+        if (steps && steps.length > 0) {
+            const running = steps.find((s) => s.status === "running");
+            if (running) return running.description;
+            if (steps.every((s) => s.status === "pending")) return "Planning…";
+            const done = steps.filter((s) => s.status === "success" || s.status === "failed").length;
+            return `Step ${Math.min(done + 1, steps.length)} of ${steps.length}…`;
+        }
+        if (iterations && iterations.length > 0) {
+            for (let i = iterations.length - 1; i >= 0; i--) {
+                const running = iterations[i].tasks.find((t) => t.status === "running");
+                if (running) return running.description;
+            }
+            return "Researching…";
+        }
+        return null;
+    }, [steps, iterations]);
+
     if (content) {
         return (
             <ReactMarkdown
@@ -120,7 +142,12 @@ const MessageContent = memo(function MessageContent({
     if (!isUser && !isError) {
         return (
             <div className="flex items-center gap-3 py-2">
-                <span className="text-xs font-mono text-muted-foreground animate-pulse">AWAITING DATA...</span>
+                <span
+                    title={statusLine ?? undefined}
+                    className="text-xs font-mono text-muted-foreground animate-pulse truncate max-w-[300px]"
+                >
+                    {statusLine ?? "AWAITING DATA..."}
+                </span>
                 <RadioWave />
             </div>
         );
@@ -374,6 +401,8 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
                         content={message.content}
                         isUser={isUser}
                         isError={isError}
+                        steps={message.steps}
+                        iterations={message.iterations}
                     />
                 </div>
 

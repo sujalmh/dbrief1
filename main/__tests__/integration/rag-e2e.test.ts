@@ -16,7 +16,7 @@ describe("RAG Retrieval - End-to-End Test", () => {
     beforeAll(async () => {
         // Use the planner model for sub-query generation
         try {
-            plannerModel = await getPlannerModel("go");
+            plannerModel = await getPlannerModel("managed");
         } catch (error) {
             console.warn("⚠️ Skipping E2E test - LLM not available:", error);
         }

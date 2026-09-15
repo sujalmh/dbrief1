@@ -71,11 +71,10 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
         return {
             kind: "rate_limit",
             userMessage:
-                "The AI provider is rate-limiting requests right now. " +
-                "This usually means a free-tier daily quota was reached or " +
-                "too many requests were sent in a short window. " +
-                "Please wait a minute, switch to a different provider in Settings, " +
-                "or use your own API key.",
+                "The AI model is rate-limiting requests right now. " +
+                "This usually means a daily quota was reached or too many " +
+                "requests were sent in a short window. Please wait a minute, " +
+                "or check Settings (Managed / BYOK).",
             recoverable: false,
             cause: err,
         };
@@ -90,9 +89,8 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
         return {
             kind: "quota",
             userMessage:
-                "The OpenRouter account is out of credits, so paid models are " +
-                "unavailable. Free models still work — pick a :free model in " +
-                "Settings, or top up credits at openrouter.ai/settings/credits.",
+                "The AI account is out of credits, so the model is unavailable. " +
+                "Top up the account behind the current mode, or switch modes in Settings (Managed / BYOK).",
             recoverable: false,
             cause: err,
         };
@@ -111,8 +109,9 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
         return {
             kind: "auth",
             userMessage:
-                "The AI provider rejected the API key. " +
-                "Open Settings and verify the key for the selected provider.",
+                "The AI model rejected the API key. " +
+                "Open Settings and verify the key (BYOK) or ask the app owner " +
+                "to check the managed key.",
             recoverable: false,
             cause: err,
         };
@@ -131,8 +130,9 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
         return {
             kind: "model_not_found",
             userMessage:
-                "The selected model is no longer available. " +
-                "Open Settings and pick a different model.",
+                "The configured model is no longer available. " +
+                "Open Settings and check the model identifier (BYOK) or ask " +
+                "the app owner to update the managed model.",
             recoverable: false,
             cause: err,
         };
@@ -149,8 +149,8 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
         return {
             kind: "overloaded",
             userMessage:
-                "The AI provider is temporarily overloaded. " +
-                "Please try again in a few seconds, or switch providers in Settings.",
+                "The AI model is temporarily overloaded. " +
+                "Please try again in a few seconds, or check Settings (Managed / BYOK).",
             recoverable: false,
             cause: err,
         };
@@ -170,8 +170,8 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
         return {
             kind: "network",
             userMessage:
-                "Could not reach the AI provider (network error). " +
-                "Check your connection and try again.",
+                "Could not reach the AI model (network error). " +
+                "Check your connection and the model URL in Settings (BYOK), then try again.",
             recoverable: false,
             cause: err,
         };
@@ -210,7 +210,7 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
         kind: "unknown",
         userMessage:
             "The AI model could not be reached. " +
-            "Please try again, or switch to a different provider in Settings.",
+            "Please try again, or check Settings (Managed / BYOK).",
         recoverable: false,
         cause: err,
     };

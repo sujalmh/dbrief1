@@ -477,15 +477,14 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
                     </div>
                 )}
 
-                {/* Per-message usage footer (model + tokens + cost).
+                {/* Per-message usage footer (BYOK only: model + tokens + cost).
                     The backend populates `usage` via the `usage` SSE
-                    event (per the OpenRouter Usage Accounting docs).
-                    We render it on every assistant message that has
-                    a usage payload — including streaming messages
-                    that errored mid-stream, so users can still see
-                    what they were charged for. The footer sits below
-                    the citations/actions to stay out of the way of
-                    the answer itself. */}
+                    event. UsageFooter renders nothing for managed
+                    responses — the footer only appears on BYOK messages
+                    (including streaming messages that errored mid-stream,
+                    so BYOK users can still see what they were charged for).
+                    It sits below the citations/actions to stay out of the
+                    way of the answer itself. */}
                 {message.usage && !isUser && (
                     <UsageFooter usage={message.usage} />
                 )}

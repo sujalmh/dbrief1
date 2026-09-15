@@ -1,6 +1,6 @@
 /**
- * Tests for the UsageAccumulator + customModels settings integration
- * ================================================================
+ * Tests for the UsageAccumulator + aiMode/BYOK settings integration
+ * =================================================================
  *
  * The accumulator is the core of the per-message usage accounting
  * that powers the model + cost footer in the chat bubble. It must:
@@ -10,12 +10,12 @@
  *   - Tolerate chunks that have no usage info (most chunks don't)
  *   - Return zeroed-out totals when no usage was ever observed
  *     (so the API route can still emit a `usage` event)
- *   - Accept the OpenRouter-style `response_metadata.usage` shape
+ *   - Accept the provider `response_metadata.usage` shape
  *     and the LangChain `usage_metadata` shape interchangeably
  *
- * The customModels field on settings is the user-curated list of
- * model ids that appear in the model picker. It must default to
- * `[]` for first-time users, accept additions, and reject dups.
+ * The aiMode + BYOK fields on settings (managed vs. byok, base URL,
+ * model id/name) must default sensibly and round-trip through
+ * updateSettings.
  */
 
 import { describe, it, expect, beforeEach } from "vitest"
@@ -197,68 +197,52 @@ describe("getModelId", () => {
     })
 })
 
-describe("settings.customModels", () => {
+describe("settings.aiMode + BYOK", () => {
     beforeEach(() => {
         useChatStore.setState((state) => ({
-            settings: { ...state.settings, customModels: [] },
+            settings: {
+                ...state.settings,
+                aiMode: "managed",
+                byokBaseUrl: "",
+                byokModelId: "",
+                byokModelName: "",
+            },
         }))
     })
 
-    it("defaults to an empty list", () => {
+    it("defaults to managed mode with empty BYOK fields", () => {
         const { settings } = useChatStore.getState()
-        // The default may have been replaced by persisted state in
-        // other tests; reset explicitly.
-        expect(Array.isArray(settings.customModels)).toBe(true)
+        expect(settings.aiMode).toBe("managed")
+        expect(settings.byokBaseUrl).toBe("")
+        expect(settings.byokModelId).toBe("")
+        expect(settings.byokModelName).toBe("")
     })
 
-    it("round-trips through updateSettings", () => {
+    it("round-trips BYOK fields through updateSettings", () => {
         useChatStore.getState().updateSettings({
-            customModels: ["anthropic/claude-3.5-sonnet", "openai/gpt-4o"],
+            aiMode: "byok",
+            byokBaseUrl: "https://api.openai.com/v1",
+            byokModelId: "gpt-4o-mini",
+            byokModelName: "My GPT",
         })
-        expect(useChatStore.getState().settings.customModels).toEqual([
-            "anthropic/claude-3.5-sonnet",
-            "openai/gpt-4o",
-        ])
-    })
-
-    it("appends to the existing list without losing prior entries", () => {
-        useChatStore.getState().updateSettings({ customModels: ["model-a"] })
-        const current = useChatStore.getState().settings.customModels
-        useChatStore.getState().updateSettings({ customModels: [...current, "model-b"] })
-        expect(useChatStore.getState().settings.customModels).toEqual(["model-a", "model-b"])
-    })
-})
-
-describe("settings.plannerModel", () => {
-    beforeEach(() => {
-        useChatStore.setState((state) => ({
-            settings: { ...state.settings, plannerModel: "" },
-        }))
-    })
-
-    it("defaults to the empty string (use server default)", () => {
-        expect(typeof useChatStore.getState().settings.plannerModel).toBe("string")
-    })
-
-    it("round-trips through updateSettings", () => {
-        useChatStore.getState().updateSettings({
-            plannerModel: "nvidia/nemotron-3-super-120b-a12b:free",
-        })
-        expect(useChatStore.getState().settings.plannerModel).toBe(
-            "nvidia/nemotron-3-super-120b-a12b:free"
-        )
-    })
-
-    it("is independent of the responder model", () => {
-        // The split is the whole point of the feature: the user
-        // can pick one model for planning and a different one
-        // for the answer. Setting plannerModel must NOT touch
-        // settings.model, and vice versa.
-        useChatStore.getState().updateSettings({ model: "anthropic/claude-3.5-sonnet" })
-        useChatStore.getState().updateSettings({ plannerModel: "meta-llama/llama-3.1-8b-instruct:free" })
         const { settings } = useChatStore.getState()
-        expect(settings.model).toBe("anthropic/claude-3.5-sonnet")
-        expect(settings.plannerModel).toBe("meta-llama/llama-3.1-8b-instruct:free")
+        expect(settings.aiMode).toBe("byok")
+        expect(settings.byokBaseUrl).toBe("https://api.openai.com/v1")
+        expect(settings.byokModelId).toBe("gpt-4o-mini")
+        expect(settings.byokModelName).toBe("My GPT")
+    })
+
+    it("switching modes preserves the BYOK fields", () => {
+        useChatStore.getState().updateSettings({
+            aiMode: "byok",
+            byokBaseUrl: "https://example.com/v1",
+            byokModelId: "my-model",
+        })
+        useChatStore.getState().updateSettings({ aiMode: "managed" })
+        const { settings } = useChatStore.getState()
+        expect(settings.aiMode).toBe("managed")
+        expect(settings.byokBaseUrl).toBe("https://example.com/v1")
+        expect(settings.byokModelId).toBe("my-model")
     })
 })
 

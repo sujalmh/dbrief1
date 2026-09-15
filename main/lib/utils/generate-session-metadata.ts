@@ -1,4 +1,4 @@
-import { getChatModel, chatContentToText, Provider } from "@/lib/llm";
+import { getChatModel, chatContentToText, type AiMode } from "@/lib/llm";
 import { llmSampling, sessionMetadataConfig } from "@/lib/config";
 
 export interface SessionMetadata {
@@ -49,22 +49,27 @@ export function heuristicSessionMetadata(userQuery: string): SessionMetadata {
     return { title, type };
 }
 
+export interface MetadataLlmRef {
+    mode: AiMode;
+    byokBaseUrl?: string;
+    byokModel?: string;
+    byokApiKey?: string;
+}
+
 export async function generateSessionMetadata(
     userQuery: string,
-    provider: Provider = "gemini",
-    model?: string,
-    apiKey?: string,
+    llmRef: MetadataLlmRef = { mode: "managed" },
     sessionId?: string
 ): Promise<SessionMetadata> {
-    const { getProviderMeta } = await import("@/lib/providers");
-    const resolvedModel = model || getProviderMeta(provider)?.defaultModel || "gemini-2.0-flash";
     const llm = await getChatModel({
-        provider,
-        model: resolvedModel,
+        mode: llmRef.mode,
+        byokBaseUrl: llmRef.byokBaseUrl,
+        byokModel: llmRef.byokModel,
+        byokApiKey: llmRef.byokApiKey,
         temperature: llmSampling.sessionMetadataTemperature(),
         maxTokens: llmSampling.sessionMetadataMaxTokens(),
         sessionId,
-    }, apiKey);
+    });
 
     const prompt = `You are an AI assistant that categorizes F1 racing queries and generates concise titles.
 

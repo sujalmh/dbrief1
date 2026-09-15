@@ -1,19 +1,19 @@
 "use client"
 
 /**
- * UsageFooter
- * ===========
+ * UsageFooter (BYOK only)
+ * =======================
  *
- * Inline footer rendered at the bottom of every assistant message
- * bubble. Surfaces (a) the model that actually produced the response
- * and (b) the per-call usage accounting captured by the backend
- * (per the OpenRouter Usage Accounting docs):
+ * Inline footer rendered at the bottom of BYOK assistant message
+ * bubbles. Surfaces (a) the model that actually produced the response
+ * and (b) the per-call usage accounting captured by the backend:
  *
  *   <model-id>  ·  <prompt + completion tokens>  ·  <cost in USD>
  *
- * For non-OpenRouter providers the cost is null (OpenRouter is the
- * only provider in our stack that returns `usage.cost` natively per
- * the OpenRouter docs), so we just show token counts.
+ * Managed responses render nothing — the owner already knows which
+ * model serves them, and showing per-response model/cost details only
+ * adds noise. Cost is only shown when the provider reports it;
+ * otherwise we show just token counts.
  *
  * The component is intentionally small and unobtrusive — it uses
  * tooltip on hover for the per-stage breakdown (reasoning tokens,
@@ -71,21 +71,24 @@ function shortModelId(id: string): string {
 }
 
 export function UsageFooter({ usage, className }: UsageFooterProps) {
+    // BYOK-only: managed responses (and any legacy pre-two-mode
+    // provider) render no footer — no model name, no cost.
+    const isByok = usage.provider === "byok"
     const hasCached = useMemo(() => (usage.cachedTokens ?? 0) > 0, [usage.cachedTokens])
     const hasReasoning = useMemo(
         () => (usage.reasoningTokens ?? 0) > 0,
         [usage.reasoningTokens]
     )
     const costStr = fmtCost(usage.cost)
-    // The backend only sets `plannerModel` when the user picked
-    // a different model for the planner role. When it matches
-    // the responder (or is missing entirely) we hide the
-    // planner row entirely so the footer stays compact for the
-    // common case where both roles share a model.
+    // Legacy: messages produced before the managed/BYOK simplification
+    // could carry a distinct `plannerModel`. New messages never set it
+    // (planner and responder share one model), so the row stays hidden.
     const hasPlanner = useMemo(
         () => !!usage.plannerModel && usage.plannerModel !== usage.model,
         [usage.plannerModel, usage.model]
     )
+
+    if (!isByok) return null
 
     return (
         <div
@@ -169,9 +172,7 @@ export function UsageFooter({ usage, className }: UsageFooterProps) {
                 </TooltipContent>
             </Tooltip>
 
-            {/* Cost — only rendered when the provider reported one.
-                OpenRouter populates `usage.cost`; Gemini / HuggingFace
-                don't, so for those we simply omit the line. */}
+            {/* Cost — only rendered when the provider reported one. */}
             {costStr && (
                 <Tooltip>
                     <TooltipTrigger asChild>
@@ -188,7 +189,7 @@ export function UsageFooter({ usage, className }: UsageFooterProps) {
                         className="text-[11px] px-3 py-2 max-w-xs"
                     >
                         <div>
-                            OpenRouter cost in USD credits. Includes prompt,
+                            Provider cost in USD. Includes prompt,
                             completion{hasReasoning ? ", reasoning" : ""} and
                             {hasCached ? " cached" : " non-cached"} tokens.
                         </div>

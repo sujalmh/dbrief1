@@ -9,12 +9,19 @@
  * Request body:
  * {
  *   "message": string,
- *   "provider": "gemini" | "openrouter" | "huggingface" | "zen" | "go",
- *   "model": string,
- *   "reasoning": boolean,
+ *   "aiMode": "managed" | "byok",
+ *   "byokBaseUrl": string (byok only),
+ *   "byokModel": string (byok only, identifier),
+ *   "byokModelName": string (optional display name),
+ *   "deepResearchMode": boolean,
  *   "web_search": boolean,
  *   "images": []
  * }
+ *
+ * The BYOK API key is NOT sent in the body — it lives in the httpOnly
+ * `byok_api_key` cookie (legacy `api_key` also accepted) and is read
+ * server-side. `byokApiKey` in the body is accepted as a fallback for
+ * non-browser clients.
  */
 
 import { NextRequest } from "next/server";
@@ -23,7 +30,7 @@ import { z } from "zod";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { StructuredTool } from "@langchain/core/tools";
 
-import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type Provider } from "@/lib/llm";
+import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type AiMode } from "@/lib/llm";
 import { decidePlan, createFallbackPlan, tryConversationalFastPath, type Plan } from "@/lib/planner";
 import { executeSteps, aggregateContext } from "@/lib/executor";
 import { UsageAccumulator, getModelId } from "@/lib/llm-usage";
@@ -38,7 +45,6 @@ import {
     responderSystemPrompt as configuredResponderPrompt,
     routeConfig,
 } from "@/lib/config";
-import { getProviderMeta, listProviders } from "@/lib/providers";
 import {
     extractRegulationDocs,
     pickUsedSources,
@@ -122,55 +128,25 @@ function getClientKey(request: NextRequest, userId: string | null): string {
 }
 
 // =============================================================================
-// Request Validation (bounds from lib/config.ts routeConfig; provider/model
-// catalogs from the dynamic registry — evaluated at startup from env)
+// Request Validation (bounds from lib/config.ts routeConfig).
+// Two AI modes only: "managed" (server env) or "byok" (user-supplied
+// OpenAI-compatible endpoint + httpOnly-cookie key).
 // =============================================================================
-
-/** Default provider/model resolved from the registry (not literals). */
-function schemaDefaultProvider(): string {
-    return listProviders()[0]?.id ?? "gemini";
-}
-
-function schemaDefaultModel(): string {
-    const providers = listProviders();
-    return providers[0]?.defaultModel ?? "gemini-2.0-flash";
-}
-
-/**
- * Provider id validated live against the dynamic registry (not a frozen
- * enum), so providers added via F1_PROVIDERS_JSON or registerProvider()
- * are accepted without a code change or restart-gated schema.
- */
-function providerSchema() {
-    return z.string().superRefine((id, ctx) => {
-        if (getProviderMeta(id) === undefined) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: `Unknown provider: ${id}. Available: ${listProviders().map((p) => p.id).join(", ")}`,
-            });
-        }
-    });
-}
 
 const ChatRequestSchema = z.object({
     message: z.string().min(1, "Message is required").max(routeConfig.messageMaxChars(), `Message too long (max ${routeConfig.messageMaxChars()} chars)`),
-    provider: providerSchema().default(schemaDefaultProvider()),
-    model: z.string().default(schemaDefaultModel()),
-    /**
-     * Optional dedicated planner model. When present, the server
-     * uses this for intent analysis + step decomposition. When
-     * empty, the server falls back to the provider's built-in
-     * cheap planner model (so the feature is fully opt-in).
-     */
+    aiMode: z.enum(["managed", "byok"]).default("managed"),
+    byokBaseUrl: z.string().max(500).optional(),
+    byokModel: z.string().max(200).optional(),
+    byokModelName: z.string().max(200).optional(),
+    /** Fallback for non-browser clients; browsers use the httpOnly cookie. */
+    byokApiKey: z.string().max(1000).optional(),
+    // --- Legacy fields (pre two-mode simplification). Accepted and ignored
+    // so old clients don't 400; the server always uses the aiMode path. ---
+    provider: z.string().optional(),
+    model: z.string().optional(),
     plannerModel: z.string().optional(),
-    /**
-     * Optional planner provider. Defaults to the main `provider`
-     * so most users only need to pick one provider. The split
-     * exists so future enhancements (e.g. Gemini for planning
-     * + OpenRouter for the answer) can be enabled without a
-     * schema change.
-     */
-    plannerProvider: providerSchema().optional(),
+    plannerProvider: z.string().optional(),
     apiKey: z.string().optional(),
     deepResearchMode: z.boolean().default(false),
     web_search: z.boolean().default(false),
@@ -242,15 +218,23 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { message, provider, model, plannerModel: plannerModelId, plannerProvider, apiKey, deepResearchMode, web_search, sessionId, isFirstMessage, history } = validationResult.data as ChatRequest;
+        const { message, aiMode, byokBaseUrl, byokModel, byokApiKey, apiKey: legacyApiKey, deepResearchMode, web_search, sessionId, isFirstMessage, history } = validationResult.data as ChatRequest;
+        const mode = (aiMode ?? "managed") as AiMode;
 
-        // Resolve the planner provider once, up front. The user may
-        // pick a different provider for the planner (e.g. Gemini for
-        // cheap planning, OpenRouter for the final answer). For now
-        // we keep the planner on the same provider as the responder
-        // unless explicitly overridden; future enhancements can
-        // surface the split in the UI without another schema bump.
-        const effectivePlannerProvider = (plannerProvider ?? provider) as Provider;
+        // BYOK key resolution: explicit body field first, then the legacy
+        // `apiKey` body field, then the httpOnly cookies. Managed mode
+        // ignores all of these (server env provides the key).
+        const cookieByokKey =
+            request.cookies.get("byok_api_key")?.value?.trim() ||
+            request.cookies.get("api_key")?.value?.trim() ||
+            "";
+        const resolvedByokKey =
+            (byokApiKey || "").trim() || (legacyApiKey || "").trim() || cookieByokKey;
+        const byok = {
+            baseUrl: (byokBaseUrl || "").trim() || undefined,
+            model: (byokModel || "").trim() || undefined,
+            apiKey: resolvedByokKey || undefined,
+        };
 
         // Gateway session id for OpenCode Zen/Go (`x-opencode-session`
         // header: routing + prompt caching). The client sends its chat
@@ -297,34 +281,20 @@ export async function POST(request: NextRequest) {
                     // In deep-research mode both models are needed, so init
                     // them in parallel (independent getChatModel calls).
                     //
-                    // The planner and responder are configured independently:
-                    // the user can pick a cheap fast model for intent analysis
-                    // + step decomposition (plannerModel/plannerProvider schema
-                    // fields) and a more capable model for the final answer.
-                    // When `plannerModel` is empty we fall back to the
-                    // provider's built-in cheap planner model inside
-                    // getPlannerModel, so the feature is fully opt-in.
+                    // Planner and responder ALWAYS share one model now
+                    // (managed env model, or the user's BYOK model). There
+                    // is no separate planner picker.
                     let plannerModel;
                     // Pre-initialized responder for deep-research mode (parallel init below).
                     let deepResponderModel: Awaited<ReturnType<typeof getResponderModel>> | null = null;
                     try {
                         if (deepResearchMode) {
                             [plannerModel, deepResponderModel] = await Promise.all([
-                                getPlannerModel(
-                                    effectivePlannerProvider,
-                                    apiKey,
-                                    plannerModelId || undefined,
-                                    gatewaySessionId
-                                ),
-                                getResponderModel(provider as Provider, model, true, apiKey, gatewaySessionId),
+                                getPlannerModel(mode, byok, gatewaySessionId),
+                                getResponderModel(mode, byok, true, gatewaySessionId),
                             ]);
                         } else {
-                            plannerModel = await getPlannerModel(
-                                effectivePlannerProvider,
-                                apiKey,
-                                plannerModelId || undefined,
-                                gatewaySessionId
-                            );
+                            plannerModel = await getPlannerModel(mode, byok, gatewaySessionId);
                         }
                     } catch (error) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
@@ -430,11 +400,7 @@ export async function POST(request: NextRequest) {
                             safeClose();
                             return;
                         }
-                        usage = new UsageAccumulator(
-                            provider,
-                            getModelId(responderModel),
-                            getModelId(plannerModel)
-                        );
+                        usage = new UsageAccumulator(mode, getModelId(responderModel));
                         try {
                             const researchManager = new ResearchManager(plannerModel, responderModel, {
                                 deepResearch: true,
@@ -589,7 +555,7 @@ export async function POST(request: NextRequest) {
                     const fastConversational = tryConversationalFastPath(message);
                     const responderPromise = fastConversational
                         ? null
-                        : getResponderModel(provider as Provider, model, deepResearchMode, apiKey, gatewaySessionId).then(
+                        : getResponderModel(mode, byok, deepResearchMode, gatewaySessionId).then(
                             (m) => ({ ok: true as const, model: m }),
                             (e) => ({ ok: false as const, error: e }),
                         );
@@ -695,11 +661,7 @@ export async function POST(request: NextRequest) {
                     }
                     const responderModel = responderSettled.model;
 
-                    usage = new UsageAccumulator(
-                        provider,
-                        getModelId(responderModel),
-                        getModelId(plannerModel)
-                    );
+                    usage = new UsageAccumulator(mode, getModelId(responderModel));
 
                     const executionContext = await executeSteps(
                         plan.steps,
@@ -816,13 +778,11 @@ Please answer the user's question based on the F1 data provided above.`;
                         // Walk the stream ourselves (rather than using
                         // trackUsage) so we can both forward tokens to the
                         // client AND record usage from each chunk. The
-                        // OpenRouter docs guarantee that the final chunk
-                        // carries the full `usage` block, but other
-                        // providers (Anthropic, Gemini via OpenRouter) may
-                        // also attach usage metadata to the last few
-                        // chunks — addChunk() is idempotent so duplicate
-                        // totals are safe (we take the last non-null
-                        // value for cost, and we *add* token counts which
+                        // provider attaches the full `usage` block to the
+                        // final chunk(s) — addChunk() is idempotent so
+                        // duplicate totals are safe (we take the last
+                        // non-null value for cost, and we *add* token
+                        // counts which
                         // is a no-op when both are the same final number).
                         for await (const chunk of response) {
                             try {
@@ -928,10 +888,9 @@ Please answer the user's question based on the F1 data provided above.`;
                     }
 
                     // Emit aggregated usage accounting (token counts +
-                    // cost). For OpenRouter the cost is real; for other
-                    // providers `cost` is null and the footer just
-                    // shows tokens. The frontend stores this on the
-                    // message and renders a small footer in the bubble.
+                    // cost when reported). The frontend stores this on
+                    // the message and renders a small footer in the
+                    // bubble (BYOK messages only).
                     emitUsage()
 
                     sendEvent("done", {});
@@ -984,16 +943,17 @@ Please answer the user's question based on the F1 data provided above.`;
 export async function GET() {
     return Response.json({
         status: "ok",
-        version: "1.0.0",
+        version: "2.0.0",
         description: "F1 AI Chatbot API - Use POST to send messages",
         endpoints: {
             "POST /api/chat": {
                 description: "Send a chat message",
                 body: {
                     message: "string (required)",
-                    provider: "gemini | openrouter | huggingface | zen | go (default: gemini)",
-                    model: "string (default: gemini-2.0-flash)",
-                    reasoning: "boolean (default: false)",
+                    aiMode: "managed | byok (default: managed)",
+                    byokBaseUrl: "string (byok only, model URL)",
+                    byokModel: "string (byok only, model identifier)",
+                    byokModelName: "string (byok only, display name, optional)",
                     web_search: "boolean (default: false)",
                     images: "string[] (default: [])",
                 },

@@ -14,7 +14,7 @@ export function ControlPanel() {
     const isByok = settings.aiMode === "byok"
     const ModeIcon = isByok ? KeyRound : Server
     const modeLabel = isByok
-        ? settings.byokModelName.trim() || settings.byokModelId.trim() || "BYOK"
+        ? settings.byokModelName.trim() || settings.byokModelId.trim() || "Custom"
         : "Managed"
 
     return (
@@ -85,7 +85,7 @@ export function ControlPanel() {
                 size="sm"
                 onClick={() => setSettingsOpen(true)}
                 className="btn-wheel btn-wheel-orange h-8 gap-2 text-xs px-3"
-                title={isByok ? "BYOK — open AI Setup" : "Managed — open AI Setup"}
+                title={isByok ? "Custom model — open Model Settings" : "Managed model — open Model Settings"}
             >
                 <ModeIcon className="h-3.5 w-3.5" />
                 <span className="max-w-[120px] truncate hidden sm:inline-block font-bold">

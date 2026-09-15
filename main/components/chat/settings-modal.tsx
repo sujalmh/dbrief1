@@ -169,9 +169,9 @@ export function SettingsModal() {
         <Dialog open={isSettingsOpen} onOpenChange={setSettingsOpen}>
             <DialogContent className="sm:max-w-[500px] border-none bg-background/95 backdrop-blur-xl shadow-2xl">
                 <DialogHeader className="mb-4 text-center">
-                    <DialogTitle className="text-xl font-bold tracking-tight">AI Setup</DialogTitle>
+                    <DialogTitle className="text-xl font-bold tracking-tight">Model Settings</DialogTitle>
                     <DialogDescription className="text-muted-foreground/80">
-                        Pick who provides the model. Two options, nothing else.
+                        Choose how the assistant connects to a language model.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -189,10 +189,10 @@ export function SettingsModal() {
                         >
                             <div className="flex items-center gap-2 mb-1">
                                 <Server className="h-4 w-4 text-[var(--f1-green)]" />
-                                <span className="text-sm font-bold">Setup by me</span>
+                                <span className="text-sm font-bold">Managed</span>
                             </div>
                             <p className="text-[11px] text-muted-foreground leading-snug">
-                                Managed model, configured by the app owner. No setup needed.
+                                Hosted model, ready to use. No setup required.
                             </p>
                         </button>
                         <button
@@ -207,10 +207,10 @@ export function SettingsModal() {
                         >
                             <div className="flex items-center gap-2 mb-1">
                                 <KeyRound className="h-4 w-4 text-[var(--f1-yellow)]" />
-                                <span className="text-sm font-bold">BYOK by you</span>
+                                <span className="text-sm font-bold">Custom</span>
                             </div>
                             <p className="text-[11px] text-muted-foreground leading-snug">
-                                Bring your own key + any OpenAI-compatible endpoint.
+                                Your own API key and OpenAI-compatible endpoint.
                             </p>
                         </button>
                     </div>
@@ -337,9 +337,8 @@ export function SettingsModal() {
                     ) : (
                         <div className="rounded-lg border border-muted/40 p-3 bg-muted/5">
                             <p className="text-xs text-muted-foreground leading-relaxed">
-                                Managed mode uses the model configured by the app owner via
-                                environment variables (same model for planning and answering).
-                                Nothing to enter — just confirm and chat.
+                                Uses the workspace hosted model for all requests.
+                                Nothing to enter — just save and chat.
                             </p>
                             {errorMsg && <p className="text-xs text-red-500 mt-2">{errorMsg}</p>}
                         </div>
@@ -374,7 +373,7 @@ export function SettingsModal() {
                         className="bg-foreground text-background hover:bg-foreground/90 font-bold tracking-wide"
                     >
                         {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                        CONFIRM SETUP
+                        Save
                     </Button>
                 </DialogFooter>
             </DialogContent>

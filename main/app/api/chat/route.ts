@@ -36,7 +36,7 @@ import { getSearchTools } from "@/lib/tools/search";
 import { getRegulationTools } from "@/lib/tools/regulation";
 import { getSimulationTools } from "@/lib/tools/simulation";
 import { ResearchManager } from "@/lib/research/manager";
-import { classifyLlmError, isNonRecoverable, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
+import { classifyLlmError, isNonRecoverable, isTimeoutAbort, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
 import {
     researchConfig,
     responderSystemPrompt as configuredResponderPrompt,
@@ -505,12 +505,24 @@ export async function POST(request: NextRequest) {
                         // In Deep Research Mode, force web search to be enabled
                         const effectiveWebSearch = deepResearchMode ? true : web_search;
 
-                        const decision = await decidePlan(
-                            plannerModel,
-                            message,
-                            effectiveWebSearch,
-                            deepResearchMode
-                        );
+                        let decision;
+                        try {
+                            decision = await decidePlan(
+                                plannerModel,
+                                message,
+                                effectiveWebSearch,
+                                deepResearchMode
+                            );
+                        } catch (firstError) {
+                            if (!isTimeoutAbort(firstError)) throw firstError;
+                            console.warn("[Planner] Attempt timed out/aborted, retrying once...");
+                            decision = await decidePlan(
+                                plannerModel,
+                                message,
+                                effectiveWebSearch,
+                                deepResearchMode
+                            );
+                        }
                         plan = decision.plan;
                         directReply = decision.needsPlan ? undefined : decision.reply;
                     } catch (error) {

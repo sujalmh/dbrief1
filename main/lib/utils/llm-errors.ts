@@ -224,6 +224,26 @@ export function isNonRecoverable(cls: ClassifiedLlmError): boolean {
 }
 
 /**
+ * True when the error looks like a client-side timeout/abort of an
+ * in-flight LLM request (slow gateway, not a rejection). These are
+ * worth exactly one retry: the call itself is side-effect-free, and
+ * most gateway stalls clear within seconds.
+ */
+export function isTimeoutAbort(err: unknown): boolean {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+        return true;
+    }
+    const lower = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+    return (
+        lower.includes("aborted") ||
+        lower.includes("aborterror") ||
+        lower.includes("timed out") ||
+        lower.includes("timeout") ||
+        lower.includes("etimedout")
+    );
+}
+
+/**
  * Try to extract an HTTP status from an error object. Provider errors
  * in LangChain put the status in different places (`.status`,
  * `.statusCode`, `response.status`, `error.code`, etc.).

@@ -15,8 +15,30 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
   route emits `citations` only for picked docs, deep mode yields citations
   for actually-cited evidence, UI renders clickable title links, sources
   persisted to Firestore and restored on session load.
+- [x] Streamline LLM config, model settings UI, and research pipeline
+  (`e1168f2`): removed central config/reference-data/text modules, reworked
+  providers/planner/settings modal/usage footer, added OpenRouter models
+  route + add-models dialog + Go latency benchmark.
 
 ## Pending / Known Gaps
+
+- [ ] **Persist tool-call trace with the assistant message (design agreed,
+  not implemented):** tool calls/results currently live only in browser
+  IndexedDB (`messages[].steps`, `messages[].visualizationData`) and request
+  memory — Firestore keeps `{role, content}` + citations only, so production
+  misbehavior (e.g. the Sept 2026 "who won yesterday's race" wrong answer)
+  is undebuggable after Vercel logs age out, and cross-device history loses
+  steps/charts/evidence/usage. Plan: extend the message doc with a bounded
+  `trace` object — `steps[]` (`description, tool, args, status, error`),
+  `summary` (`successCount, failureCount, totalDurationMs` — already computed
+  in `ExecutionContext`, currently discarded), `usage`, and for deep mode
+  evidence summaries + provenance (no full `data`). Cap trace at ~50–100KB
+  per message (truncate long strings/arrays, drop oversized `data` payloads;
+  telemetry dumps can be MBs and Firestore caps docs at 1MB). Touch points:
+  `use-chat-handler` (save), `sidebar` (load mapping — it currently drops
+  everything but `id/role/content/timestamp`), `firestore.ts` (type +
+  sanitizer, next to `sanitizeCitations`), old messages without `trace` must
+  keep rendering (all fields already optional in the UI).
 
 - [ ] **Firestore rules gap (pre-existing, blocks history writes if enforced):**
   `main/firestore.rules` requires `userId` on message docs, but the client
@@ -37,6 +59,6 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
   distributions; the keep-best fallback prevents empty results.
 - [ ] **`visualization` event still ships full doc content** to the client for
   charts — only the Sources UI is gated. Fine for now, note if payloads grow.
-- [ ] **Untracked, not owned by this work:** `test.py` (repo root),
-  `main/scripts/benchmark-go-latency.mjs`. Left untouched — commit or remove
-  separately if still needed.
+- [ ] **Untracked, not owned by this work:** `test.py` (repo root) contains a
+  hardcoded live API key — must never be committed as-is. Move the key to
+  an env var and rotate it, then commit or remove the file.

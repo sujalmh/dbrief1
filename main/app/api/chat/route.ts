@@ -9,16 +9,12 @@
  * Request body:
  * {
  *   "message": string,
- *   "aiMode": "managed" | "byok",
- *   "byokBaseUrl": string (byok only),
- *   "byokModel": string (byok only, identifier),
- *   "byokModelName": string (optional display name),
- *   "deepResearchMode": boolean,
+ *   "provider": "gemini" | "openrouter" | "huggingface" | "zen" | "go",
+ *   "model": string,
+ *   "reasoning": boolean,
  *   "web_search": boolean,
  *   "images": []
  * }
- *
- * BYOK key comes from the httpOnly cookie, not the body.
  */
 
 import { NextRequest } from "next/server";
@@ -27,7 +23,7 @@ import { z } from "zod";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import type { StructuredTool } from "@langchain/core/tools";
 
-import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type AiMode } from "@/lib/llm";
+import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type Provider } from "@/lib/llm";
 import { decidePlan, createFallbackPlan, type Plan } from "@/lib/planner";
 import { executeSteps, aggregateContext } from "@/lib/executor";
 import { UsageAccumulator, getModelId } from "@/lib/llm-usage";
@@ -36,12 +32,8 @@ import { getSearchTools } from "@/lib/tools/search";
 import { getRegulationTools } from "@/lib/tools/regulation";
 import { getSimulationTools } from "@/lib/tools/simulation";
 import { ResearchManager } from "@/lib/research/manager";
-import { classifyLlmError, isNonRecoverable, isTimeoutAbort, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
-import {
-    researchConfig,
-    responderSystemPrompt as configuredResponderPrompt,
-    routeConfig,
-} from "@/lib/config";
+import { IntentAnalyzer, IntentAnalyzerUnavailableError } from "@/lib/research/agents/intent-analyzer";
+import { classifyLlmError, isNonRecoverable, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
 import {
     extractRegulationDocs,
     pickUsedSources,
@@ -65,31 +57,24 @@ interface RateLimitOptions {
     maxRequests: number;
 }
 
-/** Live rate-limit options (config-driven per request). */
-function chatRateLimit(): RateLimitOptions {
-    return {
-        windowMs: routeConfig.rateLimitWindowMs(),
-        maxRequests: routeConfig.rateLimitMaxRequests(),
-    };
-}
+const CHAT_RATE_LIMIT: RateLimitOptions = {
+    windowMs: 60_000, // 1 minute
+    maxRequests: 20,   // 20 requests / minute / key
+};
 
 const rateLimitBuckets = new Map<string, number[]>();
-
-function rateLimitMaxKeys(): number {
-    return routeConfig.rateLimitMaxKeys();
-}
+const RATE_LIMIT_MAX_KEYS = 5000;
 
 function pruneRateLimitBuckets(now: number, windowMs: number): void {
     // Bound memory: evict keys whose window has fully expired, and if the
     // map is still huge (many distinct IPs), drop the oldest entries.
-    const maxKeys = rateLimitMaxKeys();
     for (const [key, stamps] of rateLimitBuckets) {
         if (stamps.length === 0 || stamps[stamps.length - 1] <= now - windowMs) {
             rateLimitBuckets.delete(key);
         }
     }
-    if (rateLimitBuckets.size > maxKeys) {
-        const overflow = rateLimitBuckets.size - maxKeys;
+    if (rateLimitBuckets.size > RATE_LIMIT_MAX_KEYS) {
+        const overflow = rateLimitBuckets.size - RATE_LIMIT_MAX_KEYS;
         const keys = rateLimitBuckets.keys();
         for (let i = 0; i < overflow; i++) {
             const k = keys.next();
@@ -101,7 +86,7 @@ function pruneRateLimitBuckets(now: number, windowMs: number): void {
 
 function checkRateLimit(key: string, opts: RateLimitOptions): { allowed: boolean; retryAfterMs: number } {
     const now = Date.now();
-    if (rateLimitBuckets.size > rateLimitMaxKeys()) {
+    if (rateLimitBuckets.size > RATE_LIMIT_MAX_KEYS) {
         pruneRateLimitBuckets(now, opts.windowMs);
     }
     const cutoff = now - opts.windowMs;
@@ -124,41 +109,71 @@ function getClientKey(request: NextRequest, userId: string | null): string {
     return `ip:${ip}`;
 }
 
+// =============================================================================
+// Request Validation
+// =============================================================================
 
 const ChatRequestSchema = z.object({
-    message: z.string().min(1, "Message is required").max(routeConfig.messageMaxChars(), `Message too long (max ${routeConfig.messageMaxChars()} chars)`),
-    aiMode: z.enum(["managed", "byok"]).default("managed"),
-    byokBaseUrl: z.string().max(500).optional(),
-    byokModel: z.string().max(200).optional(),
-    byokModelName: z.string().max(200).optional(),
-    byokApiKey: z.string().max(1000).optional(),
-    // Legacy fields, accepted and ignored so old clients don't 400.
-    provider: z.string().optional(),
-    model: z.string().optional(),
+    message: z.string().min(1, "Message is required").max(4000, "Message too long (max 4000 chars)"),
+    provider: z.enum(["gemini", "openrouter", "huggingface", "zen", "go"]).default("gemini"),
+    model: z.string().default("gemini-2.0-flash"),
+    /**
+     * Optional dedicated planner model. When present, the server
+     * uses this for intent analysis + step decomposition. When
+     * empty, the server falls back to the provider's built-in
+     * cheap planner model (so the feature is fully opt-in).
+     */
     plannerModel: z.string().optional(),
-    plannerProvider: z.string().optional(),
+    /**
+     * Optional planner provider. Defaults to the main `provider`
+     * so most users only need to pick one provider. The split
+     * exists so future enhancements (e.g. Gemini for planning
+     * + OpenRouter for the answer) can be enabled without a
+     * schema change.
+     */
+    plannerProvider: z.enum(["gemini", "openrouter", "huggingface", "zen", "go"]).optional(),
     apiKey: z.string().optional(),
     deepResearchMode: z.boolean().default(false),
     web_search: z.boolean().default(false),
-    images: z.array(z.string().max(routeConfig.imageMaxBytes())).max(routeConfig.imageMaxCount()).default([]),
-    sessionId: z.string().max(routeConfig.sessionIdMaxChars()).optional(),
+    images: z.array(z.string().max(7_000_000)).max(5).default([]),
+    sessionId: z.string().max(128).optional(),
     isFirstMessage: z.boolean().default(false),
     history: z.array(z.object({
         role: z.enum(["user", "assistant", "system"]),
-        content: z.string().max(routeConfig.historyMaxCharsPerItem()),
-    })).max(routeConfig.historyMaxItems()).default([]),
+        content: z.string().max(8000),
+    })).max(50).default([]),
 });
 
 type ChatRequest = z.infer<typeof ChatRequestSchema>;
 
 // =============================================================================
-// System Prompt for Responder (config-driven — override via
-// F1_RESPONDER_SYSTEM_PROMPT without a code change)
+// System Prompt for Responder
 // =============================================================================
 
-function getResponderSystemPrompt(): string {
-    return configuredResponderPrompt();
-}
+const RESPONDER_SYSTEM_PROMPT = `You are an expert Formula 1 AI assistant with deep knowledge of F1 history, technical regulations, driver statistics, and race analysis.
+
+## Your Role
+- Answer questions about F1 using the data provided from official F1 sources
+- Provide accurate, detailed responses based on the context
+- Be conversational but precise
+- Format responses nicely with markdown when appropriate
+
+## Anti-Hallucination Rules (CRITICAL)
+1. CRITICAL: You must answer ONLY from the F1 Data Context provided below. Do NOT use your training data or parametric knowledge for any factual claim.
+2. If the F1 Data Context is empty, says "No data was retrieved", or does not contain information relevant to the question, respond: "I don't have data to answer this question. The data retrieval may have failed or this query may not be supported. Please try rephrasing."
+3. Every factual statement (driver name, position, lap time, points) must be traceable to the data context. If you cannot find it in the context, say "Data not available."
+4. Never guess driver codes, GP names, or session results. If the data doesn't contain it, say so.
+5. For comparisons, highlight the key differences using the data provided.
+6. Use driver abbreviations (VER, HAM, LEC) when referring to drivers — but only if those abbreviations appear in the data context.
+7. Format lap times properly (e.g., 1:23.456) — using values from the data context only.
+
+## Response Format
+- Use markdown formatting for readability
+- Use bullet points for lists
+- Use tables for comparisons when appropriate
+- Bold important information
+- Keep responses focused and relevant
+- When the F1 Data Context contains \`retrieve_regulations\` results, base every regulation/decision claim on the retrieved documents, preferring higher \`relevance_score\` hits`;
 
 // =============================================================================
 // Main API Handler
@@ -192,7 +207,7 @@ export async function POST(request: NextRequest) {
         //    Runs before any expensive work (model init, LLM calls) so spam
         //    can't burn through quotas.
         const clientKey = getClientKey(request, userId);
-        const rl = checkRateLimit(clientKey, chatRateLimit());
+        const rl = checkRateLimit(clientKey, CHAT_RATE_LIMIT);
         if (!rl.allowed) {
             return Response.json(
                 {
@@ -208,20 +223,15 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { message, aiMode, byokBaseUrl, byokModel, byokApiKey, apiKey: legacyApiKey, deepResearchMode, sessionId, isFirstMessage, history } = validationResult.data as ChatRequest;
-        const mode = (aiMode ?? "managed") as AiMode;
+        const { message, provider, model, plannerModel: plannerModelId, plannerProvider, apiKey, deepResearchMode, web_search, sessionId, isFirstMessage, history } = validationResult.data as ChatRequest;
 
-        const cookieByokKey =
-            request.cookies.get("byok_api_key")?.value?.trim() ||
-            request.cookies.get("api_key")?.value?.trim() ||
-            "";
-        const resolvedByokKey =
-            (byokApiKey || "").trim() || (legacyApiKey || "").trim() || cookieByokKey;
-        const byok = {
-            baseUrl: (byokBaseUrl || "").trim() || undefined,
-            model: (byokModel || "").trim() || undefined,
-            apiKey: resolvedByokKey || undefined,
-        };
+        // Resolve the planner provider once, up front. The user may
+        // pick a different provider for the planner (e.g. Gemini for
+        // cheap planning, OpenRouter for the final answer). For now
+        // we keep the planner on the same provider as the responder
+        // unless explicitly overridden; future enhancements can
+        // surface the split in the UI without another schema bump.
+        const effectivePlannerProvider = (plannerProvider ?? provider) as Provider;
 
         // Gateway session id for OpenCode Zen/Go (`x-opencode-session`
         // header: routing + prompt caching). The client sends its chat
@@ -267,17 +277,35 @@ export async function POST(request: NextRequest) {
                     // in normal mode — conversational messages never need it.
                     // In deep-research mode both models are needed, so init
                     // them in parallel (independent getChatModel calls).
+                    //
+                    // The planner and responder are configured independently:
+                    // the user can pick a cheap fast model for intent analysis
+                    // + step decomposition (plannerModel/plannerProvider schema
+                    // fields) and a more capable model for the final answer.
+                    // When `plannerModel` is empty we fall back to the
+                    // provider's built-in cheap planner model inside
+                    // getPlannerModel, so the feature is fully opt-in.
                     let plannerModel;
                     // Pre-initialized responder for deep-research mode (parallel init below).
                     let deepResponderModel: Awaited<ReturnType<typeof getResponderModel>> | null = null;
                     try {
                         if (deepResearchMode) {
                             [plannerModel, deepResponderModel] = await Promise.all([
-                                getPlannerModel(mode, byok, gatewaySessionId),
-                                getResponderModel(mode, byok, true, gatewaySessionId),
+                                getPlannerModel(
+                                    effectivePlannerProvider,
+                                    apiKey,
+                                    plannerModelId || undefined,
+                                    gatewaySessionId
+                                ),
+                                getResponderModel(provider as Provider, model, true, apiKey, gatewaySessionId),
                             ]);
                         } else {
-                            plannerModel = await getPlannerModel(mode, byok, gatewaySessionId);
+                            plannerModel = await getPlannerModel(
+                                effectivePlannerProvider,
+                                apiKey,
+                                plannerModelId || undefined,
+                                gatewaySessionId
+                            );
                         }
                     } catch (error) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
@@ -287,14 +315,49 @@ export async function POST(request: NextRequest) {
                         return;
                     }
 
-                    const sendLlmMetadata = async (text: string) => {
-                        if (!isFirstMessage || !sessionId || controllerClosed) return;
-                        try {
+                    // --- Session metadata (title + type) runs in parallel ---
+                    // This is independent of intent/planning/execution (it only
+                    // needs the raw user message), so kick it off NOW instead
+                    // of waiting for the full answer. The promise resolves in
+                    // the background and emits the `metadata` SSE event as soon
+                    // as it's ready — the chat list title updates mid-stream
+                    // rather than after a 30s+ response.
+                    let metadataPromise: Promise<{ title: string; type: string } | null> | null = null;
+                    let metadataSent = false;
+                    const emitMetadata = (metadata: { title: string; type: string } | null) => {
+                        if (metadata && !metadataSent && !controllerClosed) {
+                            metadataSent = true;
+                            sendEvent("metadata", metadata);
+                        }
+                    };
+                    if (isFirstMessage && sessionId) {
+                        const msg = message;
+                        metadataPromise = (async () => {
                             const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
-                            const metadata = await generateSessionMetadata(text, { mode, ...byok }, gatewaySessionId);
-                            if (!controllerClosed) sendEvent("metadata", metadata);
+                            return generateSessionMetadata(msg, provider, model, apiKey, gatewaySessionId);
+                        })();
+                        // Fire-and-forget: emit as soon as ready (parallel
+                        // with intent + planner + executor below). The final
+                        // `await metadataPromise` before close is only a
+                        // rendezvous so the stream doesn't close early.
+                        metadataPromise.then(emitMetadata, (err) =>
+                            console.error("Error generating session metadata:", err)
+                        );
+                    }
+                    /** Rendezvous before close: wait for the early metadata call (bounded). */
+                    const flushMetadata = async () => {
+                        if (!metadataPromise || metadataSent) return;
+                        let timer: ReturnType<typeof setTimeout> | undefined;
+                        try {
+                            const timeout = new Promise<null>((resolve) => {
+                                timer = setTimeout(() => resolve(null), 10_000);
+                            });
+                            const metadata = await Promise.race([metadataPromise, timeout]);
+                            emitMetadata(metadata);
                         } catch (error) {
                             console.error("Error generating session metadata:", error);
+                        } finally {
+                            if (timer !== undefined) clearTimeout(timer);
                         }
                     };
 
@@ -348,23 +411,19 @@ export async function POST(request: NextRequest) {
                             safeClose();
                             return;
                         }
-                        usage = new UsageAccumulator(mode, getModelId(responderModel));
+                        usage = new UsageAccumulator(
+                            provider,
+                            getModelId(responderModel),
+                            getModelId(plannerModel)
+                        );
                         try {
                             const researchManager = new ResearchManager(plannerModel, responderModel, {
                                 deepResearch: true,
                                 // Always allow web search in deep mode; the
                                 // planner and reasoner decide whether to use it.
                                 webSearch: true,
-                                // Tight budgets for responsiveness: the old
-                                // 50 tasks / 20 iterations allowed very long
-                                // sequential plan→execute→reflect chains.
-                                // 15 tasks / 6 iterations covers multi-angle
-                                // research while bounding worst-case latency.
-                                // Deterministic early-stop in the manager
-                                // usually finishes well before these caps.
-                                // Budgets are config-driven (RESEARCH_DEEP_MAX_*).
-                                maxTasks: researchConfig.deepMaxTasks(),
-                                maxIterations: researchConfig.deepMaxIterations(),
+                                maxTasks: 50,
+                                maxIterations: 20,
                             },
                             // Pass the shared UsageAccumulator so the
                             // Synthesizer can record its raw LLM chunks.
@@ -458,7 +517,9 @@ export async function POST(request: NextRequest) {
                             // is in scope here.
                             emitUsage()
 
-                            await sendLlmMetadata(message);
+                            // Flush the parallel session-metadata call so the
+                            // chat title updates even for deep-research turns.
+                            await flushMetadata();
 
                             safeClose();
                             return;
@@ -480,50 +541,88 @@ export async function POST(request: NextRequest) {
                         }
                     }
 
-                    // 2. Plan (single LLM call) + responder init IN PARALLEL.
-                    // The old path also ran IntentAnalyzer here (2 parallel
-                    // LLM calls, wall time = max(intent, planner)). But in
-                    // normal mode the intent result is never consumed
-                    // server-side — decidePlan takes no intent input — and the
-                    // frontend explicitly ignores the `intent_analysis` event
-                    // ("Nothing to do UI-side today"). So the intent call was
-                    // pure overhead on the critical path: removed. Deep mode
-                    // still runs intent inside the ResearchManager above.
-                    // The responder model init (dynamic import + client setup)
-                    // is independent of planning, so it overlaps too instead
-                    // of running sequentially afterwards.
+                    // 2. Intent + decide/plan run IN PARALLEL (independent LLM
+                    // calls on the same cheap planner model — neither input
+                    // depends on the other's output). Wall time drops from
+                    // sum(intent, planner) to max(intent, planner). Session
+                    // metadata (title + type) is already in flight too (see
+                    // above), so all three pre-execution LLM calls overlap.
                     let plan: Plan;
                     let directReply: string | undefined;
-                    // Responder init (dynamic import + client setup)
-                    // is independent of planning, so it overlaps too instead
-                    // of running sequentially afterwards.
-                    const responderPromise = getResponderModel(mode, byok, deepResearchMode, gatewaySessionId).then(
-                        (m) => ({ ok: true as const, model: m }),
-                        (e) => ({ ok: false as const, error: e }),
-                    );
+                    let intentUnavailableError: IntentAnalyzerUnavailableError | null = null;
                     try {
-                        const effectiveWebSearch = true;
+                        // In Deep Research Mode, force web search to be enabled
+                        const effectiveWebSearch = deepResearchMode ? true : web_search;
 
-                        let decision;
-                        try {
-                            decision = await decidePlan(
-                                plannerModel,
-                                message,
-                                effectiveWebSearch,
-                                deepResearchMode
-                            );
-                        } catch (firstError) {
-                            if (!isTimeoutAbort(firstError)) throw firstError;
-                            console.warn("[Planner] Attempt timed out/aborted, retrying once...");
-                            decision = await decidePlan(
-                                plannerModel,
-                                message,
-                                effectiveWebSearch,
-                                deepResearchMode
-                            );
+                        const intentPromise = (async () => {
+                            const intentAnalyzer = new IntentAnalyzer(plannerModel);
+                            return intentAnalyzer.analyze(message, history);
+                        })();
+                        const planPromise = decidePlan(
+                            plannerModel,
+                            message,
+                            effectiveWebSearch,
+                            deepResearchMode
+                        );
+
+                        // allSettled so one failure never cancels the other:
+                        // an unavailable intent pass still yields a plan (with
+                        // a degraded-mode signal), and a bad plan still yields
+                        // the intent event.
+                        const [intentSettled, planSettled] = await Promise.allSettled([
+                            intentPromise,
+                            planPromise,
+                        ]);
+
+                        // --- Intent result (classification) ---
+                        // NOTE: We deliberately don't try to capture
+                        // usage from the IntentAnalyzer. It calls
+                        // `.withStructuredOutput().invoke()` which
+                        // uses tool calls under the hood, and LangChain
+                        // does not reliably preserve OpenRouter's
+                        // `usage` block on the resulting AIMessage.
+                        // The intent pass is small (typically 1-2k
+                        // tokens on free models) and the responder
+                        // stream is the dominant cost driver, so this
+                        // omission is acceptable.
+                        if (intentSettled.status === "fulfilled") {
+                            sendEvent("intent_analysis", { intentAnalysis: intentSettled.value });
+                        } else {
+                            const intentError = intentSettled.reason;
+                            if (intentError instanceof IntentAnalyzerUnavailableError) {
+                                console.warn(
+                                    "[API] Intent analysis unavailable:",
+                                    intentError.kind,
+                                    intentError.cause instanceof Error ? intentError.cause.message : intentError.cause
+                                );
+                                intentUnavailableError = intentError;
+                                // Inform the frontend that the structured
+                                // intent pass was skipped so it can show a
+                                // degraded-mode indicator on the message.
+                                sendEvent("intent_analysis_unavailable", {
+                                    kind: intentError.kind,
+                                    message: intentError.userMessage,
+                                });
+                            } else {
+                                console.warn(
+                                    "[API] Intent analysis failed (recoverable):",
+                                    intentError instanceof Error ? intentError.message : intentError
+                                );
+                            }
                         }
-                        plan = decision.plan;
-                        directReply = decision.needsPlan ? undefined : decision.reply;
+
+                        // --- Planner result (decide + plan, single call) ---
+                        // needs_plan=false carries a direct reply (greetings,
+                        // thanks, capability questions) — streamed back with no
+                        // tool calls and no second LLM call. needs_plan=true
+                        // carries steps.
+                        if (planSettled.status === "fulfilled") {
+                            const decision = planSettled.value;
+                            plan = decision.plan;
+                            directReply = decision.needsPlan ? undefined : decision.reply;
+                        } else {
+                            throw planSettled.reason;
+                        }
                     } catch (error) {
                         // Distinguish "LLM is unavailable" (rate limit, auth,
                         // network) from "LLM returned bad JSON". The former
@@ -557,7 +656,10 @@ export async function POST(request: NextRequest) {
                         sendEvent("token", { content: directReply });
                         sendEvent("done", {});
 
-                        await sendLlmMetadata(message);
+                        // Session metadata (title + type) was kicked off in
+                        // parallel above — rendezvous here so the `metadata`
+                        // event is flushed before the stream closes.
+                        await flushMetadata();
 
                         safeClose();
                         return;
@@ -576,29 +678,37 @@ export async function POST(request: NextRequest) {
                             ...getSearchTools(), // Always include in deep mode
                         };
                     } else {
+                        // Normal Mode: Data API + Retrieval + Simulation.
+                        // run_simulation is included (not gated on deep mode)
+                        // because the planner advertises what-if queries for
+                        // every request — and it is a local deterministic
+                        // tool with no backend cost. Web search stays
+                        // deep-mode-only (or explicit opt-in) to avoid
+                        // surprise external calls.
                         tools = {
                             ...f1Tools,
                             ...getRegulationTools(),
                             ...getSimulationTools(),
-                            ...getSearchTools(),
                         };
                     }
 
-                    // Responder was initialized in parallel with planning
-                    // above — just rendezvous here. Tool execution below does
-                    // not need the responder, but awaiting now overlaps the
-                    // init with the plan call that just finished.
-                    const responderSettled = await responderPromise;
-                    if (!responderSettled.ok) {
-                        const errorMessage = responderSettled.error instanceof Error ? responderSettled.error.message : "Failed to initialize models";
+                    // Responder is only needed for tool-backed questions.
+                    let responderModel;
+                    try {
+                        responderModel = await getResponderModel(provider as Provider, model, deepResearchMode, apiKey, gatewaySessionId);
+                    } catch (error) {
+                        const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
                         sendEvent("error", { message: errorMessage });
                         safeClose();
                         return;
                     }
-                    const responderModel = responderSettled.model;
 
-                    usage = new UsageAccumulator(mode, getModelId(responderModel));
+                    usage = new UsageAccumulator(
+                        provider,
+                        getModelId(responderModel),
+                        getModelId(plannerModel)
+                    );
 
                     const executionContext = await executeSteps(
                         plan.steps,
@@ -679,21 +789,14 @@ ${contextString}
 
 Please answer the user's question based on the F1 data provided above.`;
 
-                    // Build messages with conversation history for follow-up context.
-                    // Truncated for latency: only the last N turns, M chars
-                    // each (CHAT_RESPONDER_HISTORY_*). Older turns rarely change
-                    // the answer but each one adds prompt tokens (and TTFT) to
-                    // the responder call.
-                    const responderHistoryItems = routeConfig.responderHistoryItems();
-                    const responderHistoryChars = routeConfig.responderHistoryCharsPerItem();
-                    const historyMessages = (history || []).slice(-responderHistoryItems).map((m) => {
-                        const clipped = m.content.length > responderHistoryChars ? m.content.slice(-responderHistoryChars) : m.content;
-                        if (m.role === "assistant") return new HumanMessage(`Assistant: ${clipped}`);
-                        return new HumanMessage(`User: ${clipped}`);
+                    // Build messages with conversation history for follow-up context
+                    const historyMessages = (history || []).map((m) => {
+                        if (m.role === "assistant") return new HumanMessage(`Assistant: ${m.content}`);
+                        return new HumanMessage(`User: ${m.content}`);
                     });
 
                     const messages = [
-                        new SystemMessage(getResponderSystemPrompt()),
+                        new SystemMessage(RESPONDER_SYSTEM_PROMPT),
                         ...historyMessages,
                         new HumanMessage(userMessageContext),
                     ];
@@ -715,11 +818,13 @@ Please answer the user's question based on the F1 data provided above.`;
                         // Walk the stream ourselves (rather than using
                         // trackUsage) so we can both forward tokens to the
                         // client AND record usage from each chunk. The
-                        // provider attaches the full `usage` block to the
-                        // final chunk(s) — addChunk() is idempotent so
-                        // duplicate totals are safe (we take the last
-                        // non-null value for cost, and we *add* token
-                        // counts which
+                        // OpenRouter docs guarantee that the final chunk
+                        // carries the full `usage` block, but other
+                        // providers (Anthropic, Gemini via OpenRouter) may
+                        // also attach usage metadata to the last few
+                        // chunks — addChunk() is idempotent so duplicate
+                        // totals are safe (we take the last non-null
+                        // value for cost, and we *add* token counts which
                         // is a no-op when both are the same final number).
                         for await (const chunk of response) {
                             try {
@@ -741,13 +846,8 @@ Please answer the user's question based on the F1 data provided above.`;
                         // markers): a cheap model maps the finished answer
                         // back onto the reranked candidate filenames. Only
                         // picked, really-retrieved files become UI sources —
-                        // the raw candidate list is never shown. Runs AFTER
-                        // `done` so it never delays stream completion: the
-                        // frontend applies `citations` whenever they arrive
-                        // and persists them at stream end.
+                        // the raw candidate list is never shown.
                         if (regulationDocs.length > 0 && assistantContent.trim()) {
-                            emitUsage()
-                            sendEvent("done", {});
                             const picked: SourceCitation[] = await pickUsedSources(
                                 plannerModel,
                                 message,
@@ -757,9 +857,6 @@ Please answer the user's question based on the F1 data provided above.`;
                             if (picked.length > 0) {
                                 sendEvent("citations", { citations: picked });
                             }
-                            await sendLlmMetadata(message);
-                            safeClose();
-                            return;
                         }
                     } catch (streamError) {
                         // The responder model failed mid-stream. Classify the
@@ -796,12 +893,24 @@ Please answer the user's question based on the F1 data provided above.`;
                         }
                     }
 
-                    // (The old degraded-mode note for an unavailable normal-mode
-                    // intent pass was removed with that pass: normal mode no
-                    // longer runs IntentAnalyzer — see the planning section
-                    // above — so there is no intent failure to annotate here.
-                    // Planner/executor/responder errors still surface via
-                    // their own `error` events.)
+                    // --- Degraded-mode note ---
+                    // If the IntentAnalyzer was unavailable (rate limit /
+                    // auth), the planner still produced a plan, the executor
+                    // ran, and the responder may have answered — but the
+                    // answer was produced without structured entity context.
+                    // Append a brief, friendly note to the answer so the
+                    // user knows the response is best-effort, then emit a
+                    // dedicated SSE event the UI can use to render a badge.
+                    if (intentUnavailableError) {
+                        const note = `\n\n_Note: ${intentUnavailableError.userMessage} Some details may be off because the request was routed with limited information._`;
+                        assistantContent += note;
+                        sendEvent("token", { content: note });
+                        sendEvent("degraded", {
+                            stage: "intent_analysis",
+                            kind: intentUnavailableError.kind,
+                            message: intentUnavailableError.userMessage,
+                        });
+                    }
 
                     // If the responder itself failed non-recoverably and we
                     // have *no* content, end the stream now so the frontend
@@ -823,13 +932,20 @@ Please answer the user's question based on the F1 data provided above.`;
                     }
 
                     // Emit aggregated usage accounting (token counts +
-                    // cost when reported). The frontend stores this on
-                    // the message and renders a small footer in the
+                    // cost). For OpenRouter the cost is real; for other
+                    // providers `cost` is null and the footer just
+                    // shows tokens. The frontend stores this on the
+                    // message and renders a small footer in the bubble.
                     emitUsage()
 
                     sendEvent("done", {});
 
-                    await sendLlmMetadata(message);
+                    // 5. Session metadata (title + type) was kicked off in
+                    // parallel at request start and likely already emitted
+                    // mid-stream — rendezvous here so it isn't lost if the
+                    // stream would otherwise close first. The client persists
+                    // it to Firestore.
+                    await flushMetadata();
 
                     safeClose();
 
@@ -872,18 +988,17 @@ Please answer the user's question based on the F1 data provided above.`;
 export async function GET() {
     return Response.json({
         status: "ok",
-        version: "2.0.0",
+        version: "1.0.0",
         description: "F1 AI Chatbot API - Use POST to send messages",
         endpoints: {
             "POST /api/chat": {
                 description: "Send a chat message",
                 body: {
                     message: "string (required)",
-                    aiMode: "managed | byok (default: managed)",
-                    byokBaseUrl: "string (byok only, model URL)",
-                    byokModel: "string (byok only, model identifier)",
-                    byokModelName: "string (byok only, display name, optional)",
-                    web_search: "boolean (accepted but ignored, search is always available)",
+                    provider: "gemini | openrouter | huggingface | zen | go (default: gemini)",
+                    model: "string (default: gemini-2.0-flash)",
+                    reasoning: "boolean (default: false)",
+                    web_search: "boolean (default: false)",
                     images: "string[] (default: [])",
                 },
             },

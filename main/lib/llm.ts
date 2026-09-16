@@ -1,39 +1,102 @@
-import { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import {
-    getManagedApiKey,
-    getManagedBaseUrl,
-    getManagedModelId,
-    normalizeBaseUrl,
-    type AiMode,
-} from "./providers";
+/**
+ * LLM Model Selection and Initialization
+ * =======================================
+ * Provides model selection logic for the F1 AI Chatbot orchestrator.
+ * Supports multiple providers: Gemini, OpenRouter, Hugging Face,
+ * OpenCode Zen (incl. free models), and OpenCode Go.
+ * See: https://opencode.ai/docs/zen/ and https://opencode.ai/docs/go
+ */
 
-export type { AiMode } from "./providers";
-export type Provider = AiMode;
+import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { PROVIDER_MAP } from "./providers";
+
+export type { Provider } from "./providers";
+import type { Provider } from "./providers";
+
+// =============================================================================
+// Types
+// =============================================================================
+
+// =============================================================================
+// Model Mappings (single source of truth: lib/providers.ts)
+// =============================================================================
 
 export interface ModelConfig {
-    mode: AiMode;
-    byokBaseUrl?: string;
-    byokModel?: string;
-    byokApiKey?: string;
+    provider: Provider;
+    model: string;
+    reasoning?: boolean;
     temperature?: number;
     maxTokens?: number;
+    /**
+     * Stable per-conversation ID. Sent as `x-opencode-session` to the
+     * OpenCode gateways for routing + prompt caching.
+     * See: https://opencode.ai/docs/go ("Where can I use it?")
+     */
     sessionId?: string;
 }
 
-export { GO_BASE_URL, ZEN_BASE_URL } from "./providers";
+// =============================================================================
+// Model Mappings (single source of truth: lib/providers.ts)
+// =============================================================================
 
+// =============================================================================
+// OpenCode Zen / Go (OpenAI-compatible gateways)
+// https://opencode.ai/docs/zen/ https://opencode.ai/docs/go
+// =============================================================================
+
+/**
+ * Free Zen models (chat/completions endpoint, $0/1M tokens).
+ * Note: muse-spark-1.3-contributor-free is excluded — like its Go
+ * sibling it only serves the /responses endpoint; use the Go provider
+ * entry (which sets responsesApi) if you need the Contributor tier.
+ */
+export const ZEN_FREE_MODELS: string[] = PROVIDER_MAP.zen.models.map((m) => m.id);
+
+/** Curated Go models, cheapest-first (requires Go subscription). */
+export const GO_MODELS: string[] = PROVIDER_MAP.go.models.map((m) => m.id);
+
+export const ZEN_BASE_URL = "https://opencode.ai/zen/v1";
+export const GO_BASE_URL = "https://opencode.ai/zen/go/v1";
+
+/**
+ * Client identification required by the OpenCode gateways.
+ * Go/Zen monitor traffic for abuse: clients must send typical coding-agent
+ * traffic, identify with their own user agent (not a generic SDK name),
+ * and send a stable per-conversation `x-opencode-session` header so
+ * requests can be routed + prompt-cached.
+ * See: https://opencode.ai/docs/go ("Where can I use it?")
+ */
 export const OPENCODE_USER_AGENT = "f1-ai-chatbot/1.0";
 export const OPENCODE_SESSION_HEADER = "x-opencode-session";
 
+// =============================================================================
+// Hang protection (per-call timeouts)
+// =============================================================================
+//
+// Upstream free-tier endpoints occasionally stall indefinitely (observed:
+// OpenRouter strict-structured-output requests hanging with no response and
+// no error for 3+ minutes). Without a client-side timeout those stalls hang
+// the SSE stream forever — the UI spins and the server holds the connection.
+// Every route-adjacent LLM call passes one of these signals so a stall
+// always surfaces as an AbortError (classified as `network`, i.e.
+// non-recoverable → degraded mode / clear error) instead of a silent hang.
 export const LLM_TIMEOUT_MS = {
+    /** Intent analysis is advisory-only (the planner proceeds without it),
+     * so keep this tight: a healthy call finishes in seconds, and every
+     * second here delays the user's answer. */
     intent: 20_000,
-    planner: 45_000,
+    /** Single decide-and-plan call. */
+    planner: 60_000,
+    /** Full responder stream (long answers need headroom). */
     responder: 180_000,
-    viz: 8_000,
-    sources: 8_000,
-    critic: 10_000,
 } as const;
 
+/**
+ * Extract plain text from a LangChain message content value.
+ * Chat-completions models return a string; responses-API models return an
+ * array of content blocks like {type: "text", text: "..."}.
+ */
 export function chatContentToText(content: unknown): string {
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
@@ -51,6 +114,9 @@ export function chatContentToText(content: unknown): string {
     return JSON.stringify(content);
 }
 
+/**
+ * Build the extra headers for OpenCode gateway requests.
+ */
 export function buildOpenCodeHeaders(sessionId?: string): Record<string, string> {
     const headers: Record<string, string> = {
         "User-Agent": OPENCODE_USER_AGENT,
@@ -61,26 +127,77 @@ export function buildOpenCodeHeaders(sessionId?: string): Record<string, string>
     return headers;
 }
 
-function isOpenCodeUrl(baseUrl: string): boolean {
-    return baseUrl.toLowerCase().includes("opencode.ai");
-}
+// =============================================================================
+// Model Factory Functions
+// =============================================================================
 
-async function createOpenAICompatibleModel(
-    baseUrl: string,
+/**
+ * Create a Gemini chat model
+ */
+function createGeminiModel(
     model: string,
-    apiKey: string,
     temperature: number = 0.7,
     maxTokens: number = 4096,
-    sessionId?: string
-): Promise<BaseChatModel> {
+    userApiKey?: string
+): BaseChatModel {
+    const apiKey = userApiKey || process.env[PROVIDER_MAP.gemini.envKey];
     if (!apiKey) {
-        throw new Error("API key is required. Check Settings (Managed / BYOK).");
+        throw new Error("API key is required. Please provide it in Settings.");
     }
-    if (!model) {
-        throw new Error("Model is not configured. Check Settings (Managed / BYOK).");
+
+    return new ChatGoogleGenerativeAI({
+        model,
+        apiKey,
+        temperature,
+        maxOutputTokens: maxTokens,
+    });
+}
+
+/**
+ * Create an OpenRouter chat model
+ * Uses the LangChain ChatOpenAI with OpenRouter base URL
+ */
+async function createOpenRouterModel(
+    model: string,
+    temperature: number = 0.7,
+    maxTokens: number = 4096,
+    userApiKey?: string
+): Promise<BaseChatModel> {
+    const apiKey = userApiKey || process.env[PROVIDER_MAP.openrouter.envKey];
+    if (!apiKey) {
+        throw new Error("API key is required. Please provide it in Settings.");
     }
-    if (!baseUrl) {
-        throw new Error("Model URL is not configured. Check Settings (Managed / BYOK).");
+
+    // Dynamic import to avoid bundling issues
+    const { ChatOpenAI } = await import("@langchain/openai");
+
+    return new ChatOpenAI({
+        model,
+        apiKey,
+        temperature,
+        maxTokens,
+        configuration: {
+            baseURL: "https://openrouter.ai/api/v1",
+        },
+    });
+}
+
+/**
+ * Create an OpenCode Zen chat model (OpenAI-compatible gateway).
+ * Free models available; key from settings or OPENCODE_ZEN_API_KEY.
+ * See: https://opencode.ai/docs/zen/
+ */
+async function createZenModel(
+    model: string,
+    temperature: number = 0.7,
+    maxTokens: number = 4096,
+    userApiKey?: string,
+    sessionId?: string,
+    responsesApi: boolean = false
+): Promise<BaseChatModel> {
+    const apiKey = userApiKey || process.env[PROVIDER_MAP.zen.envKey];
+    if (!apiKey) {
+        throw new Error("API key is required. Add it in Settings or set OPENCODE_ZEN_API_KEY.");
     }
 
     const { ChatOpenAI } = await import("@langchain/openai");
@@ -90,147 +207,173 @@ async function createOpenAICompatibleModel(
         apiKey,
         temperature,
         maxTokens,
+        useResponsesApi: responsesApi,
         configuration: {
-            baseURL: baseUrl,
-            // Gateway headers must not leak to generic BYOK endpoints.
-            ...(isOpenCodeUrl(baseUrl)
-                ? { defaultHeaders: buildOpenCodeHeaders(sessionId) }
-                : {}),
+            baseURL: ZEN_BASE_URL,
+            defaultHeaders: buildOpenCodeHeaders(sessionId),
         },
     });
 }
 
-interface ResolvedLlm {
-    baseUrl: string;
-    model: string;
-    apiKey: string;
-}
-
-export function resolveLlmConfig(config: ModelConfig): ResolvedLlm {
-    if (config.mode === "byok") {
-        const baseUrl = normalizeBaseUrl(config.byokBaseUrl || "");
-        const model = (config.byokModel || "").trim();
-        const apiKey = (config.byokApiKey || "").trim();
-        if (!baseUrl) {
-            throw new Error(
-                "BYOK base URL is missing. Open Settings → BYOK and enter the model URL."
-            );
-        }
-        if (!/^https?:\/\/.+/i.test(baseUrl)) {
-            throw new Error("BYOK base URL must start with http:// or https://.");
-        }
-        if (!model) {
-            throw new Error(
-                "BYOK model identifier is missing. Open Settings → BYOK and enter the model identifier."
-            );
-        }
-        if (!apiKey) {
-            throw new Error(
-                "BYOK API key is missing. Open Settings → BYOK and save your key."
-            );
-        }
-        return { baseUrl, model, apiKey };
-    }
-
-    const apiKey = getManagedApiKey();
+/**
+ * Create an OpenCode Go chat model (OpenAI-compatible gateway).
+ * Requires a $10/mo Go subscription; key from settings or OPENCODE_GO_API_KEY.
+ * See: https://opencode.ai/docs/go
+ */
+async function createGoModel(
+    model: string,
+    temperature: number = 0.7,
+    maxTokens: number = 4096,
+    userApiKey?: string,
+    sessionId?: string,
+    responsesApi: boolean = false
+): Promise<BaseChatModel> {
+    const apiKey = userApiKey || process.env[PROVIDER_MAP.go.envKey];
     if (!apiKey) {
-        throw new Error(
-            "The managed model is not configured on the server (missing API key). " +
-                "Ask the app owner to set MANAGED_LLM_API_KEY, or switch to BYOK in Settings."
-        );
+        throw new Error("API key is required. Add it in Settings or set OPENCODE_GO_API_KEY.");
     }
-    return {
-        baseUrl: getManagedBaseUrl(),
-        model: getManagedModelId(),
+
+    const { ChatOpenAI } = await import("@langchain/openai");
+
+    return new ChatOpenAI({
+        model,
         apiKey,
-    };
-}
-
-export async function getChatModel(config: ModelConfig, apiKey?: string): Promise<BaseChatModel> {
-    const { temperature = 0.7, maxTokens = 4096, sessionId } = config;
-    const effective: ModelConfig =
-        apiKey && !config.byokApiKey ? { ...config, byokApiKey: apiKey } : config;
-    const resolved = resolveLlmConfig(effective);
-
-    return createOpenAICompatibleModel(
-        resolved.baseUrl,
-        resolved.model,
-        resolved.apiKey,
         temperature,
         maxTokens,
-        sessionId
-    );
-}
-
-/** Planner and responder share one model; planner uses deterministic settings. */
-export async function getPlannerModel(
-    mode: AiMode,
-    byok?: { baseUrl?: string; model?: string; apiKey?: string },
-    sessionId?: string
-): Promise<BaseChatModel> {
-    return getChatModel({
-        mode,
-        byokBaseUrl: byok?.baseUrl,
-        byokModel: byok?.model,
-        byokApiKey: byok?.apiKey,
-        temperature: 0,
-        maxTokens: 2048,
-        sessionId,
+        useResponsesApi: responsesApi,
+        configuration: {
+            baseURL: GO_BASE_URL,
+            defaultHeaders: buildOpenCodeHeaders(sessionId),
+        },
     });
 }
-
-export async function getResponderModel(
-    mode: AiMode,
-    byokModelOrReasoning?: string | boolean | { baseUrl?: string; model?: string; apiKey?: string },
-    reasoningOrApiKey?: boolean | string,
-    apiKeyOrSession?: string,
-    sessionId?: string
+/**
+ * Create a Hugging Face chat model
+ */
+async function createHuggingFaceModel(
+    model: string,
+    temperature: number = 0.7,
+    maxTokens: number = 4096,
+    userApiKey?: string
 ): Promise<BaseChatModel> {
-    let byok: { baseUrl?: string; model?: string; apiKey?: string } | undefined;
-    let reasoning = false;
-    let explicitSession: string | undefined = sessionId;
-
-    if (
-        byokModelOrReasoning !== null &&
-        typeof byokModelOrReasoning === "object"
-    ) {
-        byok = byokModelOrReasoning as { baseUrl?: string; model?: string; apiKey?: string };
-        if (typeof reasoningOrApiKey === "boolean") reasoning = reasoningOrApiKey;
-        if (typeof apiKeyOrSession === "string") explicitSession = apiKeyOrSession;
-    } else {
-        if (typeof byokModelOrReasoning === "string" && byokModelOrReasoning) {
-            byok = { model: byokModelOrReasoning };
-        }
-        if (typeof reasoningOrApiKey === "boolean") {
-            reasoning = reasoningOrApiKey;
-        } else if (typeof reasoningOrApiKey === "string" && reasoningOrApiKey) {
-            if (!byok) byok = {};
-            byok.apiKey = reasoningOrApiKey;
-        }
-        if (typeof apiKeyOrSession === "string" && apiKeyOrSession) {
-            if (!byok?.apiKey && apiKeyOrSession.length > 20) {
-                byok = { ...(byok || {}), apiKey: apiKeyOrSession };
-            } else {
-                explicitSession = apiKeyOrSession;
-            }
-        }
+    const apiKey = userApiKey || process.env[PROVIDER_MAP.huggingface.envKey];
+    if (!apiKey) {
+        throw new Error("API key is required. Please provide it in Settings.");
     }
 
-    return getChatModel({
-        mode,
-        byokBaseUrl: byok?.baseUrl,
-        byokModel: byok?.model,
-        byokApiKey: byok?.apiKey,
-        temperature: reasoning ? 0.3 : 0.7,
-        maxTokens: 8192,
-        sessionId: explicitSession,
+    // HuggingFace inference uses OpenAI-compatible API
+    // so we use ChatOpenAI with HF endpoint for instruction-tuned models
+    const { ChatOpenAI } = await import("@langchain/openai");
+
+    return new ChatOpenAI({
+        model,
+        apiKey,
+        temperature,
+        maxTokens,
+        configuration: {
+            baseURL: "https://api-inference.huggingface.co/v1",
+        },
     });
 }
 
-export function isProviderConfigured(): boolean {
-    return !!getManagedApiKey();
+// =============================================================================
+// Main Model Selection
+// =============================================================================
+
+/**
+ * Get a chat model based on provider and configuration
+ *
+ * @param config - Model configuration
+ * @param apiKey - Optional API key from user settings (takes precedence over env vars)
+ * @returns LangChain chat model instance
+ */
+export async function getChatModel(config: ModelConfig, apiKey?: string): Promise<BaseChatModel> {
+    const { provider, model, temperature = 0.7, maxTokens = 4096, sessionId } = config;
+    // Responses-only models (flagged in providers.ts) need LangChain's
+    // responses API instead of chat/completions.
+    const responsesApi =
+        PROVIDER_MAP[provider].models.find((m) => m.id === model)?.responsesApi ?? false;
+
+    switch (provider) {
+        case "gemini":
+            return createGeminiModel(model, temperature, maxTokens, apiKey);
+
+        case "openrouter":
+            return await createOpenRouterModel(model, temperature, maxTokens, apiKey);
+
+        case "huggingface":
+            return await createHuggingFaceModel(model, temperature, maxTokens, apiKey);
+
+        case "zen":
+            return await createZenModel(model, temperature, maxTokens, apiKey, sessionId, responsesApi);
+
+        case "go":
+            return await createGoModel(model, temperature, maxTokens, apiKey, sessionId, responsesApi);
+
+        default:
+            throw new Error(`Unsupported provider: ${provider}`);
+    }
 }
 
-export function isManagedConfigured(): boolean {
-    return !!getManagedApiKey();
+/**
+ * Get the planner model (always cheap/fast)
+ * Uses a fixed cheap model regardless of user selection
+ *
+ * @param provider - The user's selected provider
+ * @param apiKey - Optional API key from user settings
+ * @param modelId - Optional model id override. When provided, the planner
+ *   uses this exact model (the ControlPanel "Model (Planner)" picker).
+ *   When omitted, falls back to the provider's built-in cheap planner
+ *   model from providers.ts so the feature is fully opt-in.
+ * @param sessionId - Optional stable per-conversation ID (x-opencode-session)
+ * @returns LangChain chat model for planning
+ */
+export async function getPlannerModel(provider: Provider, apiKey?: string, modelId?: string, sessionId?: string): Promise<BaseChatModel> {
+    const meta = PROVIDER_MAP[provider];
+    const model = modelId || meta.plannerModel;
+
+    return getChatModel({
+        provider,
+        model,
+        temperature: 0, // Deterministic for planning
+        maxTokens: 2048,
+        sessionId,
+    }, apiKey);
+}
+
+/**
+ * Get the responder model based on reasoning flag
+ *
+ * @param provider - The user's selected provider
+ * @param model - The user's selected model (used if not reasoning)
+ * @param reasoning - Whether to use a reasoning-capable model
+ * @param apiKey - Optional API key from user settings
+ * @param sessionId - Optional stable per-conversation ID (x-opencode-session)
+ * @returns LangChain chat model for response generation
+ */
+export async function getResponderModel(
+    provider: Provider,
+    model: string,
+    reasoning: boolean,
+    apiKey?: string,
+    sessionId?: string
+): Promise<BaseChatModel> {
+    // If reasoning is enabled, use the reasoning model for this provider
+    const selectedModel = reasoning ? PROVIDER_MAP[provider].reasoningModel : model;
+
+    return getChatModel({
+        provider,
+        model: selectedModel,
+        reasoning,
+        temperature: reasoning ? 0.3 : 0.7, // Lower temp for reasoning
+        maxTokens: 8192, // Higher limit for detailed responses
+        sessionId,
+    }, apiKey);
+}
+
+/**
+ * Check if API key is configured for a provider
+ */
+export function isProviderConfigured(provider: Provider): boolean {
+    return !!process.env[PROVIDER_MAP[provider].envKey];
 }

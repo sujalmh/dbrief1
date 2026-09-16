@@ -15,7 +15,6 @@
 import type { ConfidenceScore, ConfidenceFactors, ResearchType } from "./types";
 import { RESEARCH_TYPE_EXPECTATIONS } from "./types";
 import type { EvidenceStore } from "./evidence-store";
-import { researchConfig } from "@/lib/config";
 
 // =============================================================================
 // Confidence Calculator
@@ -40,11 +39,10 @@ export class ConfidenceCalculator {
         const missingData = expectedTypes.filter(
             (t) => !presentTypes.includes(t as (typeof presentTypes)[number])
         ) as string[];
-        const weights = researchConfig.confidence();
         const completeness =
             expectedTypes.length > 0
                 ? (expectedTypes.length - missingData.length) / expectedTypes.length
-                : weights.defaultCompleteness; // Default if no expectations defined
+                : 0.8; // Default if no expectations defined
 
         // --- Conflicts: count contradictory evidence ---
         const conflicts = this.countConflicts(allEvidence);
@@ -53,17 +51,17 @@ export class ConfidenceCalculator {
         const dataQuality = this.computeDataQuality(allEvidence);
 
         // --- Source count factor: diminishing returns ---
-        const sourceCountFactor = Math.min(1, sourceCount / weights.fullScoreSourceCount);
+        const sourceCountFactor = Math.min(1, sourceCount / 5); // 5+ sources = full score
 
-        // --- Conflict factor: fewer conflicts = higher score ---
-        const conflictFactor = Math.min(1, conflicts / weights.maxConflictPenalty);
+        // --- Conflict factor: 0 conflicts = 1, more conflicts = lower ---
+        const conflictFactor = Math.min(1, conflicts / 3); // 3+ conflicts = max penalty
 
-        // --- Overall weighted formula (weights are config-driven) ---
+        // --- Overall weighted formula ---
         const overall =
-            weights.weightSourceCount * sourceCountFactor +
-            weights.weightCompleteness * completeness +
-            weights.weightConflicts * (1 - conflictFactor) +
-            weights.weightDataQuality * dataQuality;
+            0.3 * sourceCountFactor +
+            0.3 * completeness +
+            0.2 * (1 - conflictFactor) +
+            0.2 * dataQuality;
 
         const factors: ConfidenceFactors = {
             sourceCount,

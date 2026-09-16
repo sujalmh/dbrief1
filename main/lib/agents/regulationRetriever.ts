@@ -19,66 +19,48 @@ import { z } from "zod";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { chatContentToText } from "../llm";
-import { minSeasonYear, ragConfig, ragMaxSeasonYear } from "../config";
 
 // =============================================================================
-// Configuration (live — see lib/config.ts; env: VOYAGE_* / EMBEDDING_* /
-// RAG_*). Exported names are startup snapshots for backward compatibility;
-// internal code always reads ragConfig.* live.
+// Configuration
 // =============================================================================
 
-function voyageApiUrl(): string {
-    return ragConfig.embeddingsUrl();
-}
-
-function voyageRerankUrl(): string {
-    return ragConfig.rerankUrl();
-}
-
-export const EMBEDDING_MODEL: string = ragConfig.embeddingModel();
+const VOYAGE_API_URL = "https://ai.mongodb.com/v1/embeddings";
+const VOYAGE_RERANK_URL = "https://ai.mongodb.com/v1/rerank";
+export const EMBEDDING_MODEL = "voyage-4";
 /** voyage-4 default output dimension (must match the Qdrant collection). */
-export const EMBEDDING_DIM: number = ragConfig.embeddingDim();
-
-function rerankModel(): string {
-    return ragConfig.rerankModel();
-}
-
-function maxSubqueries(): number {
-    return ragConfig.maxSubqueries();
-}
-
-function minSubqueries(): number {
-    return ragConfig.minSubqueries();
-}
-
-function defaultMatchCount(): number {
-    return ragConfig.defaultMatchCount();
-}
-
-function topNResults(): number {
-    return ragConfig.topNResults();
-}
+export const EMBEDDING_DIM = 1024;
+const RERANK_MODEL = "rerank-3";
+const MAX_SUBQUERIES = 5;
+const MIN_SUBQUERIES = 2;
+const DEFAULT_MATCH_COUNT = 10;
+const TOP_N_RESULTS = 5;
 /**
- * Minimum rerank relevance score (0-1) for a document to be kept.
+ * Minimum Voyage rerank-3 relevance score (0-1) for a document to be kept.
  * Hits below this floor are clearly off-topic vector-search noise and must
  * not become UI sources. If every hit falls below the floor we keep the
  * single best one so the answer path still has context — the downstream
  * LLM source-pick decides whether it is actually cited.
  */
-export const MIN_RELEVANCE_SCORE: number = ragConfig.minRelevanceScore();
-
-function minRelevanceScore(): number {
-    return ragConfig.minRelevanceScore();
-}
+export const MIN_RELEVANCE_SCORE = 0.2;
 
 /**
  * Section filter values map to every known `section` payload variant in
  * Qdrant (e.g. "Section C [Technical]"). Qdrant `match.any` is exact-match,
- * so all variants must be listed. Overridable via RAG_SECTION_VARIANTS_JSON.
+ * so all variants must be listed.
  */
-function sectionVariants(): Record<string, string[]> {
-    return ragConfig.sectionVariants();
-}
+const SECTION_VARIANTS: Record<string, string[]> = {
+    Sporting: ["Sporting", "Section B [Sporting]"],
+    Technical: ["Technical", "Section C [Technical]"],
+    Financial: [
+        "Financial",
+        "Section D [Financial - F1 Teams]",
+        "Section D [Financial Regulations - F1 Teams]",
+        "Section E [Financial – PU Manufacturers]",
+        "Section E [Financial Regulations - Power Unit Manufacturers]",
+        "Section E [Financial - Power Unit Manufacturers]",
+        "Section E [Financial - PU Manufacturers]",
+    ],
+};
 
 // =============================================================================
 // Zod Schemas
@@ -86,7 +68,7 @@ function sectionVariants(): Record<string, string[]> {
 
 export const RagInputSchema = z.object({
     query: z.string().min(1, "Query is required"),
-    season: z.number().int().min(minSeasonYear()).max(ragMaxSeasonYear()),
+    season: z.number().int().min(1950).max(2100),
     section: z.enum(["Sporting", "Technical", "Financial"]),
     doc_type: z.enum(["regulation", "decision"]).default("regulation"),
     event: z.string().min(1).optional().describe("Grand Prix event name, e.g. 'Austrian Grand Prix' (mainly for decisions)"),
@@ -198,11 +180,11 @@ export async function generateSubQueries(
         // Validate and limit sub-queries
         const subQueries = parsed
             .filter((q): q is string => typeof q === "string" && q.length > 0)
-            .slice(0, maxSubqueries());
+            .slice(0, MAX_SUBQUERIES);
 
-        if (subQueries.length < minSubqueries()) {
+        if (subQueries.length < MIN_SUBQUERIES) {
             // Fallback: include original query if too few sub-queries
-            return [query, ...subQueries].slice(0, maxSubqueries());
+            return [query, ...subQueries].slice(0, MAX_SUBQUERIES);
         }
 
         return subQueries;
@@ -231,7 +213,7 @@ export async function embedQuery(text: string): Promise<number[]> {
     }
 
     try {
-        const response = await fetch(voyageApiUrl(), {
+        const response = await fetch(VOYAGE_API_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -239,7 +221,7 @@ export async function embedQuery(text: string): Promise<number[]> {
             },
             body: JSON.stringify({
                 input: text,
-                model: ragConfig.embeddingModel(),
+                model: EMBEDDING_MODEL,
                 input_type: "query",
             }),
         });
@@ -295,7 +277,7 @@ interface QdrantSearchResponse {
 
 export interface RetrievalFilters {
     season: number;
-    section: string;
+    section: keyof typeof SECTION_VARIANTS;
     doc_type?: string;
     event?: string;
 }
@@ -303,17 +285,16 @@ export interface RetrievalFilters {
 /**
  * Retrieve documents from Qdrant using vector similarity search
  *
- * @param embedding - The query embedding vector (dimension from config)
+ * @param embedding - The query embedding vector (voyage-4, 1024-dim)
  * @param filters - Payload filters (season, section, doc_type, event)
- * @param matchCount - Number of results to return per query (config default)
+ * @param matchCount - Number of results to return per query (default: 10)
  * @returns Array of matching documents
  */
 export async function retrieveFromQdrant(
     embedding: number[],
     filters: RetrievalFilters,
-    matchCount?: number
+    matchCount: number = DEFAULT_MATCH_COUNT
 ): Promise<RetrievedDocument[]> {
-    const effectiveMatchCount = matchCount ?? defaultMatchCount();
     const qdrantUrl = process.env.QDRANT_URL;
     const qdrantApiKey = process.env.QDRANT_API_KEY;
 
@@ -324,8 +305,8 @@ export async function retrieveFromQdrant(
     const { season, section, doc_type = "regulation", event } = filters;
 
     try {
-        // Qdrant search endpoint (collection is config-driven)
-        const searchUrl = `${qdrantUrl}/collections/${ragConfig.collection()}/points/search`;
+        // Qdrant search endpoint
+        const searchUrl = `${qdrantUrl}/collections/fia_documents/points/search`;
 
         const must: Record<string, unknown>[] = [
             // Season is a KEYWORD (string) payload in the live collection.
@@ -335,10 +316,9 @@ export async function retrieveFromQdrant(
 
         // Decisions rarely carry a section payload — applying the filter
         // would exclude them, so only filter section for regulations.
-        // Variant list is config-driven (RAG_SECTION_VARIANTS_JSON).
-        const variants = sectionVariants()[section];
-        if (doc_type === "regulation" && variants) {
-            must.push({ key: "section", match: { any: variants } });
+        const sectionVariants = SECTION_VARIANTS[section];
+        if (doc_type === "regulation" && sectionVariants) {
+            must.push({ key: "section", match: { any: sectionVariants } });
         }
 
         if (event) {
@@ -354,7 +334,7 @@ export async function retrieveFromQdrant(
             body: JSON.stringify({
                 vector: embedding,
                 filter: { must },
-                limit: effectiveMatchCount,
+                limit: matchCount,
                 with_payload: true,
             }),
         });
@@ -414,22 +394,21 @@ interface RerankResponse {
 }
 
 /**
- * Rerank candidate documents against the original query.
+ * Rerank candidate documents against the original query using Voyage rerank-3.
  *
  * @param query - The original user query
  * @param documents - Deduplicated candidate documents
- * @param topK - Number of top documents to return (config default)
+ * @param topK - Number of top documents to return (default: TOP_N_RESULTS)
  * @returns Reranked documents, ordered by relevance (descending)
  */
 export async function rerankDocuments(
     query: string,
     documents: Document[],
-    topK?: number
+    topK: number = TOP_N_RESULTS
 ): Promise<Document[]> {
     if (documents.length === 0) {
         return [];
     }
-    const effectiveTopK = topK ?? topNResults();
 
     const apiKey = process.env.EMBEDDINGS_API_KEY;
 
@@ -438,7 +417,7 @@ export async function rerankDocuments(
     }
 
     try {
-        const response = await fetch(voyageRerankUrl(), {
+        const response = await fetch(VOYAGE_RERANK_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -447,8 +426,8 @@ export async function rerankDocuments(
             body: JSON.stringify({
                 query,
                 documents: documents.map((doc) => doc.content),
-                model: rerankModel(),
-                top_k: Math.min(effectiveTopK, documents.length),
+                model: RERANK_MODEL,
+                top_k: Math.min(topK, documents.length),
                 return_documents: false,
                 truncation: true,
             }),
@@ -473,7 +452,7 @@ export async function rerankDocuments(
                     item.index >= 0 &&
                     item.index < documents.length
             )
-            .slice(0, effectiveTopK);
+            .slice(0, topK);
 
         // Attach the rerank relevance score to each surviving document so
         // downstream consumers (LLM source-pick, UI) can distinguish
@@ -486,13 +465,12 @@ export async function rerankDocuments(
         // Drop clearly off-topic hits below the relevance floor. If that
         // would empty the list, keep the single best hit so the answer
         // path still has context to work with.
-        const floor = minRelevanceScore();
         const kept = scored.filter(
-            (doc) => (doc.relevance_score ?? 0) >= floor
+            (doc) => (doc.relevance_score ?? 0) >= MIN_RELEVANCE_SCORE
         );
         if (kept.length === 0 && scored.length > 0) {
             console.warn(
-                `[Rerank] All ${scored.length} hits below relevance floor ${floor} — keeping best hit only.`
+                `[Rerank] All ${scored.length} hits below relevance floor ${MIN_RELEVANCE_SCORE} — keeping best hit only.`
             );
             return [scored[0]];
         }
@@ -565,8 +543,8 @@ export function deduplicateAndRank(results: RetrievedDocument[][]): Document[] {
 
     // Return top N results, stripped of ranking metadata.
     // relevance_score stays null here — it is only populated by the
-    // reranker in rerankDocuments(). N comes from config (RAG_TOP_N_RESULTS).
-    return ranked.slice(0, topNResults()).map((doc) => ({
+    // reranker in rerankDocuments().
+    return ranked.slice(0, TOP_N_RESULTS).map((doc) => ({
         source: doc.source,
         title: doc.title,
         url: doc.url,
@@ -637,11 +615,11 @@ export async function ragRetrieve(
     // Step 4: Deduplicate
     const rankedDocuments = deduplicateAndRank(allResults);
 
-    // Step 5: Rerank (fallback to vector order on failure)
+    // Step 5: Rerank with Voyage rerank-3 (fallback to vector order on failure)
     let finalDocuments = rankedDocuments;
     if (rankedDocuments.length > 0) {
         try {
-            finalDocuments = await rerankDocuments(query, rankedDocuments, topNResults());
+            finalDocuments = await rerankDocuments(query, rankedDocuments, TOP_N_RESULTS);
         } catch (error) {
             console.error(`[RAG] Reranking failed, using vector order:`, error);
             finalDocuments = rankedDocuments;

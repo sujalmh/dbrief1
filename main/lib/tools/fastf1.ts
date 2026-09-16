@@ -7,77 +7,31 @@
 
 import { z } from "zod";
 import { tool, StructuredTool } from "@langchain/core/tools";
-import { f1ApiConfig, maxSeasonYear, minSeasonYear } from "../config";
-import { getSessionCodes } from "../reference-data";
 
 // =============================================================================
-// Configuration (live — see lib/config.ts)
+// Configuration
 // =============================================================================
 
-function apiBase(): string {
-    return f1ApiConfig.baseUrl();
-}
-
-function toolTimeoutMs(): number {
-    return f1ApiConfig.toolTimeoutMs();
-}
-
-function maxResponseBytes(): number {
-    return f1ApiConfig.maxResponseBytes();
-}
+const F1_API_BASE = process.env.F1_API_URL || "http://localhost:8000";
+const TOOL_TIMEOUT_MS = 60000;
 // Cap on response body size (bytes) accepted from the F1 API.
 // Telemetry responses can be many MB; we refuse anything larger to avoid
-// running the server out of memory. Size is config-driven (F1_MAX_RESPONSE_MB).
-
-// =============================================================================
-// Lightweight GET cache (discovery endpoints)
-// =============================================================================
-//
-// The planner routinely fetches the same discovery payloads multiple times
-// per question (get_events for GP resolution, then again as data context;
-// get_gp_names + get_sessions for the same year/gp). These are idempotent
-// GETs — cache them in-process so duplicate steps cost ~0ms instead of a
-// full backend round-trip (which itself may hit FastF1). TTL and size are
-// config-driven (F1_GET_CACHE_TTL_MS / F1_GET_CACHE_MAX_ENTRIES).
-const getCache = new Map<string, { expires: number; data: unknown }>();
-
-function getCacheGet(key: string): unknown | undefined {
-    const entry = getCache.get(key);
-    if (!entry) return undefined;
-    if (Date.now() > entry.expires) {
-        getCache.delete(key);
-        return undefined;
-    }
-    // LRU refresh.
-    getCache.delete(key);
-    getCache.set(key, entry);
-    return entry.data;
-}
-
-function getCacheSet(key: string, data: unknown): void {
-    const maxEntries = f1ApiConfig.getCacheMaxEntries();
-    if (getCache.size >= maxEntries) {
-        const oldest = getCache.keys().next();
-        if (!oldest.done) getCache.delete(oldest.value);
-    }
-    getCache.set(key, { expires: Date.now() + f1ApiConfig.getCacheTtlMs(), data });
-}
+// running the server out of memory. 50MB is enough for any reasonable
+// telemetry request via the /f1/telemetry endpoint.
+const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
 
 // =============================================================================
 // Helper Functions
 // =============================================================================
 
 /**
- * Make a GET request to the F1 API (cached — see GET cache above).
+ * Make a GET request to the F1 API
  */
 async function f1Get(endpoint: string): Promise<unknown> {
-    const cached = getCacheGet(endpoint);
-    if (cached !== undefined) return cached;
-
-    const response = await fetch(`${apiBase()}${endpoint}`, {
+    const response = await fetch(`${F1_API_BASE}${endpoint}`, {
         method: "GET",
         headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(toolTimeoutMs()),
+        signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -85,20 +39,18 @@ async function f1Get(endpoint: string): Promise<unknown> {
         throw new Error(error.error || `F1 API error: ${response.status}`);
     }
 
-    const data = await parseResponseBody(response);
-    getCacheSet(endpoint, data);
-    return data;
+    return parseResponseBody(response);
 }
 
 /**
  * Make a POST request to the F1 API
  */
 async function f1Post(endpoint: string, body: unknown): Promise<unknown> {
-    const response = await fetch(`${apiBase()}${endpoint}`, {
+    const response = await fetch(`${F1_API_BASE}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(toolTimeoutMs()),
+        signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -111,18 +63,17 @@ async function f1Post(endpoint: string, body: unknown): Promise<unknown> {
 
 /**
  * Read a fetch response body, enforcing a size cap to prevent OOM.
- * If the body exceeds the configured cap, throws a descriptive error.
+ * If the body exceeds MAX_RESPONSE_BYTES, throws a descriptive error.
  */
 async function parseResponseBody(response: Response): Promise<unknown> {
-    const cap = maxResponseBytes();
     // Prefer Content-Length when available so we can reject before buffering.
     const contentLength = response.headers.get("content-length");
     if (contentLength !== null) {
         const length = Number(contentLength);
-        if (Number.isFinite(length) && length > cap) {
+        if (Number.isFinite(length) && length > MAX_RESPONSE_BYTES) {
             throw new Error(
                 `F1 API response too large: ${length} bytes exceeds ` +
-                `limit of ${cap} bytes`
+                `limit of ${MAX_RESPONSE_BYTES} bytes`
             );
         }
     }
@@ -130,10 +81,10 @@ async function parseResponseBody(response: Response): Promise<unknown> {
     // Read as ArrayBuffer so we can enforce a hard size cap regardless of
     // whether the server sent a Content-Length header.
     const buffer = await response.arrayBuffer();
-    if (buffer.byteLength > cap) {
+    if (buffer.byteLength > MAX_RESPONSE_BYTES) {
         throw new Error(
             `F1 API response too large: ${buffer.byteLength} bytes exceeds ` +
-            `limit of ${cap} bytes`
+            `limit of ${MAX_RESPONSE_BYTES} bytes`
         );
     }
     return JSON.parse(new TextDecoder().decode(buffer));
@@ -143,15 +94,14 @@ async function parseResponseBody(response: Response): Promise<unknown> {
 // Zod Schemas for Tool Inputs
 // =============================================================================
 //
-// Year bounds are config-driven (F1_MIN_SEASON_YEAR / current year +
-// F1_SEASON_YEAR_BUFFER) so the LLM-facing schema stays in sync with the
-// backend without code changes.
-const FASTF1_MAX_YEAR = maxSeasonYear();
-const FASTF1_MIN_YEAR = minSeasonYear();
-const YearSchema = z.number().int().min(FASTF1_MIN_YEAR).max(FASTF1_MAX_YEAR).describe(`F1 season year (${FASTF1_MIN_YEAR}-${FASTF1_MAX_YEAR})`);
+// The maximum year is computed dynamically (current year + 2) so that the
+// LLM-facing schema description always reflects the current season. The
+// /f1/seasons endpoint on the backend uses the same logic, so they stay
+// in sync.
+const FASTF1_MAX_YEAR = new Date().getFullYear() + 2;
+const YearSchema = z.number().int().min(1950).max(FASTF1_MAX_YEAR).describe(`F1 season year (1950-${FASTF1_MAX_YEAR})`);
 const GpSchema = z.string().describe("Grand Prix name. Use the `canonical` field from `get_gp_names` or the `EventName` from `get_events`. Examples: 'Monaco', 'Monaco Grand Prix', 'British', 'Abu Dhabi'. Do NOT include the year.");
-const SESSION_CODES = getSessionCodes() as [string, ...string[]];
-const SessionSchema = z.enum(SESSION_CODES).describe(`Session type code. Must be exactly one of: ${getSessionCodes().join(", ")}.`);
+const SessionSchema = z.enum(["FP1", "FP2", "FP3", "Q", "SQ", "SS", "S", "R"]).describe("Session type code. Must be exactly one of: FP1, FP2, FP3, Q (qualifying), SQ (sprint qualifying), SS (sprint shootout), S (sprint), R (race).");
 const DriverSchema = z.string().describe("Driver code (e.g., 'VER', 'HAM', 'LEC')");
 
 // =============================================================================
@@ -167,7 +117,7 @@ export const getSeasonsTool = tool(
     },
     {
         name: "get_seasons",
-        description: `Get the list of available F1 seasons (${FASTF1_MIN_YEAR}-${FASTF1_MAX_YEAR})`,
+        description: `Get the list of available F1 seasons (1950-${FASTF1_MAX_YEAR})`,
         schema: z.object({}),
     }
 );

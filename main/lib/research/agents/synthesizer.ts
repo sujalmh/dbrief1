@@ -18,7 +18,6 @@ import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import type { EvidenceStore } from "../evidence-store";
 import type { ResearchMemory } from "../memory";
 import type { ConfidenceScore, ChartSpec, ResearchType } from "../types";
-import { chatContentToText } from "@/lib/llm";
 
 // =============================================================================
 // Synthesizer
@@ -28,18 +27,15 @@ export class Synthesizer {
     constructor(private model: BaseChatModel) { }
 
     /**
-     * Generate the final report. Streams tokens directly as the LLM produces
-     * them (time-to-first-token = one chunk, not the full answer).
+     * Generate the final report. Returns an async generator that yields
+     * text tokens for streaming.
      *
      * Guardrails:
      *   1. Refuse-on-empty: if the evidence store is empty, yield a fixed
      *      refusal message without calling the LLM.
-     *   2. Citation validation runs AFTER streaming (non-blocking): invalid
-     *      [E#] references are logged, not re-prompted. The old path buffered
-     *      the entire answer, validated, optionally made a SECOND full LLM
-     *      call to fix citations, then re-emitted the text in 4-char slices —
-     *      adding full-generation latency before the first visible token plus
-     *      up to 2x cost on the retry path.
+     *   2. Citation validation: buffer the full response, validate all
+     *      [E#] references exist in the evidence store, and re-prompt once
+     *      if invalid citations are found. Then stream the validated text.
      */
     async *generate(params: {
         objective: string;
@@ -124,10 +120,10 @@ Produce a comprehensive, evidence-backed answer. Use markdown formatting.`;
         const humanMessage = new HumanMessage("Generate the final report.");
 
         try {
-            // Direct streaming: forward each chunk immediately while
-            // buffering a copy for post-stream citation validation.
-            // First token reaches the client after one chunk, not after
-            // the full generation.
+            // --- Guardrail 2: Buffer-then-stream with citation validation ---
+            // Collect the full response first so we can validate [E#] references
+            // before streaming to the client. If invalid citations are found,
+            // re-prompt once with a correction instruction.
             let fullText = "";
             const stream = await this.model.stream([
                 new SystemMessage(systemPrompt),
@@ -136,20 +132,52 @@ Produce a comprehensive, evidence-backed answer. Use markdown formatting.`;
 
             for await (const chunk of stream) {
                 try { onChunk?.(chunk) } catch { /* best-effort */ }
-                const content = chatContentToText(chunk.content);
-                if (!content) continue;
+                const content = typeof chunk.content === "string"
+                    ? chunk.content
+                    : "";
                 fullText += content;
-                yield content;
             }
 
-            // Post-stream validation (non-blocking, no re-prompt): log
-            // invalid refs so they are visible in server logs without
-            // paying for a second full generation.
+            // Validate citations
             const invalidRefs = this.validateReferences(fullText, evidenceStore);
             if (invalidRefs.length > 0) {
                 console.warn(
-                    `[Synthesizer] Invalid citations (not re-prompting): ${invalidRefs.join(", ")}.`
+                    `[Synthesizer] Invalid citations found: ${invalidRefs.join(", ")}. Re-prompting...`
                 );
+                // Re-prompt with correction instruction (max 1 retry)
+                try {
+                    const correctionPrompt = new HumanMessage(
+                        `The following citations in your previous answer are invalid (do not exist in the Evidence Store): ${invalidRefs.join(", ")}.\n\nOnly use evidence IDs that exist in the Evidence Store. Regenerate the answer with valid citations.`
+                    );
+                    let retryText = "";
+                    const retryStream = await this.model.stream([
+                        new SystemMessage(systemPrompt),
+                        humanMessage,
+                        correctionPrompt,
+                    ]);
+                    for await (const chunk of retryStream) {
+                        try { onChunk?.(chunk) } catch { /* best-effort */ }
+                        const content = typeof chunk.content === "string"
+                            ? chunk.content
+                            : "";
+                        retryText += content;
+                    }
+                    // Use the retry if it has fewer or no invalid refs
+                    const retryInvalid = this.validateReferences(retryText, evidenceStore);
+                    fullText = retryInvalid.length < invalidRefs.length ? retryText : fullText;
+                } catch (retryError) {
+                    console.warn(
+                        "[Synthesizer] Citation correction retry failed:",
+                        retryError instanceof Error ? retryError.message : retryError
+                    );
+                }
+            }
+
+            // Stream the validated text token-by-token
+            // Split into reasonable chunks to preserve streaming UX
+            const chunkSize = 4; // characters per token chunk
+            for (let i = 0; i < fullText.length; i += chunkSize) {
+                yield fullText.slice(i, i + chunkSize);
             }
         } catch (error) {
             yield `\n\n[Synthesis error: ${error instanceof Error ? error.message : "unknown error"}]\n\n${evidenceContext}`;

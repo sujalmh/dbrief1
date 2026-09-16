@@ -16,7 +16,7 @@
 
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { AIMessageChunk } from "@langchain/core/messages";
-import { getPlannerModel, getResponderModel, type AiMode } from "@/lib/llm";
+import { getPlannerModel, getResponderModel, type Provider } from "@/lib/llm";
 import { ToolRegistry, createToolRegistry } from "./tool-registry";
 import { EvidenceStore } from "./evidence-store";
 import { ResearchMemory } from "./memory";
@@ -39,22 +39,17 @@ import type {
     Reflection,
     IntentAnalysis,
 } from "./types";
-import { RESEARCH_TYPE_EXPECTATIONS } from "./types";
-import { researchConfig } from "@/lib/config";
 
 // =============================================================================
-// Configuration (live — see lib/config.ts)
+// Configuration
 // =============================================================================
 
 /**
  * Hard wall-clock cap on the entire research session. Even if the budget
  * would otherwise allow more iterations, we stop once this elapses so a
  * single slow tool/plan/reflect call cannot hang the user forever.
- * Config-driven (RESEARCH_OVERALL_TIMEOUT_MS).
  */
-function overallTimeoutMs(): number {
-    return researchConfig.overallTimeoutMs();
-}
+const OVERALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 // =============================================================================
 // Research Manager
@@ -117,8 +112,8 @@ export class ResearchManager {
      * @param history - Optional conversation history for follow-up resolution
      */
     async *run(objective: string, history?: ChatMessage[]): AsyncGenerator<ResearchEvent> {
-        const maxTasks = this.options.maxTasks ?? researchConfig.defaultMaxTasks();
-        const maxIterations = this.options.maxIterations ?? researchConfig.defaultMaxIterations();
+        const maxTasks = this.options.maxTasks || 50;
+        const maxIterations = this.options.maxIterations || 20;
         const startTime = Date.now();
 
         const budget: ResearchBudget = {
@@ -134,24 +129,74 @@ export class ResearchManager {
         let timedOut = false;
 
         try {
-            // --- Step 1: Intent analysis only (single LLM call) ---
-            // The old path ran Reasoner.classify + IntentAnalyzer IN PARALLEL
-            // (2 LLM calls). But IntentAnalysis already carries `intentType`,
-            // which IS the researchType — classify was redundant spend on the
-            // critical path. Derive researchType + strategy directly from the
-            // intent result; fall back to factual/default only if intent is
-            // unavailable.
+            // --- Step 1 + 1.5: Classify + Intent Analysis IN PARALLEL ---
+            // These are independent LLM calls (classify needs only the
+            // objective; intent needs objective + history), so start both
+            // together. Wall time drops from sum to max. research_start is
+            // still yielded as soon as classify resolves — we don't wait
+            // for intent to finish first.
+            const classifyPromise = this.reasoner.classify(objective);
+            const intentPromise = this.intentAnalyzer.analyze(objective, history);
+            // Avoid unhandled-rejection warnings if we return early (e.g.
+            // classify fails non-recoverably while intent is still in
+            // flight) — the later await/catch still observes the outcome.
+            intentPromise.then(undefined, () => { /* handled below */ });
+
+            let classification: { researchType: string; strategy: string };
+            try {
+                classification = await classifyPromise;
+            } catch (classifyError) {
+                const cls = classifyLlmError(classifyError, "ResearchManager.Reasoner.classify");
+                if (isNonRecoverable(cls)) {
+                    // The very first LLM call failed in a way that has no
+                    // reasonable fallback. We can't even start the research
+                    // loop without a researchType, so surface the error
+                    // immediately.
+                    yield {
+                        type: "error",
+                        message: cls.userMessage,
+                    };
+                    return;
+                }
+                throw classifyError;
+            }
+            researchType = classification.researchType as ResearchType;
+            strategy = classification.strategy;
+
+            yield {
+                type: "research_start",
+                researchType,
+                objective,
+                strategy,
+            };
+
+            // --- Step 1.5: Intent Analysis (already in flight) ---
+            // Produce a structured breakdown of the user's question (entities,
+            // data needs, ambiguities, suggested tools) BEFORE planning.
+            // This gives the Planner much better inputs than the raw strategy
+            // string, improving first-try quality.
             let intentAnalysis: IntentAnalysis | null = null;
             try {
-                intentAnalysis = await this.intentAnalyzer.analyze(objective, history);
+                intentAnalysis = await intentPromise;
+                yield { type: "intent_analysis", intentAnalysis };
+                // Derive a richer strategy from the intent analysis
+                const { deriveStrategy } = await import("./types");
+                const derivedStrategy = deriveStrategy(intentAnalysis);
+                if (derivedStrategy) {
+                    strategy = derivedStrategy;
+                }
             } catch (intentError) {
                 if (intentError instanceof IntentAnalyzerUnavailableError) {
                     // The IntentAnalyzer couldn't reach the LLM at all
-                    // (rate limit, auth, network). Continue with a default
-                    // factual strategy plus a degraded-mode signal so the UI
-                    // can warn the user that downstream steps may fail.
+                    // (rate limit, auth, network). The downstream agents
+                    // (Planner, Synthesizer) will likely hit the same
+                    // failure — but Reasoner.classify has already
+                    // succeeded, so we have a usable researchType and
+                    // strategy. Continue with a degraded-mode signal so
+                    // the UI can warn the user that downstream steps may
+                    // fail.
                     console.warn(
-                        "[ResearchManager] Intent analysis unavailable, continuing with default strategy:",
+                        "[ResearchManager] Intent analysis unavailable, continuing with classify-only strategy:",
                         intentError.kind,
                         intentError.cause instanceof Error ? intentError.cause.message : intentError.cause
                     );
@@ -163,28 +208,11 @@ export class ResearchManager {
                     } as ResearchEvent;
                 } else {
                     console.warn(
-                        "[ResearchManager] Intent analysis failed (recoverable), proceeding with default strategy:",
+                        "[ResearchManager] Intent analysis failed (recoverable), proceeding with classify strategy:",
                         intentError instanceof Error ? intentError.message : intentError
                     );
                 }
             }
-
-            if (intentAnalysis) {
-                researchType = intentAnalysis.intentType as ResearchType;
-                const { deriveStrategy } = await import("./types");
-                strategy = deriveStrategy(intentAnalysis) || `Gather relevant F1 data to answer: ${objective}`;
-                yield { type: "intent_analysis", intentAnalysis };
-            } else {
-                researchType = "factual";
-                strategy = `Gather relevant F1 data to answer: ${objective}`;
-            }
-
-            yield {
-                type: "research_start",
-                researchType,
-                objective,
-                strategy,
-            };
 
             // --- Step 2: Iterative loop ---
             let iteration = 0;
@@ -206,11 +234,10 @@ export class ResearchManager {
                 // stop iterating and proceed to confidence/synthesis with
                 // whatever evidence we have. A single slow LLM call must
                 // not hang the user indefinitely.
-                const overallBudget = overallTimeoutMs();
-                if (Date.now() - startTime > overallBudget) {
+                if (Date.now() - startTime > OVERALL_TIMEOUT_MS) {
                     timedOut = true;
                     console.warn(
-                        `[ResearchManager] Overall timeout of ${overallBudget}ms reached after ${iteration} iterations.`
+                        `[ResearchManager] Overall timeout of ${OVERALL_TIMEOUT_MS}ms reached after ${iteration} iterations.`
                     );
                     break;
                 }
@@ -272,7 +299,7 @@ export class ResearchManager {
                 if (tasks.length === 0) {
                     // No tasks generated — stop
                     consecutiveStops++;
-                    if (consecutiveStops >= researchConfig.consecutiveStopsToHalt()) break;
+                    if (consecutiveStops >= 2) break;
                     continue;
                 }
 
@@ -282,23 +309,16 @@ export class ResearchManager {
                     // We collect these synchronously — the caller reads them
                 });
 
-                // Emit task updates and evidence.
-                // NOTE: evidence ids come from the execution results first —
-                // the memory cache is only populated by updateFromResults()
-                // BELOW, so reading the cache here would miss every fresh
-                // result from this batch (iteration 1 would always look
-                // empty). The cache remains as a fallback for results that
-                // carry no id (e.g. deduplicated/skipped tasks).
+                // Emit task updates and evidence
                 for (const result of results) {
                     yield {
                         type: "task_update",
                         taskId: result.taskId,
                         status: result.success ? "success" : "failed",
                         data: result.data,
-                        evidenceId: result.evidenceId
-                            ?? this.evidenceStore.getById(
-                                this.memory.getCachedEvidenceId(result.tool, result.args) || ""
-                            )?.id,
+                        evidenceId: this.evidenceStore.getById(
+                            this.memory.getCachedEvidenceId(result.tool, result.args) || ""
+                        )?.id,
                     };
                 }
 
@@ -306,8 +326,7 @@ export class ResearchManager {
                 const evidenceMap = new Map<string, string>();
                 for (const result of results) {
                     if (!result.success) continue;
-                    const evidenceId = result.evidenceId
-                        ?? this.memory.getCachedEvidenceId(result.tool, result.args);
+                    const evidenceId = this.memory.getCachedEvidenceId(result.tool, result.args);
                     if (evidenceId) {
                         evidenceMap.set(result.taskId, evidenceId);
                         const evidence = this.evidenceStore.getById(evidenceId);
@@ -323,70 +342,46 @@ export class ResearchManager {
                 // Update budget
                 budget.tasksExecuted += results.length;
 
-                // --- Reflect (skip LLM when evidence already covers expectations) ---
-                // The reflect call is one LLM round-trip PER ITERATION. When
-                // the evidence store already contains every expected evidence
-                // type for this researchType, another iteration adds nothing —
-                // stop deterministically without paying for the LLM judgment.
+                // --- Reflect ---
                 let reflection: Reflection;
-                const expected = RESEARCH_TYPE_EXPECTATIONS[researchType] || [];
-                const present = this.evidenceStore.getEvidenceTypes();
-                const allCovered = expected.length > 0 && expected.every((t) => present.has(t));
-                // Also stop fast when the batch produced nothing new.
-                const gotNewEvidence = evidenceMap.size > 0;
-                if (allCovered || !gotNewEvidence) {
-                    reflection = {
-                        useful: gotNewEvidence,
-                        answeredPart: allCovered
-                            ? "All expected evidence types collected"
-                            : "No new evidence from this batch",
-                        stillMissing: [],
-                        nextAction: "stop",
-                        nextStrategy: undefined,
-                        reasoning: allCovered
-                            ? "Deterministic early-stop: evidence covers all expected types, skipping reflect LLM."
-                            : "Deterministic early-stop: batch yielded no new evidence, skipping reflect LLM.",
-                    };
-                } else {
-                    try {
-                        reflection = await this.reasoner.reflect({
-                            objective,
-                            researchType,
-                            evidenceStore: this.evidenceStore,
-                            memory: this.memory,
-                            budget,
-                            iteration,
-                        });
-                    } catch (reflectError) {
-                        const cls = classifyLlmError(reflectError, "ResearchManager.Reasoner");
-                        if (isNonRecoverable(cls)) {
-                            console.error(
-                                "[ResearchManager] Reasoner.reflect LLM unavailable:",
-                                cls.kind,
-                                reflectError instanceof Error ? reflectError.message : reflectError
-                            );
-                            yield {
-                                type: "error",
-                                message: cls.userMessage,
-                            };
-                            yield {
-                                type: "degraded",
-                                stage: "reflection",
-                                kind: cls.kind,
-                                message: cls.userMessage,
-                            } as ResearchEvent;
-                            shouldContinue = false;
-                            break;
-                        }
-                        throw reflectError;
+                try {
+                    reflection = await this.reasoner.reflect({
+                        objective,
+                        researchType,
+                        evidenceStore: this.evidenceStore,
+                        memory: this.memory,
+                        budget,
+                        iteration,
+                    });
+                } catch (reflectError) {
+                    const cls = classifyLlmError(reflectError, "ResearchManager.Reasoner");
+                    if (isNonRecoverable(cls)) {
+                        console.error(
+                            "[ResearchManager] Reasoner.reflect LLM unavailable:",
+                            cls.kind,
+                            reflectError instanceof Error ? reflectError.message : reflectError
+                        );
+                        yield {
+                            type: "error",
+                            message: cls.userMessage,
+                        };
+                        yield {
+                            type: "degraded",
+                            stage: "reflection",
+                            kind: cls.kind,
+                            message: cls.userMessage,
+                        } as ResearchEvent;
+                        shouldContinue = false;
+                        break;
                     }
+                    throw reflectError;
                 }
 
                 yield { type: "reflection", reflection, iteration };
 
                 if (reflection.nextAction === "stop") {
                     consecutiveStops++;
-                    if (consecutiveStops >= researchConfig.consecutiveStopsToHalt()) {
+                    if (consecutiveStops >= 2) {
                         shouldContinue = false;
                     } else {
                         // One more chance — but only if we have budget
@@ -429,8 +424,8 @@ export class ResearchManager {
             }
 
             // --- Step 5: Synthesize final report ---
-            // The synthesizer streams tokens directly (no buffer-then-replay)
-            // and validates citations after streaming without re-prompting.
+            // The synthesizer now buffers internally (for citation validation
+            // + refuse-on-empty), then streams validated tokens.
             //
             // If the synthesizer's underlying LLM is unavailable (rate
             // limit, auth, network), we yield a clear error event and stop.
@@ -585,7 +580,7 @@ export class ResearchManager {
             if (timedOut) {
                 yield {
                     type: "error",
-                    message: `Research reached the overall time limit (${Math.round(overallTimeoutMs() / 1000)}s) — synthesizing with the evidence gathered so far.`,
+                    message: `Research reached the overall time limit (${Math.round(OVERALL_TIMEOUT_MS / 1000)}s) — synthesizing with the evidence gathered so far.`,
                 };
             }
         } catch (error) {
@@ -601,18 +596,27 @@ export class ResearchManager {
 // Factory
 // =============================================================================
 
-/** Planner and responder share one model (managed env model or BYOK). */
+/**
+ * Create a ResearchManager with models from the given provider.
+ *
+ * @param provider - LLM provider
+ * @param apiKey - API key
+ * @param model - User-selected model name
+ * @param options - Research options
+ * @param reasoning - Whether to use a reasoning-capable model for the responder
+ */
 export async function createResearchManager(
-    mode: AiMode,
-    byok: { baseUrl?: string; model?: string; apiKey?: string } | undefined,
+    provider: Provider,
+    apiKey: string | undefined,
+    model: string,
     options: ResearchOptions,
     reasoning: boolean = false
 ): Promise<ResearchManager> {
     // Independent model constructions (dynamic imports + client setup) —
     // run together instead of sequentially.
     const [plannerModel, responderModel] = await Promise.all([
-        getPlannerModel(mode, byok),
-        getResponderModel(mode, byok, reasoning),
+        getPlannerModel(provider, apiKey),
+        getResponderModel(provider, model, reasoning, apiKey),
     ]);
 
     return new ResearchManager(plannerModel, responderModel, options);

@@ -127,10 +127,20 @@ export function useChatHandler() {
                 },
                 body: JSON.stringify({
                     message: messageText,
-                    aiMode: state.settings.aiMode,
-                    byokBaseUrl: state.settings.byokBaseUrl || undefined,
-                    byokModel: state.settings.byokModelId || undefined,
-                    byokModelName: state.settings.byokModelName || undefined,
+                    provider: state.settings.provider,
+                    model: state.settings.model,
+                    // Dedicated planner model. Empty string tells
+                    // the server to use its built-in cheap
+                    // planner model. The frontend decides whether
+                    // to surface this field in the UI.
+                    plannerModel: state.settings.plannerModel || undefined,
+                    // For now we keep the planner on the same
+                    // provider as the responder. A future UI
+                    // control can split these by setting
+                    // `state.settings.plannerProvider` on the
+                    // store — the route already accepts the field.
+                    plannerProvider: undefined,
+                    apiKey: state.settings.apiKey,
                     deepResearchMode: state.settings.deepResearchMode,
                     web_search: state.settings.webSearchEnabled,
                     sessionId: effectiveSessionId,
@@ -302,11 +312,18 @@ export function useChatHandler() {
                                         }
                                         break
                                     case "usage":
-                                        // Per-message usage accounting. Attach to
-                                        // the assistant message so the bubble can
+                                        // Per-message usage accounting (OpenRouter
+                                        // Usage Accounting docs). Attach to the
+                                        // assistant message so the bubble can
                                         // render a small footer with model name,
                                         // token counts, and cost. Shape mirrors
                                         // Message.usage in the store.
+                                        //
+                                        // `plannerModel` is only present when the
+                                        // user picked a different model for the
+                                        // planner; the server omits it when both
+                                        // roles use the same model so the footer
+                                        // can collapse the two rows.
                                         useChatStore.getState().setMessageUsage(assistantMsgId, {
                                             provider: data.provider,
                                             model: data.model,
@@ -450,7 +467,7 @@ export function useChatHandler() {
                 const errorText =
                     "The response stream ended without producing any output. " +
                     "This usually means a network interruption or an upstream LLM timeout. " +
-                    "Please try again, or check Settings (Managed / BYOK)."
+                    "Please try again, or switch providers in Settings."
                 useChatStore.getState().setError(errorText)
                 useChatStore.getState().updateMessage(assistantMsgId, errorText, true)
             }

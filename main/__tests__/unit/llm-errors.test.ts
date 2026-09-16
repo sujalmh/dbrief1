@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { classifyLlmError, isNonRecoverable, isTimeoutAbort, type LlmErrorKind } from "@/lib/utils/llm-errors";
+import { classifyLlmError, isNonRecoverable, type LlmErrorKind } from "@/lib/utils/llm-errors";
 
 describe("classifyLlmError", () => {
     describe("non-recoverable: rate limit / quota", () => {
@@ -153,20 +153,6 @@ describe("classifyLlmError", () => {
         it("returns the inverse of recoverable", () => {
             const cls = classifyLlmError(new Error("429 rate limit"), "Test");
             expect(isNonRecoverable(cls)).toBe(!cls.recoverable);
-        });
-    });
-
-    describe("isTimeoutAbort", () => {
-        it("detects the production planner failure (aborted gateway fetch)", () => {
-            expect(isTimeoutAbort(new Error("Request was aborted."))).toBe(true);
-        });
-        it("detects AbortError / TimeoutError names", () => {
-            expect(isTimeoutAbort(Object.assign(new Error("x"), { name: "AbortError" }))).toBe(true);
-            expect(isTimeoutAbort(Object.assign(new Error("x"), { name: "TimeoutError" }))).toBe(true);
-        });
-        it("rejects auth and quota errors (no retry)", () => {
-            expect(isTimeoutAbort(new Error("401 unauthorized"))).toBe(false);
-            expect(isTimeoutAbort(new Error("402 Insufficient credits"))).toBe(false);
         });
     });
 

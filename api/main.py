@@ -81,29 +81,15 @@ from utils import (
 )
 
 # =============================================================================
-# Cost Protection Configuration (all values overridable via environment so
-# deployments can tune cost guards without code changes; defaults preserve
-# the historical behavior)
+# Cost Protection Configuration
 # =============================================================================
 
 from datetime import datetime
 
-
-def _env_int(name: str, fallback: int) -> int:
-    try:
-        raw = os.getenv(name)
-        if raw is None or raw == "":
-            return fallback
-        return int(raw)
-    except (TypeError, ValueError):
-        return fallback
-
-
 # Allow a small future window so users can ask about the next scheduled
 # race weekend. The actual gate for "live" data is the days_diff check in
 # get_session() below, not this bound.
-def _max_year_buffer_years() -> int:
-    return _env_int("F1_SEASON_YEAR_BUFFER", 2)
+_MAX_YEAR_BUFFER_YEARS = 2
 
 def _get_max_season_year() -> int:
     """Largest year we will accept in API requests.
@@ -114,23 +100,14 @@ def _get_max_season_year() -> int:
     sessions; the live-session gate in get_session() still blocks in-flight
     races, so the buffer is safe.
     """
-    return datetime.now().year + _max_year_buffer_years()
+    return datetime.now().year + _MAX_YEAR_BUFFER_YEARS
 
 # Cost protection: only block sessions that are still in-flight (future or
-# within the last N hours, default 24). Completed sessions from the current
-# year are always served from the FastF1 cache.
-def _live_session_block_hours() -> int:
-    return _env_int("F1_LIVE_SESSION_BLOCK_HOURS", 24)
+# within the last 24 hours). Completed sessions from the current year are
+# always served from the FastF1 cache.
+_LIVE_SESSION_BLOCK_HOURS = 24
 
-
-def _max_telemetry_points() -> int:
-    return _env_int("F1_MAX_TELEMETRY_POINTS", 5000)
-
-
-# Backwards-compatible module constants (evaluated from env at import).
-# Internal code prefers the live getters above.
-_LIVE_SESSION_BLOCK_HOURS = _live_session_block_hours()
-MAX_TELEMETRY_POINTS = _max_telemetry_points()
+MAX_TELEMETRY_POINTS = 5000  # Hard cap on telemetry data points
 
 # =============================================================================
 # App Configuration
@@ -182,12 +159,7 @@ session_load_lock = asyncio.Lock()
 # Bounded in-memory cache of loaded sessions to avoid repeated expensive loads.
 # FastF1 session objects can each consume hundreds of MB, so we cap the cache
 # size and evict the least-recently-used entry when the cap is exceeded.
-# The cap is read live (SESSION_CACHE_MAX_SIZE) so it can be tuned per deploy.
-def _session_cache_max_size() -> int:
-    return _env_int("SESSION_CACHE_MAX_SIZE", 8)
-
-
-_SESSION_CACHE_MAX_SIZE = _session_cache_max_size()
+_SESSION_CACHE_MAX_SIZE = int(os.getenv("SESSION_CACHE_MAX_SIZE", "8"))
 
 
 def _session_cache_key(year: int, gp: str, session_type: str) -> tuple:
@@ -213,7 +185,7 @@ async def _session_cache_put(key: tuple, session) -> None:
             _session_cache[key] = session
             return
         _session_cache[key] = session
-        while len(_session_cache) > _session_cache_max_size():
+        while len(_session_cache) > _SESSION_CACHE_MAX_SIZE:
             evicted_key, evicted_session = _session_cache.popitem(last=False)
             _release_session(evicted_session)
             logger.info("Evicted cached session %s (cache size=%d)", evicted_key, len(_session_cache))
@@ -298,10 +270,10 @@ async def get_session(year: int, gp: str, session_type: str) -> fastf1.core.Sess
             hours_diff = (session_datetime - now).total_seconds() / 3600
 
             # Block if session is in the future or within the last
-            # _live_session_block_hours() hours (i.e. still in progress / just
+            # _LIVE_SESSION_BLOCK_HOURS hours (i.e. still in progress / just
             # ended, where live timing data is volatile and expensive to
             # refetch).
-            if hours_diff > -_live_session_block_hours():
+            if hours_diff > -_LIVE_SESSION_BLOCK_HOURS:
                 raise HTTPException(
                     status_code=403,
                     detail=(
@@ -335,26 +307,20 @@ def validate_gp_param(gp: str) -> str:
             status_code=400,
             detail="Invalid Grand Prix identifier: path separators are not allowed",
         )
-    # Cap length to keep downstream lookups bounded (env F1_GP_MAX_ID_CHARS)
-    if len(gp) > _env_int("F1_GP_MAX_ID_CHARS", 128):
+    # Cap length to keep downstream lookups bounded
+    if len(gp) > 128:
         raise HTTPException(status_code=400, detail="Grand Prix identifier too long")
     return gp
 
 
-def _min_season_year() -> int:
-    return _env_int("F1_MIN_SEASON_YEAR", 1950)
-
-
 def _validate_year(year: int) -> int:
-    """Runtime year guard (Query bounds are static snapshots; enforce the
-    dynamic current-year+buffer policy here so long processes never go stale).
-    Bounds are env-driven (F1_MIN_SEASON_YEAR / F1_SEASON_YEAR_BUFFER)."""
+    """Runtime year guard (Query le=2100 is static; enforce dynamic
+    current-year+buffer policy here so long processes never go stale)."""
     max_year = _get_max_season_year()
-    min_year = _min_season_year()
-    if year < min_year or year > max_year:
+    if year < 1950 or year > max_year:
         raise HTTPException(
             status_code=422,
-            detail=f"Year must be between {min_year} and {max_year}",
+            detail=f"Year must be between 1950 and {max_year}",
         )
     return year
 
@@ -503,17 +469,17 @@ async def get_seasons():
     Get list of available seasons.
     Fast-F1 supports seasons from 2018 onwards with full telemetry.
     """
-    # The list is dynamic: earliest season (env F1_MIN_SEASON_YEAR) up to the
-    # current calendar year plus a small forward buffer (F1_SEASON_YEAR_BUFFER).
-    # This way the seasons list never goes stale and the LLM planner never
-    # thinks the current year is "unavailable".
+    # The list is dynamic: 1950 (earliest season in the Ergast/FastF1
+    # records) up to the current calendar year plus a small forward
+    # buffer. This way the seasons list never goes stale and the LLM
+    # planner never thinks the current year is "unavailable".
     end_year = _get_max_season_year()
-    seasons = list(range(_min_season_year(), end_year + 1))
+    seasons = list(range(1950, end_year + 1))
     return {"seasons": seasons}
 
 
 @app.get("/f1/events", response_model=EventsResponse)
-async def get_events(year: int = Query(..., ge=_min_season_year(), le=_env_int("F1_RAG_MAX_SEASON_YEAR", 2100))):
+async def get_events(year: int = Query(..., ge=1950, le=2100)):
     """
     Get all events (Grand Prix) for a specific year.
     """
@@ -551,7 +517,7 @@ async def get_events(year: int = Query(..., ge=_min_season_year(), le=_env_int("
 
 
 @app.get("/f1/gp-names", response_model=GpNamesResponse)
-async def get_gp_names(year: int = Query(..., ge=_min_season_year(), le=_env_int("F1_RAG_MAX_SEASON_YEAR", 2100))):
+async def get_gp_names(year: int = Query(..., ge=1950, le=2100)):
     """
     Get canonical Grand Prix names for a specific season year.
     Returns round number, event name, location, country, and the canonical
@@ -584,7 +550,7 @@ async def get_gp_names(year: int = Query(..., ge=_min_season_year(), le=_env_int
 
 @app.get("/f1/sessions", response_model=SessionsResponse)
 async def get_sessions(
-    year: int = Query(..., ge=_min_season_year(), le=_env_int("F1_RAG_MAX_SEASON_YEAR", 2100)),
+    year: int = Query(..., ge=1950, le=2100),
     gp: str = Query(..., description="Grand Prix name or round number")
 ):
     """
@@ -957,9 +923,9 @@ async def get_telemetry(request: TelemetryRequest):
         telemetry, original_count = downsample_telemetry(telemetry, request.downsample)
         
         # COST PROTECTION: Enforce hard cap on telemetry points
-        if len(telemetry) > _max_telemetry_points():
+        if len(telemetry) > MAX_TELEMETRY_POINTS:
             # Further downsample to meet hard cap
-            reduction_factor = int(np.ceil(len(telemetry) / _max_telemetry_points()))
+            reduction_factor = int(np.ceil(len(telemetry) / MAX_TELEMETRY_POINTS))
             telemetry = telemetry.iloc[::reduction_factor].copy()
         
         # Convert to JSON
@@ -1414,7 +1380,7 @@ async def get_stints(request: StintsRequest):
 
 @app.get("/f1/drivers", response_model=DriversResponse)
 async def get_drivers(
-    year: int = Query(..., ge=_min_season_year(), le=_env_int("F1_RAG_MAX_SEASON_YEAR", 2100)),
+    year: int = Query(..., ge=1950, le=2100),
     gp: Optional[str] = Query(None, description="Grand Prix name (optional, defaults to first race)")
 ):
     """
@@ -1504,7 +1470,7 @@ async def get_drivers(
 
 @app.get("/f1/teams", response_model=TeamsResponse)
 async def get_teams(
-    year: int = Query(..., ge=_min_season_year(), le=_env_int("F1_RAG_MAX_SEASON_YEAR", 2100)),
+    year: int = Query(..., ge=1950, le=2100),
     gp: Optional[str] = Query(None, description="Grand Prix name (optional, defaults to first race)")
 ):
     """

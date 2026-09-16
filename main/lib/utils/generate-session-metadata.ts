@@ -1,32 +1,24 @@
-import { getChatModel, chatContentToText, type AiMode } from "@/lib/llm";
-import { llmSampling, sessionMetadataConfig } from "@/lib/config";
+import { getChatModel, chatContentToText, Provider } from "@/lib/llm";
 
 export interface SessionMetadata {
     title: string;
     type: "telemetry" | "comparison" | "strategy" | "insights";
 }
 
-export interface MetadataLlmRef {
-    mode: AiMode;
-    byokBaseUrl?: string;
-    byokModel?: string;
-    byokApiKey?: string;
-}
-
 export async function generateSessionMetadata(
     userQuery: string,
-    llmRef: MetadataLlmRef = { mode: "managed" },
+    provider: Provider = "gemini",
+    model: string = "gemini-2.0-flash",
+    apiKey?: string,
     sessionId?: string
 ): Promise<SessionMetadata> {
     const llm = await getChatModel({
-        mode: llmRef.mode,
-        byokBaseUrl: llmRef.byokBaseUrl,
-        byokModel: llmRef.byokModel,
-        byokApiKey: llmRef.byokApiKey,
-        temperature: llmSampling.sessionMetadataTemperature(),
-        maxTokens: llmSampling.sessionMetadataMaxTokens(),
+        provider,
+        model,
+        temperature: 0.3,
+        maxTokens: 512,
         sessionId,
-    });
+    }, apiKey);
 
     const prompt = `You are an AI assistant that categorizes F1 racing queries and generates concise titles.
 
@@ -66,20 +58,17 @@ Respond ONLY with valid JSON in this exact format:
             metadata.type = "insights"; // Default fallback
         }
 
-        // Truncate title if needed (length is config-driven)
-        const titleCap = sessionMetadataConfig.titleMaxChars();
-        const truncateAt = sessionMetadataConfig.titleTruncateAt();
-        if (metadata.title.length > titleCap) {
-            metadata.title = metadata.title.substring(0, truncateAt) + "...";
+        // Truncate title if needed
+        if (metadata.title.length > 40) {
+            metadata.title = metadata.title.substring(0, 37) + "...";
         }
 
         return metadata;
     } catch (error) {
         console.error("Error generating session metadata:", error);
-        // Fallback to default values (length is config-driven)
-        const truncateAt = sessionMetadataConfig.titleTruncateAt();
+        // Fallback to default values
         return {
-            title: userQuery.substring(0, truncateAt) + (userQuery.length > truncateAt ? "..." : ""),
+            title: userQuery.substring(0, 37) + (userQuery.length > 37 ? "..." : ""),
             type: "insights"
         };
     }

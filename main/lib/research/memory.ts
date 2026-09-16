@@ -13,12 +13,44 @@
 
 import type { Discovery, ToolCallRecord } from "./types";
 import type { ExecutionResult } from "./evidence-store";
-import { tokenize } from "./text";
 
 // =============================================================================
-// Stop-words for memory search (see lib/research/text.ts — shared,
-// config-driven tokenizer; F1 nouns are intentionally kept)
+// Stop-words for memory search
 // =============================================================================
+//
+// Generic English stop-words only. F1-specific nouns (race, lap, qualifying,
+// driver, team, etc.) are intentionally KEPT because they are the primary
+// query terms users use to find prior discoveries. Filtering them out would
+// make "fastest lap in qualifying" tokenize to almost nothing, breaking
+// relevance matching.
+
+const STOP_WORDS = new Set<string>([
+    // common English
+    "the", "and", "for", "are", "but", "not", "you", "all", "any", "can",
+    "her", "was", "one", "our", "out", "day", "had", "has", "his", "how",
+    "its", "let", "may", "new", "now", "old", "see", "way", "who", "did",
+    "get", "got", "him", "own", "put", "say", "she", "too",
+    "use", "with", "this", "that", "from",
+    "they", "them", "then", "than", "have", "what", "when",
+    "where", "which", "their", "there", "would", "could", "should", "about",
+    "into", "over", "after", "before", "again", "still", "being", "these",
+    "those", "very", "just", "only", "some", "such",
+]);
+
+/**
+ * Tokenize a string into meaningful keywords for matching.
+ *   - lowercases
+ *   - strips punctuation
+ *   - removes stop-words
+ *   - removes tokens shorter than 3 characters
+ */
+function tokenize(text: string): string[] {
+    return text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+}
 
 // =============================================================================
 // Research Memory

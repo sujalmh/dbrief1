@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { get, set, del } from 'idb-keyval'
-import { storeDefaults } from './config'
 
 const idbStorage = {
     getItem: async (name: string): Promise<string | null> => {
@@ -122,9 +121,29 @@ export interface Message {
         kind: string
         message: string
     }[]
+    /**
+     * Per-message usage accounting (OpenRouter returns this natively per
+     * the docs: prompt/completion tokens + cost in credits). When
+     * `provider === 'openrouter'`, `cost` is real. For Gemini / HuggingFace
+     * `cost` is null and only the token counts are populated.
+     *
+     * `model` is captured here (not just from settings) because the user
+     * can change models mid-conversation — we want to display the model
+     * that actually produced this response, not the current selection.
+     */
     usage?: {
         provider: string
         model: string
+        /**
+         * Model id used by the planner (intent + step
+         * decomposition). When planner and responder use
+         * different models, the footer surfaces both so the
+         * user knows which model handled which stage. The
+         * aggregated token / cost fields still cover the
+         * whole request — we don't try to split them per
+         * stage because OpenRouter's `usage` block doesn't
+         * make that easy to do accurately.
+         */
         plannerModel?: string
         promptTokens: number
         completionTokens: number
@@ -145,17 +164,38 @@ export interface Message {
     chartSpecs?: ChartSpec[]
 }
 
-export type AiModeSetting = "managed" | "byok";
-
 interface Settings {
-    aiMode: AiModeSetting;
-    byokBaseUrl: string;
-    byokModelId: string;
-    byokModelName: string;
+    apiKey: string
+    provider: string
+    model: string
+    /**
+     * Dedicated model used by the query planner (intent analysis,
+     * step decomposition, structured-output tool calls). Kept
+     * separate from `model` (the responder) so the user can pick
+     * a cheap fast model for planning and a more capable model
+     * for the final answer, mirroring the split used by coding
+     * assistants like Cursor / Continue / Aider.
+     *
+     * When empty, the server falls back to the provider's
+     * built-in cheap planner model so the feature is fully
+     * opt-in.
+     */
+    plannerModel: string
+    temperature: number
+    maxTokens: number
     deepResearchMode: boolean
     webSearchEnabled: boolean
     visualizeEnabled: boolean
     developerMode: boolean
+    /**
+     * User-curated list of additional model IDs (typically from
+     * OpenRouter) that should appear in the model picker alongside
+     * the built-in presets. Each entry is just the model id string
+     * (e.g. "anthropic/claude-3.5-sonnet"). The picker can also
+     * accept a free-text "Add custom model" entry — in that case
+     * the id is appended to this list.
+     */
+    customModels: string[]
 }
 
 export interface GraphHistoryItem {
@@ -275,14 +315,19 @@ interface ChatStore {
 }
 
 const defaultSettings: Settings = {
-    aiMode: 'managed',
-    byokBaseUrl: '',
-    byokModelId: '',
-    byokModelName: '',
+    apiKey: '',
+    provider: 'openrouter',
+    model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+    plannerModel: '',
+    temperature: 0.7,
+    // Note: the API route (getResponderModel) overrides this to 8192.
+    // This value is kept for the settings UI but is not used by the API.
+    maxTokens: 8192,
     deepResearchMode: false,
     webSearchEnabled: false,
     visualizeEnabled: false,
     developerMode: false,
+    customModels: [],
 }
 
 // Monotonic counter for graphHistory IDs. Lives outside the store
@@ -300,7 +345,7 @@ export const useChatStore = create<ChatStore>()(
             settings: defaultSettings,
             isSettingsOpen: false,
             visualizationData: null,
-            visualizationWidth: storeDefaults.visualizationWidth(),
+            visualizationWidth: 500,
             isVisualizationCollapsed: false,
             graphHistory: [],
             activeMessageId: null,
@@ -475,7 +520,7 @@ export const useChatStore = create<ChatStore>()(
                 })),
         }),
         {
-            name: storeDefaults.storageName(),
+            name: 'f1-chat-storage',
             storage: createJSONStorage(() => idbStorage),
             // Persist settings, messages (which carry chartSpecs for
             // deep-research mode), the active visualization payload, the
@@ -490,29 +535,30 @@ export const useChatStore = create<ChatStore>()(
                 isVisualizationCollapsed: state.isVisualizationCollapsed,
                 visualizationWidth: state.visualizationWidth,
             }),
-            version: 5,
+            // Bump the version when the persisted shape changes so old
+            // clients drop stale data instead of crashing on load.
+            version: 4,
+            // v2 -> v3: Settings gained a `customModels: string[]` field.
+            // v3 -> v4: Settings gained a `plannerModel: string` field
+            //   (the dedicated planner model, separate from `model`).
+            // We backfill both on the fly so existing users keep their
+            // messages (with the new optional `usage.plannerModel`
+            // field left as undefined, which the UI handles by hiding
+            // the planner row in the footer).
             migrate: (persistedState) => {
                 const state = (persistedState ?? {}) as Partial<{
-                    settings: Record<string, unknown>
+                    settings: Partial<Settings>
                     messages: Message[]
                 }>
                 if (state.settings) {
-                    const s = state.settings as Record<string, unknown>;
-                    const aiMode = s.aiMode === "byok" ? "byok" : "managed";
-                    const next: Settings = {
-                        ...defaultSettings,
-                        aiMode,
-                        byokBaseUrl: typeof s.byokBaseUrl === "string" ? s.byokBaseUrl : "",
-                        byokModelId: typeof s.byokModelId === "string" ? s.byokModelId : "",
-                        byokModelName: typeof s.byokModelName === "string" ? s.byokModelName : "",
-                        deepResearchMode: s.deepResearchMode === true,
-                        webSearchEnabled: s.webSearchEnabled === true,
-                        visualizeEnabled: s.visualizeEnabled === true,
-                        developerMode: s.developerMode === true,
-                    };
-                    state.settings = next as unknown as Record<string, unknown>;
+                    if (!Array.isArray(state.settings.customModels)) {
+                        state.settings = { ...state.settings, customModels: [] }
+                    }
+                    if (typeof (state.settings as Partial<Settings>).plannerModel !== "string") {
+                        state.settings = { ...state.settings, plannerModel: "" }
+                    }
                 }
-                return state as unknown as { settings?: Partial<Settings>; messages?: Message[] }
+                return state as { settings?: Partial<Settings>; messages?: Message[] }
             },
         }
     )

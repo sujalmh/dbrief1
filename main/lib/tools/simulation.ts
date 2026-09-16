@@ -8,7 +8,6 @@
 import { z } from "zod";
 import { tool, StructuredTool } from "@langchain/core/tools";
 import { runSimulation, SimulationOutput } from "@/lib/agents/simulationAgent";
-import { simulationConfig } from "@/lib/config";
 
 // =============================================================================
 // Simulation Tool
@@ -44,7 +43,7 @@ export const runSimulationTool = tool(
                 scenario_id,
                 horizon,
                 metric,
-                iterations: iterations || simulationConfig.iterationsDefault(),
+                iterations: iterations || 1000,
                 parameters: {
                     base_value: effectiveBase,
                     variance: effectiveVariance,
@@ -93,9 +92,9 @@ Examples:
 Returns: Statistical summary with mean, min, max, percentiles.`,
         schema: z.object({
             scenario_id: z.string().describe("Unique identifier describing the scenario (e.g., 'abu-dhabi-21-green-flag')"),
-            horizon: z.enum(simulationConfig.horizons() as [string, ...string[]]).describe("Time horizon for simulation"),
-            metric: z.enum(simulationConfig.metrics() as [string, ...string[]]).describe("Metric to simulate. Use 'gap' for performance deltas, 'time' for lap times, 'points' for scoring"),
-            iterations: z.number().int().min(simulationConfig.iterationsMin()).max(simulationConfig.iterationsMax()).optional().default(simulationConfig.iterationsDefault()).describe(`Number of simulation runs (default: ${simulationConfig.iterationsDefault()})`),
+            horizon: z.enum(["lap", "race", "season", "custom"]).describe("Time horizon for simulation"),
+            metric: z.enum(["time", "points", "score", "position", "gap"]).describe("Metric to simulate. Use 'gap' for performance deltas, 'time' for lap times, 'points' for scoring"),
+            iterations: z.number().int().min(100).max(10000).optional().default(1000).describe("Number of simulation runs (default: 1000)"),
             base_value: z.number().optional().describe("Base/expected value for the metric (e.g., -2.5 for 2.5s faster). If omitted and reference_data is provided, derived automatically."),
             variance: z.number().optional().describe("Standard deviation/variance for randomness. If omitted and reference_data is provided, derived automatically."),
             seed: z.number().int().optional().describe("Random seed for reproducibility"),
@@ -157,7 +156,7 @@ function deriveBaseAndVariance(
         return null;
     }
 
-    // Object → look for configured array fields (results, laps, tyres, ...)
+    // Object → look for common array fields (results, laps, tyres, standings, data, raw_values)
     if (typeof parsed === "object" && parsed !== null) {
         const obj = parsed as Record<string, unknown>;
         // If the object itself has raw_values (simulation output), use those
@@ -165,7 +164,7 @@ function deriveBaseAndVariance(
             const nums = extractNumbersFromArray(obj.raw_values, referenceField);
             if (nums.length > 0) return computeMeanStd(nums);
         }
-        for (const field of simulationConfig.referenceArrayFields()) {
+        for (const field of ["results", "laps", "tyres", "standings", "data", "messages", "values"]) {
             const val = obj[field];
             if (Array.isArray(val) && val.length > 0) {
                 const nums = extractNumbersFromArray(val, referenceField);

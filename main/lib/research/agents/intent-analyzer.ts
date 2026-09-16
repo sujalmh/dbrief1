@@ -22,17 +22,9 @@ import {
     RESEARCH_TYPES,
     deriveStrategy,
 } from "../types";
+import { extractJson, extractContent } from "../llm-parse";
 import { classifyLlmError, isNonRecoverable } from "@/lib/utils/llm-errors";
 import { LLM_TIMEOUT_MS } from "@/lib/llm";
-import { envJson, telemetryStartYear } from "@/lib/config";
-import {
-    getDriverCodes,
-    getDriverNameToCode,
-    getGpNames,
-    getSessionCodes,
-    getSessionMap,
-    getTeams,
-} from "@/lib/reference-data";
 
 // =============================================================================
 // Errors
@@ -75,40 +67,50 @@ export interface ChatMessage {
 }
 
 // =============================================================================
-// Reference data (live — see lib/reference-data.ts + lib/config.ts)
+// Known driver codes (2024-2026 grid — updated for current seasons)
 // =============================================================================
-//
-// Driver codes, name aliases, GP names, session maps, and team lists are
-// resolved dynamically at call time so the analyzer tracks the live season
-// and any configured overrides (F1_DRIVERS_JSON, F1_GP_NAMES_JSON, ...).
-// The constants below are kept as deprecated aliases so existing imports
-// keep working; new code must use the get*() accessors.
 
-const KNOWN_DRIVER_CODES: string[] = new Proxy([] as unknown as string[], {
-    get: (_target, prop: string | symbol) => {
-        const snapshot = getDriverCodes() as unknown as Record<string | symbol, unknown>;
-        const value = snapshot[prop];
-        return typeof value === "function" ? (value as () => unknown).bind(snapshot) : value;
-    },
-});
+const KNOWN_DRIVER_CODES: string[] = [
+    "VER", "HAM", "LEC", "SAI", "PER", "NOR", "PIA", "RUS", "ALO",
+    "GAS", "OCO", "STR", "ALB", "HUL", "MAG", "BOT", "ZHO", "TSU",
+    "RIC", "SAR", "LAW", "BEA", "ANT", "COL", "BOR", "DOO",
+];
 
-const DRIVER_NAME_TO_CODE: Record<string, string> = new Proxy({} as Record<string, string>, {
-    get: (_target, prop: string) => getDriverNameToCode()[prop],
-    ownKeys: () => Reflect.ownKeys(getDriverNameToCode()),
-    getOwnPropertyDescriptor: (_target, prop: string) => {
-        const map = getDriverNameToCode();
-        if (!(prop in map)) return undefined;
-        return { enumerable: true, configurable: true, value: map[prop] };
-    },
-});
+const DRIVER_NAME_TO_CODE: Record<string, string> = {
+    "max verstappen": "VER", "verstappen": "VER",
+    "lewis hamilton": "HAM", "hamilton": "HAM",
+    "charles leclerc": "LEC", "leclerc": "LEC",
+    "carlos sainz": "SAI", "sainz": "SAI",
+    "sergio perez": "PER", "perez": "PER", "checo": "PER",
+    "lando norris": "NOR", "norris": "NOR", "lando": "NOR",
+    "oscar piastri": "PIA", "piastri": "PIA",
+    "george russell": "RUS", "russell": "RUS",
+    "fernando alonso": "ALO", "alonso": "ALO",
+    "pierre gasly": "GAS", "gasly": "GAS",
+    "esteban ocon": "OCO", "ocon": "OCO",
+    "lance stroll": "STR", "stroll": "STR",
+    "alex albon": "ALB", "albon": "ALB", "alexander albon": "ALB",
+    "nico hulkenberg": "HUL", "hulkenberg": "HUL",
+    "kevin magnussen": "MAG", "magnussen": "MAG",
+    "valtteri bottas": "BOT", "bottas": "BOT",
+    "zhou guanyu": "ZHO", "zhou": "ZHO",
+    "yuki tsunoda": "TSU", "tsunoda": "TSU",
+    "daniel ricciardo": "RIC", "ricciardo": "RIC",
+    "logan sargeant": "SAR", "sargeant": "SAR",
+    "liam lawson": "LAW", "lawson": "LAW",
+    "oliver bearman": "BEA", "bearman": "BEA",
+    "andrea antonelli": "ANT", "antonelli": "ANT", "kim antonelli": "ANT",
+    "franco colapinto": "COL", "colapinto": "COL",
+    "jack doohan": "DOO", "doohan": "DOO",
+};
 
-const KNOWN_GP_NAMES: string[] = new Proxy([] as unknown as string[], {
-    get: (_target, prop: string | symbol) => {
-        const snapshot = getGpNames() as unknown as Record<string | symbol, unknown>;
-        const value = snapshot[prop];
-        return typeof value === "function" ? (value as () => unknown).bind(snapshot) : value;
-    },
-});
+const KNOWN_GP_NAMES: string[] = [
+    "Monaco", "Monza", "Spa", "Suzuka", "Abu Dhabi", "Singapore",
+    "Hungary", "Spain", "Austria", "Britain", "British", "Netherlands",
+    "Brazil", "Mexico", "Canada", "Bahrain", "Saudi Arabia", "Jeddah",
+    "Australia", "Japan", "Qatar", "Las Vegas", "Miami", "Emilia Romagna",
+    "Belgium", "Italy", "United States", "USA", "Austin",
+];
 
 // =============================================================================
 // Intent Analyzer
@@ -166,19 +168,45 @@ export class IntentAnalyzer {
             );
         }
 
-        // Recoverable failure: skip the old second LLM call (manual
-        // invoke + JSON extraction) and go straight to the deterministic
-        // heuristic. The second call doubled intent latency in exactly the
-        // failure cases that are already slow, and the regex heuristic
-        // extracts years/drivers/GPs/sessions well enough for planning —
-        // the Planner re-validates everything anyway.
-        return this.heuristicFallback(objective, history);
+        // Fallback: manual invoke + JSON extraction
+        try {
+            const response = await this.model.invoke([
+                new SystemMessage(
+                    systemPrompt +
+                    '\n\nRespond as JSON matching this schema:\n' +
+                    '{"primaryIntent":"...","intentType":"...","entities":{"drivers":[],"teams":[],"grandPrix":[],"years":[],"sessions":[],"other":[]},"temporalContext":"...","comparisonAxis":"...","dataNeeds":[],"ambiguities":[],"suggestedTools":[],"requiresSimulation":false,"requiresWebSearch":false,"conversationContext":"..."}'
+                ),
+                new HumanMessage(humanPrompt + " Respond with ONLY the JSON object."),
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.intent) });
+
+            const content = extractContent(response.content);
+            const parsed = extractJson(content);
+            const result = IntentAnalysisSchema.parse(parsed);
+            return this.postProcess(result, objective, history);
+        } catch (error) {
+            const cls = classifyLlmError(error, "IntentAnalyzer.manual");
+            if (isNonRecoverable(cls)) {
+                console.error(
+                    "[IntentAnalyzer] Manual LLM call failed (non-recoverable):",
+                    cls.kind,
+                    error instanceof Error ? error.message : error
+                );
+                throw new IntentAnalyzerUnavailableError({
+                    userMessage: cls.userMessage,
+                    kind: cls.kind,
+                    cause: error,
+                });
+            }
+            console.error(
+                "[IntentAnalyzer] LLM analysis failed (recoverable), using heuristic fallback:",
+                error instanceof Error ? error.message : error
+            );
+            return this.heuristicFallback(objective, history);
+        }
     }
 
     /**
      * Build the system prompt for the IntentAnalyzer.
-     * Entity examples and session codes are generated from the live
-     * reference data so the prompt never pins a stale grid.
      */
     private buildSystemPrompt(history?: ChatMessage[]): string {
         const historySection = history && history.length > 0
@@ -186,10 +214,6 @@ export class IntentAnalyzer {
                 .map((m) => `${m.role}: ${m.content}`)
                 .join("\n")}`
             : "\n## Conversation History\n(none — this is a new question)";
-        const driverCodes = getDriverCodes().join(", ");
-        const teams = getTeams().join(", ");
-        const sessions = getSessionCodes().join(", ");
-        const gpExamples = getGpNames().slice(0, 7).join(", ");
 
         return `You are the Intent Analyzer in an F1 research agent. Your job is to break down the user's question into a structured analysis BEFORE any planning happens.
 
@@ -197,12 +221,12 @@ Extract:
 1. **primaryIntent** — restate what the user is actually asking for in one sentence.
 2. **intentType** — classify from: ${RESEARCH_TYPES.join(", ")}.
 3. **entities** — extract all:
-    - drivers: 3-letter codes if known (${driverCodes}). Use full names if the code is unknown.
-    - teams: team names (${teams})
-    - grandPrix: canonical GP names (${gpExamples}, etc.). Do NOT include the year.
-    - years: years mentioned or resolved from context
-    - sessions: session codes (${sessions})
-    - other: other concepts (fastest lap, podium, tyre strategy, safety car, DRS, etc.)
+   - drivers: 3-letter codes if known (VER, HAM, LEC, NOR, SAI, PER, ALO, RUS, PIA, GAS, OCO, STR, ALB, HUL, MAG, BOT, ZHO, TSU, RIC, SAR, LAW, BEA, ANT, COL, DOO). Use full names if the code is unknown.
+   - teams: team names (Red Bull, Mercedes, Ferrari, McLaren, Aston Martin, Alpine, Williams, RB, Haas, Kick Sauber)
+   - grandPrix: canonical GP names (Monaco, British, Abu Dhabi, Monza, Spa, Suzuka, Singapore, etc.). Do NOT include the year.
+   - years: years mentioned or resolved from context
+   - sessions: session codes (FP1, FP2, FP3, Q, SQ, SS, S, R)
+   - other: other concepts (fastest lap, podium, tyre strategy, safety car, DRS, etc.)
 4. **temporalContext** — what time range is the user asking about? (e.g., "2024 season", "last 5 races", "career-wide")
 5. **comparisonAxis** — if this is a comparison, what metric is being compared? (lap time, points, position, telemetry). Null if not a comparison.
 6. **dataNeeds** — what specific F1 data would be needed to answer? Be specific (e.g., "race results for Monaco 2024", "telemetry summary for VER fastest lap").
@@ -322,8 +346,13 @@ ${historySection}`;
             }
         }
 
-        // Extract session codes (mapping is config-driven reference data)
-        const sessionMap = getSessionMap();
+        // Extract session codes
+        const sessionMap: Record<string, string> = {
+            "fp1": "FP1", "fp2": "FP2", "fp3": "FP3",
+            "qualifying": "Q", "quali": "Q",
+            "sprint qualifying": "SQ", "sprint shootout": "SS",
+            "sprint": "S", "race": "R",
+        };
         const sessions: string[] = [];
         for (const [keyword, code] of Object.entries(sessionMap)) {
             if (text.includes(keyword) && !sessions.includes(code)) {
@@ -331,12 +360,12 @@ ${historySection}`;
             }
         }
 
-        // Detect simulation (keyword list is config-overridable)
-        const simKeywords = envJson<string[]>("F1_INTENT_SIM_KEYWORDS_JSON", ["what if", "simulate", "predict", "project", "counterfactual", "hypothetical", "how would", "what would happen"]);
+        // Detect simulation
+        const simKeywords = ["what if", "simulate", "predict", "project", "counterfactual", "hypothetical", "how would", "what would happen"];
         const requiresSimulation = simKeywords.some((k) => text.includes(k));
 
-        // Detect comparison (keyword list is config-overridable)
-        const comparisonKeywords = envJson<string[]>("F1_INTENT_COMPARISON_KEYWORDS_JSON", ["compare", "vs", "versus", "better", "faster", "slower", "difference between"]);
+        // Detect comparison
+        const comparisonKeywords = ["compare", "vs", "versus", "better", "faster", "slower", "difference between"];
         const isComparison = comparisonKeywords.some((k) => text.includes(k));
         let comparisonAxis: string | null = null;
         if (isComparison) {
@@ -347,11 +376,11 @@ ${historySection}`;
             else comparisonAxis = "performance";
         }
 
-        // Determine intent type (pre-telemetry cutoff is config-driven)
+        // Determine intent type
         let intentType: IntentAnalysis["intentType"] = "factual";
         if (requiresSimulation) intentType = "predictive";
         else if (isComparison) intentType = "comparative";
-        else if (text.includes("history") || text.includes("career") || years[0] < telemetryStartYear()) intentType = "historical";
+        else if (text.includes("history") || text.includes("career") || years[0] < 2018) intentType = "historical";
         else if (text.includes("season") || text.includes("championship")) intentType = "season_review";
         else if (text.includes("race") && grandPrix.length > 0) intentType = "race_analysis";
         else if (text.includes("trend") || text.includes("over time") || text.includes("progress")) intentType = "trend";

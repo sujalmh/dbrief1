@@ -172,13 +172,6 @@ const PickedSourcesSchema = z.object({
  * Ask a cheap model which retrieved sources the answer actually used.
  * Returns matched citations (possibly empty). Never throws — failures
  * resolve to [] so the route can simply show no sources.
- *
- * NOTE: No heuristic shortcut here — the whole point of this call is
- * filtering to the actually-used subset (see tests: unpicked names must
- * be dropped, empty picks must yield []). The latency win comes from the
- * caller: the chat route runs this AFTER emitting `done` so it never
- * delays stream completion, with a tight timeout so a slow model can't
- * hold the connection open.
  */
 export async function pickUsedSources(
     model: BaseChatModel,
@@ -216,7 +209,7 @@ export async function pickUsedSources(
                     `Question: ${question}\n\nAnswer:\n${answer.slice(0, 6000)}\n\nCandidate sources:\n${candidateList}`
                 ),
             ],
-            { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.sources) }
+            { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.intent) }
         );
         const picked = (result as { used_sources?: unknown }).used_sources;
         if (!Array.isArray(picked)) return [];

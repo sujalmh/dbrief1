@@ -22,8 +22,6 @@ import type { EvidenceStore } from "../evidence-store";
 import type { ResearchMemory } from "../memory";
 import type { Task, ResearchType, ResearchBudget, IntentAnalysis } from "../types";
 import { extractJson, extractContent } from "../llm-parse";
-import { maxSeasonYear, minSeasonYear, plannerConfig, telemetryStartYear } from "@/lib/config";
-import { driverCodesPromptList, getGpNames } from "@/lib/reference-data";
 
 // =============================================================================
 // Schemas
@@ -74,6 +72,10 @@ export class Planner {
         const { objective, researchType, evidenceStore, memory, budget, iteration, deepResearch, intentAnalysis } = params;
 
         const toolList = this.registry.toPromptString(deepResearch);
+
+        // Build the intent analysis section if available — this gives the
+        // planner structured entity/data-need guidance instead of guessing
+        // from a raw strategy string.
         const intentSection = intentAnalysis
             ? `
 ## Intent Analysis (from Intent Analyzer — use this to guide your task selection)
@@ -110,8 +112,8 @@ ${toolList}
 4. Use dependsOn to specify task IDs that must complete before this task can run.
 5. Each task needs a rationale explaining why it's needed.
 6. Only produce tasks that are needed for the current strategy — don't over-plan.
-7. For years before ${telemetryStartYear()}, only use get_driver_standings, get_race, get_qualifying, get_results (no telemetry/laps).
-8. Driver codes are 3 letters, e.g.: ${driverCodesPromptList().split(", ").slice(0, 8).join(", ")}, etc.
+7. For years before 2018, only use get_driver_standings, get_race, get_qualifying, get_results (no telemetry/laps).
+8. Driver codes are 3 letters: VER, HAM, LEC, NOR, etc.
 
 ## Handling Predictive / Simulation / What-If Queries
 When the objective is a prediction, counterfactual, or "what-if" scenario (keywords: "what if", "simulate", "predict", "project", "how would", "what would happen", "counterfactual", "hypothetical"), you MUST:
@@ -139,10 +141,10 @@ If no historical data is relevant (pure hypothetical), you may call run_simulati
 - Budget remaining: ${budget.maxTasks - budget.tasksExecuted} tasks
 ${intentSection}
 ## Evidence collected so far
-${truncatePromptSection(evidenceStore.toReasonerContextString(), plannerConfig.evidenceTruncateChars())}
+${evidenceStore.toReasonerContextString()}
 
 ## Memory (prior discoveries — don't re-fetch these)
-${truncatePromptSection(memory.toContextString(), plannerConfig.memoryTruncateChars())}`;
+${memory.toContextString()}`;
 
         const humanMsg = `Strategy from Reasoner: ${strategy}\n\nGenerate tasks for this strategy.`;
 
@@ -154,7 +156,18 @@ ${truncatePromptSection(memory.toContextString(), plannerConfig.memoryTruncateCh
                 new HumanMessage(humanMsg),
             ]);
 
-            return { tasks: capAndDedupeTasks(validated.tasks, iteration), reasoning: validated.reasoning || "" };
+            const tasks: Task[] = validated.tasks.map((t, index) => ({
+                id: `task_${iteration}_${index + 1}`,
+                description: t.description,
+                tool: t.tool,
+                args: t.args,
+                dependsOn: t.dependsOn || [],
+                status: "pending" as const,
+                iteration,
+                rationale: t.rationale,
+            }));
+
+            return { tasks, reasoning: validated.reasoning || "" };
         } catch (structuredError) {
             console.log("[Planner] Structured output failed, falling back to manual parsing:", structuredError instanceof Error ? structuredError.message : structuredError);
         }
@@ -182,15 +195,50 @@ ${truncatePromptSection(memory.toContextString(), plannerConfig.memoryTruncateCh
             const validated = PlanOutputSchema.parse(parsed);
 
             // Assign IDs and iteration numbers
-            return { tasks: capAndDedupeTasks(validated.tasks, iteration), reasoning: validated.reasoning || "" };
+            const tasks: Task[] = validated.tasks.map((t, index) => ({
+                id: `task_${iteration}_${index + 1}`,
+                description: t.description,
+                tool: t.tool,
+                args: t.args,
+                dependsOn: t.dependsOn || [],
+                status: "pending" as const,
+                iteration,
+                rationale: t.rationale,
+            }));
+
+            return { tasks, reasoning: validated.reasoning || "" };
         } catch (error) {
             const errorMsg = error instanceof Error ? error.message : "unknown error";
             console.error("[Planner] JSON parsing failed:", errorMsg);
-            console.error("[Planner] Raw LLM response (first 500 chars):", content.slice(0, 500));
+            console.error("[Planner] Raw LLM response (first 1000 chars):", content.slice(0, 1000));
 
-            // No third LLM retry (removed for latency): the old path made a
-            // THIRD sequential model call after two failures. Go straight to
-            // the deterministic fallback plan instead.
+            // Retry with a simpler, more explicit prompt
+            try {
+                const retryResponse = await this.model.invoke([
+                    new SystemMessage(`You are a task planner. Output ONLY valid JSON, no markdown, no explanation. The JSON must have this exact shape:\n{"tasks":[{"description":"...","tool":"...","args":{}}],"reasoning":"..."}\n\nAvailable tools: ${this.registry.toPromptString(deepResearch)}`),
+                    new HumanMessage(`Create 1-3 tasks for: ${strategy}\n\nJSON:`),
+                ]);
+                const retryContent = extractContent(retryResponse.content);
+                const retryParsed = extractJson(retryContent);
+                const retryValidated = PlanOutputSchema.parse(retryParsed);
+
+                const tasks: Task[] = retryValidated.tasks.map((t, index) => ({
+                    id: `task_${iteration}_${index + 1}`,
+                    description: t.description,
+                    tool: t.tool,
+                    args: t.args,
+                    dependsOn: t.dependsOn || [],
+                    status: "pending" as const,
+                    iteration,
+                    rationale: t.rationale,
+                }));
+
+                console.log("[Planner] Retry succeeded, generated", tasks.length, "tasks");
+                return { tasks, reasoning: `Retry after parse failure. ${retryValidated.reasoning || ""}` };
+            } catch (retryError) {
+                console.error("[Planner] Retry also failed:", retryError instanceof Error ? retryError.message : retryError);
+            }
+
             // Final fallback: generate a simple plan from the strategy
             const fallbackTasks = this.createFallbackTasks(strategy, objective, iteration);
             if (fallbackTasks.length > 0) {
@@ -217,16 +265,18 @@ ${truncatePromptSection(memory.toContextString(), plannerConfig.memoryTruncateCh
         const tasks: Task[] = [];
         let taskNum = 1;
 
-        // Extract year (bounds are config-driven; accepts 19xx + 20xx)
-        const yearMatch = text.match(/(?:19|20)\d{2}/);
-        let year = new Date().getFullYear();
-        if (yearMatch) {
-            const parsed = parseInt(yearMatch[0], 10);
-            if (parsed >= minSeasonYear() && parsed <= maxSeasonYear()) year = parsed;
-        }
+        // Extract year
+        const yearMatch = text.match(/20\d{2}/);
+        const year = yearMatch ? parseInt(yearMatch[0]) : new Date().getFullYear();
 
-        // Extract GP name from the shared reference data (not a local list)
-        const gpMatch = getGpNames().find((gp) =>
+        // Extract GP name from common F1 circuit names
+        const gpNames = [
+            "Monaco", "Silverstone", "Monza", "Spa", "Suzuka", "Abu Dhabi",
+            "Singapore", "Hungary", "Spain", "France", "Austria", "Britain",
+            "Netherlands", "Brazil", "Mexico", "Canada", "Bahrain", "Jeddah",
+            "Australia", "Japan", "Qatar", "Las Vegas", "Miami", "Emilia Romagna",
+        ];
+        const gpMatch = gpNames.find((gp) =>
             text.toLowerCase().includes(gp.toLowerCase())
         );
 
@@ -269,48 +319,4 @@ ${truncatePromptSection(memory.toContextString(), plannerConfig.memoryTruncateCh
 
         return tasks;
     }
-}
-
-/**
- * Truncate a prompt section to a char budget (token/latency control).
- * Evidence + memory grow every iteration; without a cap the planner prompt
- * balloons and each successive planning call gets slower.
- */
-function truncatePromptSection(text: string, maxChars: number): string {
-    if (text.length <= maxChars) return text;
-    return text.slice(0, maxChars) + "\n... (truncated for prompt efficiency)";
-}
-
-/**
- * Cap tasks per iteration and drop exact duplicates (same tool + args).
- * Over-planning is a direct latency multiplier (each task = a backend
- * round-trip + a reflect cycle). The cap is config-driven
- * (F1_PLANNER_MAX_TASKS_PER_ITERATION) and keeps batches tight while
- * covering multi-driver comparisons.
- */
-function capAndDedupeTasks(
-    raw: Array<{ description: string; tool: string; args: Record<string, unknown>; dependsOn?: string[]; rationale?: string }>,
-    iteration: number,
-    maxTasks?: number
-): Task[] {
-    const cap = maxTasks ?? plannerConfig.maxTasksPerIteration();
-    const seen = new Set<string>();
-    const tasks: Task[] = [];
-    for (const t of raw) {
-        const key = `${t.tool}:${JSON.stringify(t.args ?? {})}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        tasks.push({
-            id: `task_${iteration}_${tasks.length + 1}`,
-            description: t.description,
-            tool: t.tool,
-            args: t.args,
-            dependsOn: t.dependsOn || [],
-            status: "pending" as const,
-            iteration,
-            rationale: t.rationale,
-        });
-        if (tasks.length >= cap) break;
-    }
-    return tasks;
 }

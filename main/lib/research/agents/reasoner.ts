@@ -23,6 +23,7 @@ import type {
 import type { ResearchMemory } from "../memory";
 import type { Reflection, ResearchType, ResearchBudget } from "../types";
 import { RESEARCH_TYPES, RESEARCH_TYPE_EXPECTATIONS } from "../types";
+import { extractJson, extractContent } from "../llm-parse";
 
 // =============================================================================
 // Schemas
@@ -86,18 +87,30 @@ Then produce an initial strategy describing what data to look for first and what
             console.log("[Reasoner] Structured output failed, falling back to manual parsing:", structuredError instanceof Error ? structuredError.message : structuredError);
         }
 
-        // Fallback: manual invoke + JSON extraction was removed for latency.
-        // A recoverable structured-output failure used to trigger a SECOND
-        // sequential LLM call here. That doubled classify latency in the
-        // failure cases that are already slow. Default to factual research
-        // immediately — the IntentAnalyzer (which runs alongside this) already
-        // provides a richer classification via its heuristic fallback.
-        console.error("[Reasoner] classify structured output failed, defaulting to factual research");
-        return {
-            researchType: "factual",
-            strategy: `Gather relevant F1 data to answer: ${objective}`,
-            reasoning: "Classification failed, defaulting to factual research",
-        };
+        // Fallback: manual invoke + JSON extraction
+        try {
+            const response = await this.model.invoke([
+                new SystemMessage(systemPrompt + '\n\nRespond as JSON:\n{"researchType": "...", "strategy": "...", "reasoning": "..."}'),
+                new HumanMessage(humanPrompt),
+            ]);
+
+            const content = extractContent(response.content);
+            const parsed = extractJson(content);
+            const result = ClassificationSchema.parse(parsed);
+            return {
+                researchType: result.researchType as ResearchType,
+                strategy: result.strategy,
+                reasoning: result.reasoning,
+            };
+        } catch (error) {
+            console.error("[Reasoner] classify failed:", error instanceof Error ? error.message : error);
+            // Fallback: treat as factual research
+            return {
+                researchType: "factual",
+                strategy: `Gather relevant F1 data to answer: ${objective}`,
+                reasoning: "Classification failed, defaulting to factual research",
+            };
+        }
     }
 
     /**
@@ -159,17 +172,25 @@ ${memory.toContextString()}`;
             console.log("[Reasoner] Structured output failed for reflect, falling back:", structuredError instanceof Error ? structuredError.message : structuredError);
         }
 
-        // Fallback: manual invoke + JSON extraction was removed for latency.
-        // A recoverable structured-output failure used to trigger a SECOND
-        // sequential LLM call per reflection (i.e. per research iteration).
-        // Stopping immediately is the safe default — it ends the loop and
-        // synthesizes from whatever evidence is already gathered.
-        return {
-            useful: true,
-            answeredPart: "Partial answer gathered",
-            stillMissing: ["Unable to determine — reflection failed"],
-            nextAction: "stop",
-            reasoning: `Reflection structured output failed. Stopping to avoid infinite loop.`,
-        };
+        // Fallback: manual invoke + JSON extraction
+        try {
+            const response = await this.model.invoke([
+                new SystemMessage(systemPrompt + '\n\nRespond as JSON:\n{"useful": boolean, "answeredPart": "...", "stillMissing": ["..."], "nextAction": "call_tool|stop", "nextStrategy": "...", "reasoning": "..."}'),
+                new HumanMessage("Reflect on the progress and decide what to do next. Respond with ONLY the JSON object, no other text."),
+            ]);
+
+            const content = extractContent(response.content);
+            const parsed = extractJson(content);
+            return ReflectionOutputSchema.parse(parsed) as Reflection;
+        } catch (error) {
+            // Fallback: if reflection fails, stop to avoid infinite loops
+            return {
+                useful: true,
+                answeredPart: "Partial answer gathered",
+                stillMissing: ["Unable to determine — reflection failed"],
+                nextAction: "stop",
+                reasoning: `Reflection failed: ${error instanceof Error ? error.message : "unknown error"}. Stopping to avoid infinite loop.`,
+            };
+        }
     }
 }

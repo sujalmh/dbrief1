@@ -332,21 +332,10 @@ def format_timedelta(td: Optional[Any]) -> Optional[str]:
     return f"{seconds:.3f}"
 
 
-def _env_int(name: str, fallback: int) -> int:
-    import os
-    try:
-        raw = os.getenv(name)
-        if raw is None or raw == "":
-            return fallback
-        return int(raw)
-    except (TypeError, ValueError):
-        return fallback
-
-
 def downsample_telemetry(
     df: pd.DataFrame,
     factor: int = 10,
-    max_rows: int | None = None
+    max_rows: int = 5000
 ) -> tuple[pd.DataFrame, int]:
     """
     Downsample telemetry data to reduce response size.
@@ -354,14 +343,11 @@ def downsample_telemetry(
     Args:
         df: Telemetry DataFrame
         factor: Downsample factor (take every Nth row)
-        max_rows: Maximum number of rows in output (default from
-            F1_DOWNSAMPLE_MAX_ROWS env, historically 5000)
+        max_rows: Maximum number of rows in output
 
     Returns:
         Tuple of (downsampled DataFrame, original row count)
     """
-    if max_rows is None:
-        max_rows = _env_int("F1_DOWNSAMPLE_MAX_ROWS", 5000)
     if df is None or df.empty:
         return df, 0
 

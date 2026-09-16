@@ -29,12 +29,12 @@ import type { Evidence, EvidenceType, ToolMetadata } from "./types";
 // Tool Metadata Definitions
 // =============================================================================
 
-// Use the configured season bounds in tool descriptions so the LLM never
-// thinks the current season is "unavailable". Bounds come from lib/config.ts
-// (F1_MIN_SEASON_YEAR + current calendar year) instead of literals.
-import { maxSeasonYear, minSeasonYear } from "@/lib/config";
-
-const SEASONS_RANGE = `${minSeasonYear()}-${maxSeasonYear()}`;
+// Use the current calendar year in tool descriptions so the LLM never
+// thinks the current season is "unavailable". Without this, the LLM would
+// see hardcoded "1950-2025" descriptions long after 2025 and refuse to
+// answer questions about the current season.
+const CURRENT_YEAR = new Date().getFullYear();
+const SEASONS_RANGE = `1950-${CURRENT_YEAR}`;
 
 const TOOL_METADATA: Record<string, ToolMetadata> = {
     get_seasons: {
@@ -42,7 +42,7 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
         description: `Get the list of available F1 seasons (${SEASONS_RANGE})`,
         category: "data",
         outputType: "seasons",
-        outputShape: `{ seasons: number[] } — array of year numbers from ${minSeasonYear()} to ${maxSeasonYear()}`,
+        outputShape: `{ seasons: number[] } — array of year numbers from 1950 to ${CURRENT_YEAR}`,
         requires: [],
         provides: ["seasons"],
     },

@@ -38,6 +38,17 @@ export interface ProviderMeta {
     /** Env var holding the API key (Settings key overrides it) */
     envKey: "GOOGLE_AI_API_KEY" | "OPENROUTER_API_KEY" | "HUGGINGFACE_API_KEY" | "OPENCODE_ZEN_API_KEY" | "OPENCODE_GO_API_KEY";
     docsUrl?: string;
+    /**
+     * Key verification for Settings → Test Key: a cheap list-models style
+     * endpoint hit with the user's key. `auth: "bearer"` sends
+     * `Authorization: Bearer <key>`; `auth: "query"` appends `?key=<key>`
+     * (Gemini style). Optional so community providers registered at
+     * runtime can omit it — the UI then explains testing is unsupported.
+     */
+    keyTest?: {
+        url: string;
+        auth: "bearer" | "query";
+    };
 }
 
 export const PROVIDERS: ProviderMeta[] = [
@@ -53,6 +64,10 @@ export const PROVIDERS: ProviderMeta[] = [
         plannerModel: "gemini-2.0-flash",
         reasoningModel: "gemini-2.0-flash-thinking-exp",
         envKey: "GOOGLE_AI_API_KEY",
+        keyTest: {
+            url: "https://generativelanguage.googleapis.com/v1beta/models",
+            auth: "query",
+        },
     },
     {
         id: "openrouter",
@@ -67,6 +82,10 @@ export const PROVIDERS: ProviderMeta[] = [
         plannerModel: "nvidia/nemotron-3-ultra-550b-a55b:free",
         reasoningModel: "nvidia/nemotron-3-ultra-550b-a55b:free",
         envKey: "OPENROUTER_API_KEY",
+        keyTest: {
+            url: "https://openrouter.ai/api/v1/models",
+            auth: "bearer",
+        },
     },
     {
         id: "huggingface",
@@ -80,6 +99,10 @@ export const PROVIDERS: ProviderMeta[] = [
         plannerModel: "mistralai/Mistral-7B-Instruct-v0.3",
         reasoningModel: "mistralai/Mixtral-8x7B-Instruct-v0.1",
         envKey: "HUGGINGFACE_API_KEY",
+        keyTest: {
+            url: "https://huggingface.co/api/whoami-v2",
+            auth: "bearer",
+        },
     },
     {
         id: "zen",
@@ -97,6 +120,10 @@ export const PROVIDERS: ProviderMeta[] = [
         reasoningModel: "mimo-v2.5-free",
         envKey: "OPENCODE_ZEN_API_KEY",
         docsUrl: "https://opencode.ai/docs/zen/",
+        keyTest: {
+            url: "https://opencode.ai/zen/v1/models",
+            auth: "bearer",
+        },
     },
     {
         id: "go",
@@ -136,6 +163,10 @@ export const PROVIDERS: ProviderMeta[] = [
         reasoningModel: "kimi-k2.7-code",
         envKey: "OPENCODE_GO_API_KEY",
         docsUrl: "https://opencode.ai/docs/go",
+        keyTest: {
+            url: "https://opencode.ai/zen/go/v1/models",
+            auth: "bearer",
+        },
     },
 ];
 

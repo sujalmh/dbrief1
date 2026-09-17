@@ -43,8 +43,8 @@ export interface SanitizedCitation {
 const MAX_CITATIONS = 20
 
 /**
- * Coerce unknown input (SSE payload, Firestore doc) into safe citations.
- * Drops malformed entries, caps count/lengths to bound Firestore doc size,
+ * Coerce unknown input (SSE payload, stored message doc) into safe citations.
+ * Drops malformed entries, caps count/lengths to bound stored doc size,
  * and only keeps http(s) links. Never throws.
  */
 export function sanitizeCitations(value: unknown): SanitizedCitation[] {

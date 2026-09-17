@@ -10,6 +10,7 @@ import { VisualizationPanel } from "@/components/visualization/visualization-pan
 import { useChatStore } from "@/lib/store"
 import { useMediaQuery } from "@/lib/hooks/use-media-query"
 import { useSession } from "@/lib/cf/session-context"
+import { SignInPage } from "@/components/auth/signin-page"
 import { Loader2 } from "lucide-react"
 import { useEffect } from "react"
 
@@ -34,7 +35,7 @@ function useAuthErrorBanner() {
 
 export default function Home() {
   const { settings, visualizationWidth, isVisualizationCollapsed } = useChatStore()
-  const { loading } = useSession()
+  const { user, loading } = useSession()
   const isDesktop = useMediaQuery("(min-width: 768px)")
   useAuthErrorBanner()
 
@@ -49,6 +50,12 @@ export default function Home() {
         <Loader2 className="h-8 w-8 animate-spin text-f1-red" />
       </div>
     )
+  }
+
+  // Signed-out visitors land on sign up/in first — the chat UI (and
+  // its history, quotas, and usage) requires a Google-linked identity.
+  if (!user?.google) {
+    return <SignInPage />
   }
 
   return (

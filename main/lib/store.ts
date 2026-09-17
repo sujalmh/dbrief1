@@ -32,7 +32,7 @@ export interface ResearchEvidence {
     data?: unknown
     /** Storage path pointer when `data` was offloaded (e.g. telemetry dumps). */
     dataRef?: string | null
-    /** True when `data` was truncated to fit Firestore limits. */
+    /** True when `data` was truncated to fit stored-doc limits. */
     dataTruncated?: boolean
 }
 
@@ -119,13 +119,13 @@ export interface Message {
         durationMs?: number
     }[]
     /**
-     * Pointer to the offloaded full visualization payload in Firebase
-     * Storage (set when visualizationData exceeded inline limits).
+     * Pointer to the offloaded full visualization payload in R2
+     * (set when visualizationData exceeded inline limits).
      * On load the payload is fetched and merged back into
      * `visualizationData` so charts render without re-execution.
      */
     visualizationRef?: string | null
-    /** True when visualizationData was truncated to fit Firestore limits. */
+    /** True when visualizationData was truncated to fit stored-doc limits. */
     visualizationTruncated?: boolean
     citations?: {
         source: string
@@ -150,27 +150,21 @@ export interface Message {
         message: string
     }[]
     /**
-     * Per-message usage accounting (OpenRouter returns this natively per
-     * the docs: prompt/completion tokens + cost in credits). When
-     * `provider === 'openrouter'`, `cost` is real. For Gemini / HuggingFace
-     * `cost` is null and only the token counts are populated.
+     * Per-message usage accounting. `provider` is the AI mode
+     * ("managed" | "byok"). `cost` is real when the gateway reports
+     * it, else null and only token counts are populated.
      *
-     * `model` is captured here (not just from settings) because the user
-     * can change models mid-conversation — we want to display the model
-     * that actually produced this response, not the current selection.
+     * `model` is captured here (not just from settings) because it
+     * records the model that actually produced this response.
      */
     usage?: {
         provider: string
         model: string
         /**
-         * Model id used by the planner (intent + step
-         * decomposition). When planner and responder use
-         * different models, the footer surfaces both so the
-         * user knows which model handled which stage. The
-         * aggregated token / cost fields still cover the
-         * whole request — we don't try to split them per
-         * stage because OpenRouter's `usage` block doesn't
-         * make that easy to do accurately.
+         * Legacy: planner model id for messages produced before the
+         * managed/BYOK simplification (when planner and responder could
+         * differ). Planner and responder always share one model now.
+         * Kept so old messages still render.
          */
         plannerModel?: string
         promptTokens: number
@@ -178,9 +172,9 @@ export interface Message {
         reasoningTokens?: number
         cachedTokens?: number
         totalTokens: number
-        /** Cost in USD (credits). Null when the provider doesn't report it. */
+        /** Cost in USD. Null when the gateway doesn't report it. */
         cost: number | null
-        /** Upstream inference cost from OpenRouter (raw provider-side cost). */
+        /** Upstream inference cost (raw provider-side cost). */
         upstreamCost?: number | null
     }
     // Deep research mode fields
@@ -192,39 +186,28 @@ export interface Message {
     chartSpecs?: ChartSpec[]
 }
 
+export type AiModeSetting = "managed" | "byok";
+
 interface Settings {
-    /** Memory-only BYOK override (never persisted — see persist partialize). */
-    apiKey: string
-    provider: string
-    model: string
     /**
-     * Dedicated model used by the query planner (intent analysis,
-     * step decomposition, structured-output tool calls). Kept
-     * separate from `model` (the responder) so the user can pick
-     * a cheap fast model for planning and a more capable model
-     * for the final answer, mirroring the split used by coding
-     * assistants like Cursor / Continue / Aider.
-     *
-     * When empty, the server falls back to the provider's
-     * built-in cheap planner model so the feature is fully
-     * opt-in.
+     * Which model serves this client:
+     * - "managed": the app owner's model (OpenCode Go, MiMo V2.5).
+     *   The user picks nothing; the server resolves everything from env.
+     * - "byok": brought by the user via Settings (base URL + model id
+     *   + friendly name below; the API key itself lives in an httpOnly
+     *   cookie, never in localStorage).
      */
-    plannerModel: string
-    temperature: number
-    maxTokens: number
+    aiMode: AiModeSetting;
+    /** BYOK: OpenAI-compatible base URL (the "model url"). */
+    byokBaseUrl: string;
+    /** BYOK: model identifier sent to the API. */
+    byokModelId: string;
+    /** BYOK: friendly display name shown in the UI. */
+    byokModelName: string;
     deepResearchMode: boolean
     webSearchEnabled: boolean
     visualizeEnabled: boolean
     developerMode: boolean
-    /**
-     * User-curated list of additional model IDs (typically from
-     * OpenRouter) that should appear in the model picker alongside
-     * the built-in presets. Each entry is just the model id string
-     * (e.g. "anthropic/claude-3.5-sonnet"). The picker can also
-     * accept a free-text "Add custom model" entry — in that case
-     * the id is appended to this list.
-     */
-    customModels: string[]
 }
 
 export interface GraphHistoryItem {
@@ -250,7 +233,7 @@ export interface VisualizationResultItem {
 /**
  * Session row kept in the client store. Mirrors the cloud ChatSession
  * shape but stays decoupled so the store doesn't import server types.
- * All fields optional except `id` so Firestore snapshots (which always
+ * All fields optional except `id` so stored snapshots (which always
  * carry an id plus a subset of fields) assign cleanly in both directions.
  */
 export interface StoredSession {
@@ -344,19 +327,14 @@ interface ChatStore {
 }
 
 const defaultSettings: Settings = {
-    apiKey: '',
-    provider: 'openrouter',
-    model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
-    plannerModel: '',
-    temperature: 0.7,
-    // Note: the API route (getResponderModel) overrides this to 8192.
-    // This value is kept for the settings UI but is not used by the API.
-    maxTokens: 8192,
+    aiMode: 'managed',
+    byokBaseUrl: '',
+    byokModelId: '',
+    byokModelName: '',
     deepResearchMode: false,
     webSearchEnabled: false,
     visualizeEnabled: false,
     developerMode: false,
-    customModels: [],
 }
 
 // Monotonic counter for graphHistory IDs. Lives outside the store
@@ -382,7 +360,7 @@ export const useChatStore = create<ChatStore>()(
             currentSessionId: null,
             sessions: [],
             // Monotonic counter starts above Date.now() so any timestamps we
-            // serialize later (Firestore, debugging) stay comparable.
+            // serialize later (cloud storage, debugging) stay comparable.
             messageCounter: Date.now(),
 
             setSettingsOpen: (isOpen) => set({ isSettingsOpen: isOpen }),
@@ -556,51 +534,47 @@ export const useChatStore = create<ChatStore>()(
             // graph history, and the panel UI state. We deliberately
             // exclude ephemeral per-message UI state (currentIndex,
             // localWidth during resize, etc.) and the loading flag.
-            // SECURITY: `settings.apiKey` is NEVER persisted (memory-only).
-            // Persisted IndexedDB is readable by any XSS payload; the key
-            // lives in the httpOnly `api_key` cookie + server env instead.
-            partialize: (state) => {
-                const { apiKey: _dropped, ...safeSettings } = state.settings;
-                void _dropped;
-                return {
-                    settings: safeSettings,
-                    messages: state.messages,
-                    visualizationData: state.visualizationData,
-                    graphHistory: state.graphHistory,
-                    isVisualizationCollapsed: state.isVisualizationCollapsed,
-                    visualizationWidth: state.visualizationWidth,
-                };
-            },
+            // (BYOK keys are never in settings — they live in the
+            // httpOnly cookie — so nothing sensitive is persisted here.)
+            partialize: (state) => ({
+                settings: state.settings,
+                messages: state.messages,
+                visualizationData: state.visualizationData,
+                graphHistory: state.graphHistory,
+                isVisualizationCollapsed: state.isVisualizationCollapsed,
+                visualizationWidth: state.visualizationWidth,
+            }),
             // Bump the version when the persisted shape changes so old
             // clients drop stale data instead of crashing on load.
-            version: 5,
+            version: 6,
             // v2 -> v3: Settings gained a `customModels: string[]` field.
-            // v3 -> v4: Settings gained a `plannerModel: string` field
-            //   (the dedicated planner model, separate from `model`).
-            // v4 -> v5: `settings.apiKey` is no longer persisted (H5: keys
+            // v3 -> v4: Settings gained a `plannerModel: string` field.
+            // v4 -> v5: `settings.apiKey` is no longer persisted (keys
             //   in IndexedDB are XSS-exfiltratable). Dropped on migrate.
-            // We backfill both on the fly so existing users keep their
-            // messages (with the new optional `usage.plannerModel`
-            // field left as undefined, which the UI handles by hiding
-            // the planner row in the footer).
+            // v5 -> v6: two-mode simplification — Settings is now
+            //   (aiMode + byokBaseUrl/byokModelId/byokModelName).
+            //   provider/model/plannerModel/temperature/maxTokens/apiKey/
+            //   customModels are dropped; messages keep rendering (the
+            //   `usage` block is untouched).
             migrate: (persistedState) => {
                 const state = (persistedState ?? {}) as Partial<{
-                    settings: Partial<Settings>
+                    settings: Partial<Settings> & Record<string, unknown>
                     messages: Message[]
                 }>
                 if (state.settings) {
-                    if (!Array.isArray(state.settings.customModels)) {
-                        state.settings = { ...state.settings, customModels: [] }
-                    }
-                    if (typeof (state.settings as Partial<Settings>).plannerModel !== "string") {
-                        state.settings = { ...state.settings, plannerModel: "" }
-                    }
-                    // H5: purge any key persisted by older versions.
-                    if ("apiKey" in state.settings) {
-                        const { apiKey: _old, ...rest } = state.settings as Partial<Settings> & { apiKey?: unknown };
-                        void _old;
-                        state.settings = { ...rest, apiKey: "" };
-                    }
+                    const s = state.settings;
+                    const aiMode = s.aiMode === "byok" ? "byok" : "managed";
+                    state.settings = {
+                        ...defaultSettings,
+                        aiMode,
+                        byokBaseUrl: typeof s.byokBaseUrl === "string" ? s.byokBaseUrl : "",
+                        byokModelId: typeof s.byokModelId === "string" ? s.byokModelId : "",
+                        byokModelName: typeof s.byokModelName === "string" ? s.byokModelName : "",
+                        deepResearchMode: s.deepResearchMode === true,
+                        webSearchEnabled: s.webSearchEnabled === true,
+                        visualizeEnabled: s.visualizeEnabled === true,
+                        developerMode: s.developerMode === true,
+                    };
                 }
                 return state as { settings?: Partial<Settings>; messages?: Message[] }
             },

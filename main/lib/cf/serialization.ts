@@ -150,7 +150,7 @@ function sanitizeStep(s: NonNullable<NonNullable<Message["steps"]>[number]>): No
 }
 
 /**
- * Build the inline Firestore doc for a Message. Large `visualizationData`
+ * Build the inline D1 row payload for a Message. Large `visualizationData`
  * / evidence `data` are left in place here — `saveFullMessage` decides
  * whether to offload them to Storage first. Pure: no I/O.
  */
@@ -265,7 +265,7 @@ export function buildFullMessageDoc(userId: string, message: Message): FullMessa
     return docBase;
 }
 
-/** Convert a Firestore timestamp (or millis) to epoch ms without Firebase. */
+/** Convert a stored timestamp (or millis) to epoch ms without Firebase. */
 export function timestampToMs(value: unknown): number | null {
     if (typeof value === "number") return value;
     if (value instanceof Date) return value.getTime();
@@ -283,7 +283,7 @@ export function timestampToMs(value: unknown): number | null {
 }
 
 /**
- * Map a Firestore doc back to a client Message. Resolves nothing —
+ * Map a stored message row back to a client Message. Resolves nothing —
  * Storage refs are hydrated by `loadFullSessionMessages`.
  */
 export function docToMessage(id: string, data: Record<string, unknown>): Message {

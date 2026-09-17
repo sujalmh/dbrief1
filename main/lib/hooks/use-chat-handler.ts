@@ -142,24 +142,13 @@ export function useChatHandler() {
                 },
                 body: JSON.stringify({
                     message: messageText,
-                    provider: state.settings.provider,
-                    model: state.settings.model,
-                    // Dedicated planner model. Empty string tells
-                    // the server to use its built-in cheap
-                    // planner model. The frontend decides whether
-                    // to surface this field in the UI.
-                    plannerModel: state.settings.plannerModel || undefined,
-                    // For now we keep the planner on the same
-                    // provider as the responder. A future UI
-                    // control can split these by setting
-                    // `state.settings.plannerProvider` on the
-                    // store — the route already accepts the field.
-                    plannerProvider: undefined,
-                    // H5: never send a stored key. Auth uses server env
-                    // keys + the httpOnly `api_key` cookie; the in-memory
-                    // settings.apiKey override is intentionally not wired
-                    // to avoid persisting/transmitting keys from storage.
-                    apiKey: undefined,
+                    // Two modes only: "managed" (server env) or "byok".
+                    // The BYOK API key lives in an httpOnly cookie and is
+                    // never sent from JS — the server reads the cookie.
+                    aiMode: state.settings.aiMode,
+                    byokBaseUrl: state.settings.byokBaseUrl || undefined,
+                    byokModel: state.settings.byokModelId || undefined,
+                    byokModelName: state.settings.byokModelName || undefined,
                     deepResearchMode: state.settings.deepResearchMode,
                     web_search: state.settings.webSearchEnabled,
                     sessionId: effectiveSessionId,
@@ -170,11 +159,20 @@ export function useChatHandler() {
 
             if (!response.ok) {
                 let errorMessage
+                let errorCode: string | undefined
                 try {
                     const errorData = await response.json()
                     errorMessage = errorData.error || errorData.message || "Failed to send message"
+                    errorCode = typeof errorData.code === "string" ? errorData.code : undefined
                 } catch {
                     errorMessage = `Server Error: ${response.status} ${response.statusText}`
+                }
+                // Signed-out (or unlinked) session: re-bootstrap so the
+                // page gate routes to sign up/in instead of showing a
+                // dead chat that can never send.
+                if (response.status === 401 || errorCode === "auth_required") {
+                    if (typeof window !== "undefined") window.location.reload()
+                    throw new Error("Sign in with Google to use the chat.")
                 }
                 throw new Error(errorMessage)
             }
@@ -525,7 +523,7 @@ export function useChatHandler() {
                 const errorText =
                     "The response stream ended without producing any output. " +
                     "This usually means a network interruption or an upstream LLM timeout. " +
-                    "Please try again, or switch providers in Settings."
+                    "Please try again, or check Settings (Managed / BYOK)."
                 useChatStore.getState().setError(errorText)
                 useChatStore.getState().updateMessage(assistantMsgId, errorText, true)
             }

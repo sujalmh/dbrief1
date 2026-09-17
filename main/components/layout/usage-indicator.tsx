@@ -53,7 +53,7 @@ function Row({ label, used, cap }: { label: string; used: number; cap: number })
  */
 export function UsageIndicator() {
     const { user, cloudReady } = useSession();
-    const apiKey = useChatStore((s) => s.settings.apiKey);
+    const aiMode = useChatStore((s) => s.settings.aiMode);
     const turnCount = useChatStore((s) => s.messages.length);
     const sessionId = useChatStore((s) => s.currentSessionId);
     const [quota, setQuota] = React.useState<QuotaState | null>(null);
@@ -64,13 +64,13 @@ export function UsageIndicator() {
             return;
         }
         let cancelled = false;
-        loadQuota(!!apiKey).then((q) => {
+        loadQuota(aiMode === "byok").then((q) => {
             if (!cancelled) setQuota(q);
         });
         return () => {
             cancelled = true;
         };
-    }, [user, cloudReady, apiKey, turnCount, sessionId]);
+    }, [user, cloudReady, aiMode, turnCount, sessionId]);
 
     const util = React.useMemo(() => {
         if (!quota) return 0;

@@ -7,8 +7,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getOrProvisionUid, uidCookieHeader } from "@/lib/cf/session";
-import { ensureUser } from "@/lib/cf/store";
+import { ensureUser, isGoogleLinked } from "@/lib/cf/store";
 import { CfStoreError } from "@/lib/cf/d1";
+import { cfConfigured } from "@/lib/cf/env";
 import { extractIpKey, hashIp } from "@/lib/cf/quotas";
 
 export interface CfContext {
@@ -52,6 +53,33 @@ export async function cfIdentity(req?: NextRequest): Promise<CfContext> {
 export function withUidCookie<T>(res: NextResponse<T>, ctx: CfContext): NextResponse<T> {
     if (ctx.fresh) res.headers.set("Set-Cookie", uidCookieHeader(ctx.uid));
     return res;
+}
+
+/**
+ * Sign-in gate for state-changing / metered routes. Cookie possession
+ * alone is NOT enough — the identity must have completed Google sign-in
+ * (users.google_sub set). Returns a 401 response when rejected, else null.
+ * Unconfigured storage (local dev) stays open; other D1 failures deny
+ * closed since the gate cannot be evaluated.
+ */
+export async function requireLinkedIdentity(uid: string | null): Promise<NextResponse | null> {
+    // Local dev without cloud credentials stays open (same posture as
+    // the rest of the cf routes). This checks configuration — NOT the
+    // error that follows — so a real D1 outage still fails closed below.
+    if (!cfConfigured()) return null;
+    try {
+        if (await isGoogleLinked(uid)) return null;
+    } catch (e) {
+        console.warn("[auth] link check failed closed:", e instanceof Error ? e.message : e);
+        return NextResponse.json(
+            { error: "Could not verify sign-in — please try again.", code: "auth_required" },
+            { status: 401 }
+        );
+    }
+    return NextResponse.json(
+        { error: "Sign in with Google to use the chat.", code: "auth_required" },
+        { status: 401 }
+    );
 }
 
 export function cfError(e: unknown): NextResponse {

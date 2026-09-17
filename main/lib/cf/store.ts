@@ -119,8 +119,7 @@ export interface UserProfile {
     google: { email: string; name: string | null; avatarUrl: string | null } | null;
 }
 
-/** Full identity profile for /api/cf/me (auth badge + sign-in state). */
-export async function getUserProfile(userId: string): Promise<UserProfile> {
+/** Full identity profile for /api/cf/me (auth badge + sign-in state). */export async function getUserProfile(userId: string): Promise<UserProfile> {
     const rows = await d1Query<{
         display_name: string;
         google_sub: string | null;
@@ -136,6 +135,19 @@ export async function getUserProfile(userId: string): Promise<UserProfile> {
                 ? { email: r.email, name: r.display_name || null, avatarUrl: r.avatar_url }
                 : null,
     };
+}
+
+/**
+ * Whether this identity completed Google sign-in. This is the
+ * server-side sign-in gate: cookie possession alone is NOT enough.
+ */
+export async function isGoogleLinked(userId: string | null): Promise<boolean> {
+    if (!userId) return false;
+    const rows = await d1Query<{ google_sub: string | null }>(
+        `SELECT google_sub FROM users WHERE id = ?`,
+        [userId]
+    );
+    return !!rows[0]?.google_sub;
 }
 
 export interface GoogleLinkProfile {

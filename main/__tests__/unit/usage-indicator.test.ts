@@ -50,6 +50,6 @@ describe("usage indicator content (hover card)", () => {
     });
 
     it("loads quota through the shared client with the BYOK flag", () => {
-        expect(indicator).toMatch(/loadQuota\(!!apiKey\)/);
+        expect(indicator).toMatch(/loadQuota\(aiMode === "byok"\)/);
     });
 });

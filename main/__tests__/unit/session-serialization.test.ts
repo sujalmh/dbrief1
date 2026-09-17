@@ -1,5 +1,5 @@
 /**
- * Tests for full session persistence helpers (pure, no Firebase needed)
+ * Tests for full session persistence helpers (pure, no cloud needed)
  * =====================================================================
  * Covers: doc building (everything saved), size estimation, truncation
  * fallback when Storage is unavailable, and doc->message round-trip.

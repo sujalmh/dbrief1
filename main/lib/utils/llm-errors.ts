@@ -74,8 +74,7 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
                 "The AI provider is rate-limiting requests right now. " +
                 "This usually means a free-tier daily quota was reached or " +
                 "too many requests were sent in a short window. " +
-                "Please wait a minute, switch to a different provider in Settings, " +
-                "or use your own API key.",
+                "Please wait a minute, or check Settings (Managed / BYOK).",
             recoverable: false,
             cause: err,
         };
@@ -90,9 +89,8 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
         return {
             kind: "quota",
             userMessage:
-                "The OpenRouter account is out of credits, so paid models are " +
-                "unavailable. Free models still work — pick a :free model in " +
-                "Settings, or top up credits at openrouter.ai/settings/credits.",
+                "The AI account is out of credits, so the managed model is " +
+                "unavailable. Switch to BYOK in Settings with your own key.",
             recoverable: false,
             cause: err,
         };
@@ -112,7 +110,7 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
             kind: "auth",
             userMessage:
                 "The AI provider rejected the API key. " +
-                "Open Settings and verify the key for the selected provider.",
+                "Open Settings and verify the key (Managed / BYOK).",
             recoverable: false,
             cause: err,
         };
@@ -150,7 +148,7 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
             kind: "overloaded",
             userMessage:
                 "The AI provider is temporarily overloaded. " +
-                "Please try again in a few seconds, or switch providers in Settings.",
+                "Please try again in a few seconds, or check Settings (Managed / BYOK).",
             recoverable: false,
             cause: err,
         };
@@ -210,7 +208,7 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
         kind: "unknown",
         userMessage:
             "The AI model could not be reached. " +
-            "Please try again, or switch to a different provider in Settings.",
+            "Please try again, or check Settings (Managed / BYOK).",
         recoverable: false,
         cause: err,
     };
@@ -221,6 +219,26 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
  */
 export function isNonRecoverable(cls: ClassifiedLlmError): boolean {
     return !cls.recoverable;
+}
+
+/**
+ * True when the error looks like a client-side timeout/abort of an
+ * in-flight LLM request (slow gateway, not a rejection). These are
+ * worth exactly one retry: the call itself is side-effect-free, and
+ * most gateway stalls clear within seconds.
+ */
+export function isTimeoutAbort(err: unknown): boolean {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+        return true;
+    }
+    const lower = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+    return (
+        lower.includes("aborted") ||
+        lower.includes("aborterror") ||
+        lower.includes("timed out") ||
+        lower.includes("timeout") ||
+        lower.includes("etimedout")
+    );
 }
 
 /**

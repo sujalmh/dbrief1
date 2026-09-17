@@ -16,7 +16,7 @@
 
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { AIMessageChunk } from "@langchain/core/messages";
-import { getPlannerModel, getResponderModel, type Provider } from "@/lib/llm";
+import { getPlannerModel, getResponderModel, type AiMode } from "@/lib/llm";
 import { ToolRegistry, createToolRegistry } from "./tool-registry";
 import { EvidenceStore } from "./evidence-store";
 import { ResearchMemory } from "./memory";
@@ -597,26 +597,25 @@ export class ResearchManager {
 // =============================================================================
 
 /**
- * Create a ResearchManager with models from the given provider.
+ * Create a ResearchManager for the given AI mode.
+ * Planner and responder share one model (managed env model or BYOK).
  *
- * @param provider - LLM provider
- * @param apiKey - API key
- * @param model - User-selected model name
+ * @param mode - "managed" | "byok"
+ * @param byok - BYOK connection (baseUrl / model / apiKey) when mode is "byok"
  * @param options - Research options
- * @param reasoning - Whether to use a reasoning-capable model for the responder
+ * @param reasoning - Adjusts responder sampling only (never the model id)
  */
 export async function createResearchManager(
-    provider: Provider,
-    apiKey: string | undefined,
-    model: string,
+    mode: AiMode,
+    byok: { baseUrl?: string; model?: string; apiKey?: string } | undefined,
     options: ResearchOptions,
     reasoning: boolean = false
 ): Promise<ResearchManager> {
     // Independent model constructions (dynamic imports + client setup) —
     // run together instead of sequentially.
     const [plannerModel, responderModel] = await Promise.all([
-        getPlannerModel(provider, apiKey),
-        getResponderModel(provider, model, reasoning, apiKey),
+        getPlannerModel(mode, byok),
+        getResponderModel(mode, byok, reasoning),
     ]);
 
     return new ResearchManager(plannerModel, responderModel, options);

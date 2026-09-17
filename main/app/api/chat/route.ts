@@ -9,11 +9,17 @@
  * Request body:
  * {
  *   "message": string,
- *   "provider": "gemini" | "openrouter" | "huggingface" | "zen" | "go",
- *   "model": string,
- *   "reasoning": boolean,
+ *   "aiMode": "managed" | "byok",
+ *   "byokBaseUrl": string (byok only),
+ *   "byokModel": string (byok only, identifier),
+ *   "byokModelName": string (optional display name),
+ *   "deepResearchMode": boolean,
  *   "web_search": boolean
  * }
+ * The BYOK API key is NOT sent in the body — it lives in the httpOnly
+ * `byok_api_key` cookie (legacy `api_key` also accepted) and is read
+ * server-side. `byokApiKey` in the body is accepted as a fallback for
+ * non-browser clients.
  */
 
 import { NextRequest } from "next/server";
@@ -25,7 +31,7 @@ import type { StructuredTool } from "@langchain/core/tools";
 // Vercel / Next.js: bound serverless execution time for the streaming route.
 export const maxDuration = 300;
 
-import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type Provider } from "@/lib/llm";
+import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type AiMode } from "@/lib/llm";
 import { decidePlan, createFallbackPlan, type Plan } from "@/lib/planner";
 import { executeSteps, aggregateContext } from "@/lib/executor";
 import { UsageAccumulator, getModelId, type UsageTotals } from "@/lib/llm-usage";
@@ -35,7 +41,7 @@ import { getRegulationTools } from "@/lib/tools/regulation";
 import { getSimulationTools } from "@/lib/tools/simulation";
 import { ResearchManager } from "@/lib/research/manager";
 import { IntentAnalyzer, IntentAnalyzerUnavailableError } from "@/lib/research/agents/intent-analyzer";
-import { classifyLlmError, isNonRecoverable, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
+import { classifyLlmError, isNonRecoverable, isTimeoutAbort, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
 import {
     extractRegulationDocs,
     pickUsedSources,
@@ -43,6 +49,7 @@ import {
     type SourceCitation,
 } from "@/lib/utils/sources";
 import { UID_COOKIE, extractUid } from "@/lib/cf/session";
+import { requireLinkedIdentity } from "@/lib/cf/route-util";
 import {
     checkQuota,
     recordUsage,
@@ -152,24 +159,16 @@ const CHAT_MAX_BODY_BYTES = 4_000_000;
 
 const ChatRequestSchema = z.object({
     message: z.string().min(1, "Message is required").max(4000, "Message too long (max 4000 chars)"),
-    provider: z.enum(["gemini", "openrouter", "huggingface", "zen", "go"]).default("gemini"),
-    model: z.string().max(256).default("gemini-2.0-flash"),
-    /**
-     * Optional dedicated planner model. When present, the server
-     * uses this for intent analysis + step decomposition. When
-     * empty, the server falls back to the provider's built-in
-     * cheap planner model (so the feature is fully opt-in).
-     */
-    plannerModel: z.string().optional(),
-    /**
-     * Optional planner provider. Defaults to the main `provider`
-     * so most users only need to pick one provider. The split
-     * exists so future enhancements (e.g. Gemini for planning
-     * + OpenRouter for the answer) can be enabled without a
-     * schema change.
-     */
-    plannerProvider: z.enum(["gemini", "openrouter", "huggingface", "zen", "go"]).optional(),
-    apiKey: z.string().max(512).optional(),
+    // Two AI modes only: "managed" (server env) or "byok" (user-supplied
+    // base URL + model + key). Legacy `provider`/`model` fields were
+    // removed — the server always uses the aiMode path.
+    aiMode: z.enum(["managed", "byok"]).default("managed"),
+    byokBaseUrl: z.string().max(500).optional(),
+    byokModel: z.string().max(200).optional(),
+    byokModelName: z.string().max(200).optional(),
+    byokApiKey: z.string().max(1000).optional(),
+    /** Legacy body key field (pre-cookie flow); accepted as a fallback. */
+    apiKey: z.string().max(1000).optional(),
     deepResearchMode: z.boolean().default(false),
     web_search: z.boolean().default(false),
     sessionId: z.string().max(128).optional(),
@@ -244,14 +243,13 @@ export async function POST(request: NextRequest) {
         }
 
         // 1. Identify the caller via the server-issued session cookie
-        // (Cloudflare D1 identity; replaces Firebase Auth). The UID is a
-        // random unguessable value and all storage access is scoped to it.
-        // The cookie is HMAC-signed (see lib/cf/session); unverified
-        // values fall back to IP-based limiting. Unauthenticated callers
-        // still get answers — only history sync needs the cookie.
+        // (Cloudflare D1 identity). The UID is a random unguessable value
+        // and all storage access is scoped to it. The cookie is HMAC-signed
+        // (see lib/cf/session); unverified values fall back to IP-based
+        // limiting for the burst check below.
         const userId = extractUid(request.cookies.get(UID_COOKIE)?.value);
 
-        // 2. Rate limit per client key (uid when authenticated, else IP).
+        // 2. Rate limit per client key (uid when cookie verifies, else IP).
         //    Runs before any expensive work (model init, LLM calls) so spam
         //    can't burn through quotas.
         const clientKey = getClientKey(request, userId);
@@ -271,13 +269,33 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const { message, provider, model, plannerModel: plannerModelId, plannerProvider, apiKey, deepResearchMode, web_search, sessionId, isFirstMessage, history } = validationResult.data as ChatRequest;
+        // 2b. Sign-in gate: cookie possession alone is NOT enough — the
+        // identity must have completed Google sign-in. Runs before quota
+        // pre-flight so rejected calls consume nothing.
+        const authDenied = await requireLinkedIdentity(userId);
+        if (authDenied) return authDenied;
+
+        const { message, aiMode, byokBaseUrl, byokModel, byokApiKey, apiKey: legacyApiKey, deepResearchMode, web_search, sessionId, isFirstMessage, history } = validationResult.data as ChatRequest;
+        const mode = (aiMode ?? "managed") as AiMode;
+        // BYOK key resolution: explicit body field first, then the legacy
+        // body field, then the httpOnly cookie (Settings flow).
+        const cookieByokKey =
+            request.cookies.get("byok_api_key")?.value?.trim() ||
+            request.cookies.get("api_key")?.value?.trim() ||
+            "";
+        const resolvedByokKey =
+            (byokApiKey || "").trim() || (legacyApiKey || "").trim() || cookieByokKey;
+        const byok = {
+            baseUrl: (byokBaseUrl || "").trim() || undefined,
+            model: (byokModel || "").trim() || undefined,
+            apiKey: resolvedByokKey || undefined,
+        };
 
         // 2b. Quota pre-flight (persistent per-account + per-IP ledgers in
         // D1). Runs after the burst limiter, before any model/LLM spend.
         // BYOK callers (own key) get looser caps; everyone is metered
         // because hosting (Vercel/D1/R2) costs accrue regardless.
-        const quotaTier: QuotaTier = apiKey && apiKey.trim() ? "byok" : "managed";
+        const quotaTier: QuotaTier = mode === "byok" ? "byok" : "managed";
         const quotaKind = deepResearchMode ? "deep" : "chat";
         const quotaIpRaw = extractIpKey(request);
         const quotaIpHash = quotaIpRaw ? hashIp(quotaIpRaw) : null;
@@ -295,14 +313,6 @@ export async function POST(request: NextRequest) {
             // belt-and-braces so quotas can never 500 the chat endpoint).
             console.warn("[quota] pre-flight failed open", e);
         }
-
-        // Resolve the planner provider once, up front. The user may
-        // pick a different provider for the planner (e.g. Gemini for
-        // cheap planning, OpenRouter for the final answer). For now
-        // we keep the planner on the same provider as the responder
-        // unless explicitly overridden; future enhancements can
-        // surface the split in the UI without another schema bump.
-        const effectivePlannerProvider = (plannerProvider ?? provider) as Provider;
 
         // Gateway session id for OpenCode Zen/Go (`x-opencode-session`
         // header: routing + prompt caching). The client sends its chat
@@ -378,18 +388,10 @@ export async function POST(request: NextRequest) {
                 };
 
                 try {
-                    // 1. Initialize models. The responder is created lazily
-                    // in normal mode — conversational messages never need it.
-                    // In deep-research mode both models are needed, so init
-                    // them in parallel (independent getChatModel calls).
-                    //
-                    // The planner and responder are configured independently:
-                    // the user can pick a cheap fast model for intent analysis
-                    // + step decomposition (plannerModel/plannerProvider schema
-                    // fields) and a more capable model for the final answer.
-                    // When `plannerModel` is empty we fall back to the
-                    // provider's built-in cheap planner model inside
-                    // getPlannerModel, so the feature is fully opt-in.
+                    // 1. Initialize models. The planner and responder share
+                    // one model (managed env model, or the user's BYOK
+                    // model). In deep-research mode both are needed, so
+                    // init them in parallel (independent getChatModel calls).
                     let plannerModel;
                     // Pre-initialized responder for deep-research mode (parallel init below).
                     let deepResponderModel: Awaited<ReturnType<typeof getResponderModel>> | null = null;
@@ -397,18 +399,16 @@ export async function POST(request: NextRequest) {
                         if (deepResearchMode) {
                             [plannerModel, deepResponderModel] = await Promise.all([
                                 getPlannerModel(
-                                    effectivePlannerProvider,
-                                    apiKey,
-                                    plannerModelId || undefined,
+                                    mode,
+                                    byok,
                                     gatewaySessionId
                                 ),
-                                getResponderModel(provider as Provider, model, true, apiKey, gatewaySessionId),
+                                getResponderModel(mode, byok, true, gatewaySessionId),
                             ]);
                         } else {
                             plannerModel = await getPlannerModel(
-                                effectivePlannerProvider,
-                                apiKey,
-                                plannerModelId || undefined,
+                                mode,
+                                byok,
                                 gatewaySessionId
                             );
                         }
@@ -439,7 +439,7 @@ export async function POST(request: NextRequest) {
                         const msg = message;
                         metadataPromise = (async () => {
                             const { generateSessionMetadata } = await import("@/lib/utils/generate-session-metadata");
-                            return generateSessionMetadata(msg, provider, model, apiKey, gatewaySessionId);
+                            return generateSessionMetadata(msg, mode, byok, gatewaySessionId);
                         })();
                         // Fire-and-forget: emit as soon as ready (parallel
                         // with intent + planner + executor below). The final
@@ -468,12 +468,11 @@ export async function POST(request: NextRequest) {
 
                     // Track usage across every LLM call we make in this
                     // request (created once the responder model exists —
-                    // see below). Per the OpenRouter docs, usage is reported
-                    // automatically on the last chunk of every stream, so we
-                    // sum it up and emit a single `usage` SSE event at the
-                    // end. We capture BOTH the planner and the responder
-                    // model ids so the footer can show "planner → answer"
-                    // when the user picked different models for each role.
+                    // see below). Usage is reported automatically on the
+                    // last chunk of every stream, so we sum it up and emit
+                    // a single `usage` SSE event at the end. Planner and
+                    // responder share one model id; `plannerModel` is only
+                    // set when they differ (legacy messages).
                     let usage: UsageAccumulator | null = null;
 
                     /**
@@ -517,7 +516,7 @@ export async function POST(request: NextRequest) {
                             return;
                         }
                         usage = new UsageAccumulator(
-                            provider,
+                            mode,
                             getModelId(responderModel),
                             getModelId(plannerModel)
                         );
@@ -665,12 +664,29 @@ export async function POST(request: NextRequest) {
                             const intentAnalyzer = new IntentAnalyzer(plannerModel);
                             return intentAnalyzer.analyze(message, history);
                         })();
-                        const planPromise = decidePlan(
-                            plannerModel,
-                            message,
-                            effectiveWebSearch,
-                            deepResearchMode
-                        );
+                        const planPromise = (async () => {
+                            try {
+                                return await decidePlan(
+                                    plannerModel,
+                                    message,
+                                    effectiveWebSearch,
+                                    deepResearchMode
+                                );
+                            } catch (firstError) {
+                                // Retry once on gateway timeout/abort: the
+                                // plan call is side-effect-free and most
+                                // stalls clear within seconds. Anything else
+                                // propagates to the handler below.
+                                if (!isTimeoutAbort(firstError)) throw firstError;
+                                console.warn("[Planner] Attempt timed out/aborted, retrying once...");
+                                return decidePlan(
+                                    plannerModel,
+                                    message,
+                                    effectiveWebSearch,
+                                    deepResearchMode
+                                );
+                            }
+                        })();
 
                         // allSettled so one failure never cancels the other:
                         // an unavailable intent pass still yields a plan (with
@@ -820,7 +836,7 @@ export async function POST(request: NextRequest) {
                     // Responder is only needed for tool-backed questions.
                     let responderModel;
                     try {
-                        responderModel = await getResponderModel(provider as Provider, model, deepResearchMode, apiKey, gatewaySessionId);
+                        responderModel = await getResponderModel(mode, byok, deepResearchMode, gatewaySessionId);
                     } catch (error) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
@@ -831,7 +847,7 @@ export async function POST(request: NextRequest) {
                     }
 
                     usage = new UsageAccumulator(
-                        provider,
+                        mode,
                         getModelId(responderModel),
                         getModelId(plannerModel)
                     );
@@ -1086,7 +1102,7 @@ Please answer the user's question based on the F1 data provided above. Do not fo
                     // parallel at request start and likely already emitted
                     // mid-stream — rendezvous here so it isn't lost if the
                     // stream would otherwise close first. The client persists
-                    // it to Firestore.
+                    // it to the cloud session.
                     await flushMetadata();
 
                     safeClose();
@@ -1141,9 +1157,10 @@ export async function GET() {
                 description: "Send a chat message",
                 body: {
                     message: "string (required)",
-                    provider: "gemini | openrouter | huggingface | zen | go (default: gemini)",
-                    model: "string (default: gemini-2.0-flash)",
-                    reasoning: "boolean (default: false)",
+                    aiMode: "managed | byok (default: managed)",
+                    byokBaseUrl: "string (byok only)",
+                    byokModel: "string (byok only)",
+                    deepResearchMode: "boolean (default: false)",
                     web_search: "boolean (default: false)",
                 },
             },

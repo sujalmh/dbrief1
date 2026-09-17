@@ -96,12 +96,45 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
   (`getQuotaState` in quotas.ts); hidden entirely when cloud sync is off;
   refreshes after each completed turn. Tests:
   `__tests__/unit/usage-indicator.test.ts` (7 green).
+- [x] **Two-mode AI restored (managed Go/mimo-v2.5 + BYOK), 5-provider picker removed:**
+  reverted the e1168f2 provider sprawl to the 85228b3 two-mode design —
+  managed runs OpenCode Go `mimo-v2.5` (env-overridable) for planning and
+  answering over one OpenAI-compatible path; BYOK takes any endpoint + key
+  in an httpOnly cookie. Deleted `add-models-dialog` + `/api/models/
+  openrouter`; settings/control-panel show mode only. Quota tiers now key
+  off mode; managed usage prices at $0 (flat Go subscription, tokens still
+  ledgered). Full unit suite green (375).
+- [x] **Sign-in gate:** signed-out visitors land on a sign up/in page first
+  instead of the chat UI; the app requires a Google-linked identity
+  (`user?.google`).
+- [x] **Server-side sign-in enforcement (unpushed):** cookie possession
+  alone no longer grants API access — `/api/chat` and all mutating
+  `/api/cf/*` routes (sessions/messages/context writes) require a
+  Google-linked D1 identity (`requireLinkedIdentity`, 401 +
+  `auth_required`). Reads stay open (ownership-scoped, nothing to leak);
+  `/api/cf/me`, health, signout, and OAuth routes stay open (bootstrap).
+  Client reloads to the gate on `auth_required`. Fail-closed on D1 errors,
+  open only when storage is unconfigured (local dev). Live-verified both
+  directions; `route-auth.test.ts` (3 green).
+- [x] **Audit: restored features buried by later commits (e1168f2 et al):**
+  (1) TinyFish web search was swapped for DuckDuckGo Instant Answers
+  (which returns no real news results) — restored the TinyFish tool +
+  tests, pointed at the current canonical endpoint
+  `https://api.search.tinyfish.ai` (verified against live TinyFish docs;
+  override via `TINYFISH_BASE_URL`), search free on every plan;
+  (2) planner retry-once on gateway timeout/abort (`isTimeoutAbort` +
+  route wrapper + tests) was dropped — restored;
+  (3) live executing-step status line in the loading bubble was dropped —
+  restored alongside the season-aware highlight.
+  Deliberately NOT restored: `lib/config.ts` env system (inlined defaults;
+  MANAGED_LLM_* overrides kept), `reference-data` env overrides (data
+  inlined into intent-analyzer; override hooks gone), LLM-based session
+  titles / conversational planner replies (kept: quality over the removed
+  free heuristics). Full unit suite green (381).
 
-- [ ] **Firestore rules gap (pre-existing, blocks history writes if enforced):**
-  `main/firestore.rules` requires `userId` on message docs, but the client
-  never writes it (`addMessageToSession` sends `{role, content, ...}` only).
-  Either write `userId` on messages or relax the rule to check the parent
-  session's owner.
+- [x] **Firestore rules gap — closed as obsolete:** Firebase (including
+  `main/firestore.rules`) was fully removed in the Cloudflare migration;
+  ownership is now enforced per-query in D1 (`requireSession` scoping).
 - [ ] **Vitest can't run on Node 18:** vitest 4 requires Node 20+.
   Upgrade the runtime or pin vitest. Unit tests added for this work
   (`__tests__/unit/sources.test.ts`, rerank floor / `source_url` cases)

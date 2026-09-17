@@ -58,7 +58,7 @@ async function testRAGDirect() {
 
         try {
             // Test with sub-query generation
-            const plannerModel = await getPlannerModel("go");
+            const plannerModel = await getPlannerModel("managed");
             const result = await ragRetrieve(
                 {
                     query: testCase.query,
@@ -117,7 +117,7 @@ async function testPlannerIntegration() {
     console.log(`📝 User Query: "${regulationQuery}"\n`);
 
     try {
-        const plannerModel = await getPlannerModel("go");
+        const plannerModel = await getPlannerModel("managed");
         const plan = await planQuery(plannerModel, regulationQuery, false);
 
         console.log("✅ Plan Generated:");

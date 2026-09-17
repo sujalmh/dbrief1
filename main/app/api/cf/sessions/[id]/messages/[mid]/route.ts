@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cfIdentity, withUidCookie, cfError, cfLimited, cfOriginDenied, cfBodyTooLarge, bodyBytes, CF_MAX_BODY_BYTES, readJson } from "@/lib/cf/route-util";
+import { cfIdentity, withUidCookie, cfError, cfLimited, cfOriginDenied, cfBodyTooLarge, bodyBytes, CF_MAX_BODY_BYTES, requireLinkedIdentity, readJson } from "@/lib/cf/route-util";
 import { patchMessage, deleteMessage } from "@/lib/cf/store";
 
 export async function PATCH(
@@ -12,6 +12,8 @@ export async function PATCH(
         if (originDenied) return withUidCookie(originDenied, ctx);
         const limited = cfLimited(req, ctx.uid, "write");
         if (limited) return withUidCookie(limited, ctx);
+        const linked = await requireLinkedIdentity(ctx.uid);
+        if (linked) return withUidCookie(linked, ctx);
         if (cfBodyTooLarge(req)) {
             return withUidCookie(NextResponse.json({ error: "Payload too large" }, { status: 413 }), ctx);
         }
@@ -40,6 +42,8 @@ export async function DELETE(
         if (originDenied) return withUidCookie(originDenied, ctx);
         const limited = cfLimited(req, ctx.uid, "write");
         if (limited) return withUidCookie(limited, ctx);
+        const linked = await requireLinkedIdentity(ctx.uid);
+        if (linked) return withUidCookie(linked, ctx);
         const { id, mid } = await params;
         await deleteMessage(ctx.uid, id, mid);
         return withUidCookie(NextResponse.json({ ok: true }), ctx);

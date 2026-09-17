@@ -1,4 +1,4 @@
-import { getChatModel, chatContentToText, Provider } from "@/lib/llm";
+import { getChatModel, chatContentToText, type AiMode } from "@/lib/llm";
 
 export interface SessionMetadata {
     title: string;
@@ -7,18 +7,19 @@ export interface SessionMetadata {
 
 export async function generateSessionMetadata(
     userQuery: string,
-    provider: Provider = "gemini",
-    model: string = "gemini-2.0-flash",
-    apiKey?: string,
+    mode: AiMode = "managed",
+    byok?: { baseUrl?: string; model?: string; apiKey?: string },
     sessionId?: string
 ): Promise<SessionMetadata> {
     const llm = await getChatModel({
-        provider,
-        model,
+        mode,
+        byokBaseUrl: byok?.baseUrl,
+        byokModel: byok?.model,
+        byokApiKey: byok?.apiKey,
         temperature: 0.3,
         maxTokens: 512,
         sessionId,
-    }, apiKey);
+    });
 
     const prompt = `You are an AI assistant that categorizes F1 racing queries and generates concise titles.
 

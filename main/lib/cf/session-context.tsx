@@ -5,6 +5,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 export interface CfUser {
     uid: string;
     displayName: string;
+    google?: { email: string; name: string | null; avatarUrl: string | null } | null;
 }
 
 interface SessionContextType {
@@ -12,6 +13,8 @@ interface SessionContextType {
     loading: boolean;
     /** Cloud sync available (false when CF_API_TOKEN is missing server-side). */
     cloudReady: boolean;
+    /** Direct Google OAuth is configured on this deployment. */
+    googleLoginAvailable: boolean;
     signOut: () => Promise<void>;
     refresh: () => Promise<void>;
 }
@@ -22,6 +25,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<CfUser | null>(null);
     const [loading, setLoading] = useState(true);
     const [cloudReady, setCloudReady] = useState(true);
+    const [googleLoginAvailable, setGoogleLoginAvailable] = useState(false);
 
     const refresh = useCallback(async () => {
         try {
@@ -32,13 +36,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
                 setUser(null);
                 return;
             }
-            const data = (await res.json()) as { user?: CfUser };
+            const data = (await res.json()) as { user?: CfUser; googleLoginAvailable?: boolean };
             if (data.user) {
                 setUser(data.user);
                 setCloudReady(true);
             } else {
                 setUser(null);
             }
+            setGoogleLoginAvailable(data.googleLoginAvailable === true);
         } catch {
             setUser(null);
             setCloudReady(false);
@@ -62,7 +67,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }, [refresh]);
 
     return (
-        <SessionContext.Provider value={{ user, loading, cloudReady, signOut, refresh }}>
+        <SessionContext.Provider value={{ user, loading, cloudReady, googleLoginAvailable, signOut, refresh }}>
             {children}
         </SessionContext.Provider>
     );

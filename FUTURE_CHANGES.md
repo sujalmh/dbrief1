@@ -22,8 +22,7 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
 
 ## Pending / Known Gaps
 
-- [x] **Persist full tool-call trace with the assistant message (implemented,
-  unpushed):** every `Message` is now saved fully — steps + args + status /
+- [x] **Persist full tool-call trace with the assistant message:** every `Message` is now saved fully — steps + args + status /
   error, full `visualizationData`, deep-mode iterations (with task args) /
   evidence (+ `data` when small) / reflections / confidence / chartSpecs,
   citations, usage, degraded warnings, reasoning — via
@@ -55,7 +54,7 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
   on every query. NOTE: redeploy (push to main) for the new env vars to
    take effect; Preview envs still need the 4 vars via dashboard (Vercel CLI
    quirk) or those deploys run local-only by design.
-- [x] **Free-tier quotas live (unpushed):** dual-ledger enforcement
+- [x] **Free-tier quotas live:** dual-ledger enforcement
   (account `cf_uid` + salted IP hash, both must pass; IP ceilings ≈ 2× at
   40 queries/6 deep/6 sims per day) in `main/lib/cf/quotas.ts` + D1 tables
   `quota_daily/quota_ip_daily/global_spend_daily/managed_keys` (+ `users`
@@ -72,7 +71,24 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
   migration + quotas + indicator + sim fixes; `.vercelignore` added to keep
   uploads small); prod `/api/cf/health` → `ok:true d1:true r2:true`.
   Tightened caps: free 20 chats/3 sims, IP 2× (40/6), BYOK 100/10/20.
-- [x] **Sidebar usage indicator (unpushed):** subtle status dot on the
+- [x] **Direct Google OAuth, no Firebase:** optional "Sign in
+  with Google" in the sidebar footer (hidden until configured; app stays
+  passwordless-first). Plain OAuth 2.0 code flow in `main/lib/auth/
+  google.ts` — single-use state cookie + nonce, server-side code exchange,
+  RS256 ID-token verification against Google JWKS (iss/aud/exp/nonce/
+  verified-email), zero new npm deps. Callback links the anonymous
+  identity to a deterministic `g_<sub>` D1 user and migrates its sessions
+  (never merges two linked accounts; quota ledgers stay behind by design).
+  D1 `users` gains `google_sub/email/avatar_url` (+ unique index).
+  `/api/cf/me` exposes link state; failures surface via the existing error
+  modal (`/?auth=error`). Tests: `__tests__/unit/google-auth.test.ts`
+  (10 green, incl. tampered-payload/wrong-aud/expired/nonce rejection and
+  mocked-D1 link/migrate).
+  Done 2026-09-17: Vercel vars set (prod+dev, sensitive),
+  redeployed, `/api/auth/google` lands on Google's real account chooser
+  (correct client_id/redirect URI/scopes — no mismatch errors), callback
+  rejects bad state to `/?auth=error`.
+- [x] **Sidebar usage indicator:** subtle status dot on the
   profile avatar (green→amber→red by worst utilization); hover reveals a
   compact card — Chats / Deep / Sims / Tokens-out used-vs-cap, shared-
   network note only when the IP ledger binds, tier label, UTC reset

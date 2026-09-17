@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cfIdentity, withUidCookie, cfError, cfLimited } from "@/lib/cf/route-util";
 import { checkProvisionVelocity } from "@/lib/cf/quotas";
+import { getUserProfile } from "@/lib/cf/store";
+import { googleOAuthConfigured } from "@/lib/auth/google";
 
 export async function GET(req: NextRequest) {
     try {
@@ -19,7 +21,18 @@ export async function GET(req: NextRequest) {
                 );
             }
         }
-        return withUidCookie(NextResponse.json({ user: { uid: ctx.uid, displayName: ctx.displayName } }), ctx);
+        const profile = await getUserProfile(ctx.uid).catch(() => null);
+        return withUidCookie(
+            NextResponse.json({
+                user: {
+                    uid: ctx.uid,
+                    displayName: profile?.displayName ?? ctx.displayName,
+                    google: profile?.google ?? null,
+                },
+                googleLoginAvailable: googleOAuthConfigured(),
+            }),
+            ctx
+        );
     } catch (e) {
         return cfError(e);
     }

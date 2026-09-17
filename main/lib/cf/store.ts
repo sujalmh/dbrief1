@@ -113,6 +113,72 @@ export async function ensureUser(
     return { uid: userId, displayName: rows[0]?.display_name || "Driver" };
 }
 
+export interface UserProfile {
+    uid: string;
+    displayName: string;
+    google: { email: string; name: string | null; avatarUrl: string | null } | null;
+}
+
+/** Full identity profile for /api/cf/me (auth badge + sign-in state). */
+export async function getUserProfile(userId: string): Promise<UserProfile> {
+    const rows = await d1Query<{
+        display_name: string;
+        google_sub: string | null;
+        email: string | null;
+        avatar_url: string | null;
+    }>(`SELECT display_name, google_sub, email, avatar_url FROM users WHERE id = ?`, [userId]);
+    const r = rows[0];
+    return {
+        uid: userId,
+        displayName: r?.display_name || "Driver",
+        google:
+            r?.google_sub && r.email
+                ? { email: r.email, name: r.display_name || null, avatarUrl: r.avatar_url }
+                : null,
+    };
+}
+
+export interface GoogleLinkProfile {
+    sub: string;
+    email: string;
+    name?: string;
+    avatarUrl?: string;
+}
+
+/**
+ * Link the browser's (possibly anonymous) identity to a Google account.
+ * The Google-linked UID is deterministic (`g_<sub>`) so re-login restores
+ * the same identity on any device. Anonymous history migrates ONLY when
+ * the previous row has no Google link of its own (never merge two linked
+ * accounts on a shared device). Quota ledgers intentionally stay behind
+ * (abuse history must not reset on login).
+ */
+export async function linkGoogleAccount(prevUid: string | null, profile: GoogleLinkProfile): Promise<string> {
+    const now = Date.now();
+    const day = new Date(now).toISOString().slice(0, 10);
+    const uid = `g_${profile.sub}`.slice(0, 128);
+    const displayName = (profile.name || profile.email.split("@")[0] || "Driver").slice(0, 200);
+    await d1Exec(
+        `INSERT INTO users (id, display_name, created_at, last_seen_at, created_day, google_sub, email, avatar_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           last_seen_at = excluded.last_seen_at,
+           display_name = excluded.display_name,
+           email = excluded.email,
+           avatar_url = excluded.avatar_url`,
+        [uid, displayName, now, now, day, profile.sub, profile.email.slice(0, 320), (profile.avatarUrl || "").slice(0, 2048)]
+    );
+    if (prevUid && prevUid !== uid) {
+        const prev = await d1Query<{ google_sub: string | null }>(`SELECT google_sub FROM users WHERE id = ?`, [prevUid]);
+        if (prev.length > 0 && !prev[0]?.google_sub) {
+            await d1Exec(`UPDATE sessions SET user_id = ? WHERE user_id = ?`, [uid, prevUid]);
+            await d1Exec(`UPDATE messages SET user_id = ? WHERE user_id = ?`, [uid, prevUid]);
+            await d1Exec(`DELETE FROM users WHERE id = ?`, [prevUid]);
+        }
+    }
+    return uid;
+}
+
 // ---------------------------------------------------------------------------
 // Sessions
 // ---------------------------------------------------------------------------

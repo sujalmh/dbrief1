@@ -2,16 +2,20 @@
  * F1 Color Tokens
  * ===============
  *
- * Single source of truth for every F1-themed color used in charts. Mirrors
- * `lib/f1-colors.ts` (driver/team colors) but is re-exported here as a
- * generic palette so chart components don't have to import team metadata.
+ * Chart-facing palette. Driver/team colors live in `lib/f1-colors.ts`
+ * (single source of truth, learned from live API data) and are
+ * re-exported here so chart components keep one import.
  *
  * Palette:
  *   - `F1_PALETTE` is the curated high-contrast comparison palette
- *   - `TEAM_COLORS` is the team color lookup
+ *   - `TEAM_COLORS` is the team color lookup (re-export)
  *   - `DRIVER_COLOR` is the convenience "color for a driver code" helper
  *   - `CHART_TOKENS` is the bag of color tokens used by chart wrappers
  */
+
+import { TEAM_COLORS, getDriverColor } from "@/lib/f1-colors";
+
+export { TEAM_COLORS };
 
 export const F1_PALETTE = [
     "#F2059F", // Pink (high contrast)
@@ -25,23 +29,6 @@ export const F1_PALETTE = [
     "#B6BABD", // Grey
     "#006F62", // Dark Green
 ];
-
-export const TEAM_COLORS: Record<string, string> = {
-    "Red Bull Racing": "#3671C6",
-    Mercedes: "#00D2BE",
-    Ferrari: "#E8002D",
-    McLaren: "#FF8700",
-    "Aston Martin": "#229971",
-    Alpine: "#0090FF",
-    Williams: "#64C4FF",
-    RB: "#6692FF",
-    Haas: "#B6BABD",
-    "Kick Sauber": "#52E252",
-    Renault: "#FFF500",
-    "Racing Point": "#F596C8",
-    AlphaTauri: "#2B4562",
-    "Alfa Romeo": "#900000",
-};
 
 export const CHART_TOKENS = {
     grid: "var(--border)",
@@ -62,26 +49,13 @@ export const CHART_TOKENS = {
 
 /**
  * Returns the color associated with a driver code (3-letter) or full name,
- * falling back to the F1 palette. Case-insensitive.
+ * falling back to the F1 palette. Case-insensitive. Learned live colors
+ * (see lib/f1-colors.ts) win; unknown drivers cycle the palette so chart
+ * series stay distinguishable.
  */
 export function colorForDriver(input: string | undefined, fallbackIndex = 0): string {
     if (!input) return F1_PALETTE[fallbackIndex % F1_PALETTE.length];
-    // Driver -> team lookup is intentionally duplicated here (small file)
-    // so chart code doesn't depend on the broader driver registry.
-    const lookup: Record<string, string> = {
-        VER: "Red Bull Racing", PER: "Red Bull Racing",
-        HAM: "Mercedes", RUS: "Mercedes",
-        LEC: "Ferrari", SAI: "Ferrari",
-        NOR: "McLaren", PIA: "McLaren",
-        ALO: "Aston Martin", STR: "Aston Martin",
-        GAS: "Alpine", OCO: "Alpine",
-        ALB: "Williams", SAR: "Williams",
-        TSU: "RB", RIC: "RB",
-        MAG: "Haas", HUL: "Haas",
-        BOT: "Kick Sauber", ZHO: "Kick Sauber",
-    };
-    const upper = input.toUpperCase();
-    const team = lookup[upper];
-    if (team && TEAM_COLORS[team]) return TEAM_COLORS[team];
+    const learned = getDriverColor(input);
+    if (learned !== "#FFFFFF") return learned;
     return F1_PALETTE[fallbackIndex % F1_PALETTE.length];
 }

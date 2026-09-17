@@ -22,23 +22,64 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
 
 ## Pending / Known Gaps
 
-- [ ] **Persist tool-call trace with the assistant message (design agreed,
-  not implemented):** tool calls/results currently live only in browser
-  IndexedDB (`messages[].steps`, `messages[].visualizationData`) and request
-  memory — Firestore keeps `{role, content}` + citations only, so production
-  misbehavior (e.g. the Sept 2026 "who won yesterday's race" wrong answer)
-  is undebuggable after Vercel logs age out, and cross-device history loses
-  steps/charts/evidence/usage. Plan: extend the message doc with a bounded
-  `trace` object — `steps[]` (`description, tool, args, status, error`),
-  `summary` (`successCount, failureCount, totalDurationMs` — already computed
-  in `ExecutionContext`, currently discarded), `usage`, and for deep mode
-  evidence summaries + provenance (no full `data`). Cap trace at ~50–100KB
-  per message (truncate long strings/arrays, drop oversized `data` payloads;
-  telemetry dumps can be MBs and Firestore caps docs at 1MB). Touch points:
-  `use-chat-handler` (save), `sidebar` (load mapping — it currently drops
-  everything but `id/role/content/timestamp`), `firestore.ts` (type +
-  sanitizer, next to `sanitizeCitations`), old messages without `trace` must
-  keep rendering (all fields already optional in the UI).
+- [x] **Persist full tool-call trace with the assistant message (implemented,
+  unpushed):** every `Message` is now saved fully — steps + args + status /
+  error, full `visualizationData`, deep-mode iterations (with task args) /
+  evidence (+ `data` when small) / reflections / confidence / chartSpecs,
+  citations, usage, degraded warnings, reasoning — via
+  `main/lib/cf/serialization.ts` (pure build/parse/truncate) +
+  `main/lib/cf/store.ts` (D1 inline + R2 overflow for >200KB fields,
+  truncation fallback, stable `m_*` IDs). Session-level UI
+  (`visualizationData`, `graphHistory`, `activeMessageId`) persists to the
+  session row context (R2 offload when large). Reload (`sidebar
+  handleSelectSession`) hydrates blobs and restores panel/graphs/active
+  message. Message edits (`PATCH`) and deletes (`DELETE`, incl. retry,
+  per-message trash, Clear Telemetry, session delete with blob cleanup)
+  all sync to the cloud. Tests: `__tests__/unit/session-serialization.test.ts`.
+- [x] **Firebase removed, Cloudflare storage live (verified end-to-end):**
+  D1 `f1-sessions` (`c5acda92…`, tables `users/sessions/messages/blobs`)
+  + R2 bucket `f1-ai` provisioned via MCP. Next.js talks to D1/R2 REST
+  through `/api/cf/*` routes (`health/me/signout/sessions/.../messages/
+/context`); browser keeps only the `cf_uid` cookie (server-issued,
+  auto-provisioned — Google login UI deleted). Chat route uses the cookie
+  instead of `firebaseToken`. `lib/firebase/*`, `firebase.json`,
+  `firestore.*`, `storage.rules`, `login-page/modal`, `firebase*` npm deps
+  all removed. Live-verified with `CF_API_TOKEN` set: health `ok:true`
+  (d1+r2), 14-step CRUD round-trip green (session/message/context/edit/
+  delete), 446KB telemetry offloaded to R2 + hydrated to 15000 points,
+  session delete cascades to D1 rows + R2 objects (D1 `0/0/0`, R2 404s).
+  Vercel: `CF_API_TOKEN` (+ IDs) set Encrypted for Production + Development;
+  stale `NEXT_PUBLIC_FIREBASE_*` removed. Hardened: `Secure` cookies in
+  prod, per-caller rate limits on `/api/cf/*` (180 writes/600 reads per
+  min), 12MB body caps (413), LIKE-escaped blob cleanup, ownership checks
+  on every query. NOTE: redeploy (push to main) for the new env vars to
+   take effect; Preview envs still need the 4 vars via dashboard (Vercel CLI
+   quirk) or those deploys run local-only by design.
+- [x] **Free-tier quotas live (unpushed):** dual-ledger enforcement
+  (account `cf_uid` + salted IP hash, both must pass; IP ceilings ≈ 2× at
+  40 queries/6 deep/6 sims per day) in `main/lib/cf/quotas.ts` + D1 tables
+  `quota_daily/quota_ip_daily/global_spend_daily/managed_keys` (+ `users`
+  gains `ip_hash/created_day/tier`). Pre-flight 429s with BYOK-hint copy;
+  post-stream dual accounting (tokens + OpenRouter cost or price-table
+  estimate); $5/day global managed breaker; sim iteration clamps per tier
+  (2000/5000) + sim metering from executed tool results; 10-provisions/
+  IP/day anti-farming in `/api/cf/me`. Fail-open on D1 errors,
+  `QUOTAS_ENABLED=false` kill-switch, `ADMIN_UIDS` bypass. Live-verified
+  deny + allow paths. `IP_HASH_SALT`/`QUOTAS_ENABLED` set on Vercel
+  (prod+dev) and `.env.local`; full reference in `env.example`. Tests:
+  `__tests__/unit/quotas.test.ts` (14 green). Deployed to production
+  2026-09-17 via `vercel deploy --prod` (all working-tree changes incl. CF
+  migration + quotas + indicator + sim fixes; `.vercelignore` added to keep
+  uploads small); prod `/api/cf/health` → `ok:true d1:true r2:true`.
+  Tightened caps: free 20 chats/3 sims, IP 2× (40/6), BYOK 100/10/20.
+- [x] **Sidebar usage indicator (unpushed):** subtle status dot on the
+  profile avatar (green→amber→red by worst utilization); hover reveals a
+  compact card — Chats / Deep / Sims / Tokens-out used-vs-cap, shared-
+  network note only when the IP ledger binds, tier label, UTC reset
+  countdown, managed-pause notice. Data from new `GET /api/cf/quota`
+  (`getQuotaState` in quotas.ts); hidden entirely when cloud sync is off;
+  refreshes after each completed turn. Tests:
+  `__tests__/unit/usage-indicator.test.ts` (7 green).
 
 - [ ] **Firestore rules gap (pre-existing, blocks history writes if enforced):**
   `main/firestore.rules` requires `userId` on message docs, but the client

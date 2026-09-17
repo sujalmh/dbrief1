@@ -2,24 +2,26 @@
 
 import * as React from "react"
 import { useChatStore, type Message, type ResearchIteration } from "@/lib/store"
-import { useAuth } from "@/lib/firebase/auth-context"
-import { createSession } from "@/lib/firebase/firestore"
+import { useSession } from "@/lib/cf/session-context"
+import { createSession, saveMessage, saveContext, patchSessionMeta } from "@/lib/cf/client"
 import { sanitizeCitations } from "@/lib/utils"
 
 /** Minimal shape of SSE payload steps/tasks — fields are unknown until validated. */
 interface SsePlanStep {
     description?: unknown;
     tool?: unknown;
+    args?: unknown;
 }
 interface SseTask {
     id: string;
     description: string;
     tool: string;
+    args?: unknown;
 }
 
 export function useChatHandler() {
     const store = useChatStore()
-    const { user } = useAuth()
+    const { user } = useSession()
     const abortControllerRef = React.useRef<AbortController | null>(null)
 
     React.useEffect(() => {
@@ -56,22 +58,34 @@ export function useChatHandler() {
         const userMsgId = state.nextMessageId()
         let effectiveSessionId = useChatStore.getState().currentSessionId
 
-        // 1. Create session if it doesn't exist and user is logged in
-        if (!effectiveSessionId && user) {
+        // 1. Create session if it doesn't exist (Cloudflare D1; falls
+        // back to a local-only session when cloud sync is unavailable).
+        if (!effectiveSessionId) {
+            const title = messageText.slice(0, 30) + "...";
             try {
-                effectiveSessionId = await createSession(user.uid, messageText.slice(0, 30) + "...")
+                effectiveSessionId = await createSession(title)
                 state.setCurrentSessionId(effectiveSessionId)
                 // Add to sessions list
                 state.setSessions([{
                     id: effectiveSessionId,
-                    userId: user.uid,
-                    title: messageText.slice(0, 30) + "...",
-                    createdAt: new Date(),
-                    lastMessageAt: new Date(),
+                    userId: user?.uid,
+                    title,
+                    createdAt: Date.now(),
+                    lastMessageAt: Date.now(),
                     context: {}
                 }, ...state.sessions])
             } catch (err) {
                 console.error("Failed to create session:", err)
+                effectiveSessionId = `local_${Date.now()}`;
+                state.setCurrentSessionId(effectiveSessionId)
+                state.setSessions([{
+                    id: effectiveSessionId,
+                    userId: user?.uid,
+                    title,
+                    createdAt: Date.now(),
+                    lastMessageAt: Date.now(),
+                    context: {}
+                }, ...state.sessions])
             }
         }
 
@@ -83,17 +97,18 @@ export function useChatHandler() {
                 timestamp: Date.now()
             })
 
-            // Persist User Message to Firestore
-            // (messages are scoped to the session subcollection, which
-            // carries the userId — no per-message userId needed).
-            if (effectiveSessionId && user) {
+            // Persist User Message to Cloudflare (D1 + R2 overflow).
+            // Local-only sessions (local_*) skip cloud saves quietly.
+            if (effectiveSessionId && !effectiveSessionId.startsWith("local_")) {
                 // Don't await this to keep UI snappy
-                import("@/lib/firebase/firestore").then(({ addMessageToSession }) => {
-                    addMessageToSession(effectiveSessionId!, {
-                        role: "user",
-                        content: messageText,
-                    }).catch(err => console.error("Error saving user message:", err));
-                });
+                const userMsg: Message = {
+                    id: userMsgId,
+                    role: "user",
+                    content: messageText,
+                    timestamp: Date.now(),
+                };
+                const sid = effectiveSessionId;
+                saveMessage(sid, userMsg);
             }
         }
 
@@ -140,7 +155,11 @@ export function useChatHandler() {
                     // `state.settings.plannerProvider` on the
                     // store — the route already accepts the field.
                     plannerProvider: undefined,
-                    apiKey: state.settings.apiKey,
+                    // H5: never send a stored key. Auth uses server env
+                    // keys + the httpOnly `api_key` cookie; the in-memory
+                    // settings.apiKey override is intentionally not wired
+                    // to avoid persisting/transmitting keys from storage.
+                    apiKey: undefined,
                     deepResearchMode: state.settings.deepResearchMode,
                     web_search: state.settings.webSearchEnabled,
                     sessionId: effectiveSessionId,
@@ -170,21 +189,44 @@ export function useChatHandler() {
             let done = false
 
             // Function to save assistant message on completion.
-            // Citations ride along (sanitized) so Sources survive reloads —
-            // the `citations` SSE event always precedes stream end, so the
-            // store already holds them here.
+            // Saves the FULL message (steps + args, visualizationData,
+            // evidence/iterations/reflections/confidence/chartSpecs, usage,
+            // degraded warnings, reasoning) so reopening the session
+            // resumes exactly where the user left off. Large payloads are
+            // offloaded to Storage by session-io; reload hydrates them.
             const saveAssistantMessage = () => {
-                if (effectiveSessionId && user && assistantContent) {
-                    const citations = sanitizeCitations(
-                        useChatStore.getState().messages.find((m) => m.id === assistantMsgId)?.citations
+                if (effectiveSessionId && !effectiveSessionId.startsWith("local_") && assistantContent) {
+                    const storeMsg = useChatStore.getState().messages.find((m) => m.id === assistantMsgId);
+                    const fullMsg: Message = {
+                        id: assistantMsgId,
+                        role: "assistant",
+                        content: assistantContent,
+                        timestamp: storeMsg?.timestamp ?? Date.now(),
+                        ...(storeMsg?.reasoning ? { reasoning: storeMsg.reasoning } : {}),
+                        ...(storeMsg?.isError !== undefined ? { isError: storeMsg.isError } : {}),
+                        ...(storeMsg?.steps ? { steps: storeMsg.steps } : {}),
+                        ...(storeMsg?.citations ? { citations: storeMsg.citations } : {}),
+                        ...(storeMsg?.visualizationData !== undefined && storeMsg.visualizationData !== null
+                            ? { visualizationData: storeMsg.visualizationData }
+                            : {}),
+                        ...(storeMsg?.degradedWarnings ? { degradedWarnings: storeMsg.degradedWarnings } : {}),
+                        ...(storeMsg?.usage ? { usage: storeMsg.usage } : {}),
+                        ...(storeMsg?.researchType ? { researchType: storeMsg.researchType } : {}),
+                        ...(storeMsg?.iterations ? { iterations: storeMsg.iterations } : {}),
+                        ...(storeMsg?.evidence ? { evidence: storeMsg.evidence } : {}),
+                        ...(storeMsg?.confidence ? { confidence: storeMsg.confidence } : {}),
+                        ...(storeMsg?.reflections ? { reflections: storeMsg.reflections } : {}),
+                        ...(storeMsg?.chartSpecs ? { chartSpecs: storeMsg.chartSpecs } : {}),
+                    };
+                    const sid = effectiveSessionId;
+                    const s = useChatStore.getState();
+                    saveMessage(sid, fullMsg).then(() =>
+                        saveContext(sid, {
+                            visualizationData: s.visualizationData ?? undefined,
+                            graphHistory: s.graphHistory,
+                            activeMessageId: s.activeMessageId,
+                        })
                     );
-                    import("@/lib/firebase/firestore").then(({ addMessageToSession }) => {
-                        addMessageToSession(effectiveSessionId!, {
-                            role: "assistant",
-                            content: assistantContent,
-                            ...(citations.length > 0 ? { citations } : {}),
-                        }).catch(err => console.error("Error saving assistant message:", err));
-                    });
                 }
             };
 
@@ -239,7 +281,10 @@ export function useChatHandler() {
                                         currentSteps = data.steps.map((s: SsePlanStep) => ({
                                             description: typeof s.description === "string" && s.description ? s.description : `Execute ${typeof s.tool === "string" ? s.tool : "tool"}`,
                                             tool: typeof s.tool === "string" ? s.tool : "",
-                                            status: "pending" as const
+                                            status: "pending" as const,
+                                            ...(s.args && typeof s.args === "object" && s.args !== null
+                                                ? { args: s.args as Record<string, unknown> }
+                                                : {}),
                                         }))
                                         useChatStore.getState().updateMessageSteps(assistantMsgId, currentSteps)
                                         break
@@ -249,7 +294,10 @@ export function useChatHandler() {
                                             const updatedStep = {
                                                 ...currentSteps[stepIndex],
                                                 status: data.status,
-                                                result: data.additional
+                                                result: data.additional,
+                                                ...(data.status === "failed" && typeof data.additional === "string" && data.additional
+                                                    ? { error: data.additional.slice(0, 2000) }
+                                                    : {}),
                                             }
                                             currentSteps[stepIndex] = updatedStep
 
@@ -287,6 +335,16 @@ export function useChatHandler() {
                                     case "visualization":
                                         useChatStore.getState().setVisualizationData(data.data)
                                         useChatStore.getState().updateMessageVisualization(assistantMsgId, data.data)
+                                        // Learn driver→team→color mappings from the live
+                                        // payload (results rows carry TeamName/TeamColor
+                                        // from FastF1) so highlights and charts stay
+                                        // correct across seasons without code changes.
+                                        try {
+                                            const { learnColorsFromPayload } = await import("@/lib/f1-colors");
+                                            learnColorsFromPayload(data.data);
+                                        } catch {
+                                            // Best-effort: colors fall back to the static grid.
+                                        }
                                         // Make the new message the active one so the
                                         // visualization panel reflects the latest reply.
                                         useChatStore.getState().setActiveMessageId(assistantMsgId)
@@ -302,12 +360,9 @@ export function useChatHandler() {
                                             )
                                             useChatStore.getState().setSessions(updatedSessions)
 
-                                            // Persist metadata to Firestore (Client SDK)
-                                            if (user) {
-                                                import("@/lib/firebase/firestore").then(({ updateSessionMetadata }) => {
-                                                    updateSessionMetadata(effectiveSessionId!, data.title, data.type)
-                                                        .catch(err => console.error("Error updating session metadata:", err));
-                                                });
+                                            // Persist metadata to Cloudflare D1 (skipped for local-only sessions).
+                                            if (!effectiveSessionId.startsWith("local_")) {
+                                                patchSessionMeta(effectiveSessionId!, data.title, data.type);
                                             }
                                         }
                                         break
@@ -376,6 +431,9 @@ export function useChatHandler() {
                                                 description: t.description,
                                                 tool: t.tool,
                                                 status: "pending" as const,
+                                                ...(t.args && typeof t.args === "object" && t.args !== null
+                                                    ? { args: t.args as Record<string, unknown> }
+                                                    : {}),
                                             })),
                                             reasoning: data.reasoning,
                                         })

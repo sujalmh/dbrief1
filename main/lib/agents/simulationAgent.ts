@@ -454,27 +454,35 @@ export function runSimulation(request: SimulationRequest): SimulationOutput {
 // =============================================================================
 //
 // A lightweight, physics-informed tire strategy simulator. Returns lap-by-lap
-// times for a multi-stint race given a tyre compound sequence. Replaces the
-// earlier quadratic-deg model with one that:
+// times for a multi-stint race given a tyre compound sequence. The model is
+// deliberately simple but calibrated to measured F1 behavior:
 //
-//   - caps per-lap degradation at a compound-specific ceiling
-//   - rewards fresh tyres at the start of each stint
-//   - includes a configurable pit-stop time penalty per stop
-//   - accounts for fuel burn (cars get faster as fuel loads drop)
+//   - LINEAR degradation per lap of tyre age (peer-reviewed FastF1 studies
+//     measure ~0.05-0.10 s/lap for hard/medium compounds, mediums roughly
+//     1.5x hards; softs wear fastest). An earlier quadratic-in-age model
+//     overstated mid-stint loss ~10x (e.g. +8 s/lap by lap 15 on mediums)
+//     and even inverted the compound pace order beyond ~5-lap stints, so it
+//     was replaced: stint 1 pays no deg (fresh-tyre flyer), then +rate/lap.
+//   - Fresh-tyre pace offsets per compound (medium↔soft ~0.4-0.5 s at equal
+//     fuel, hard ~0.3 s off medium — in line with Pirelli delta guidance).
+//   - Fuel burn (cars get faster as fuel loads drop, ~0.035 s/lap).
+//   - A configurable pit-stop time penalty per stop (default 22 s total
+//     pit-lane loss: ~2.5 s stationary + transit; observed band 19-25 s
+//     across Monaco/France/Monza/Saudi/Silverstone timing data).
 //
 // All inputs are validated; invalid inputs return null so the caller can
 // surface a useful error message instead of getting NaN lap times.
 
 const COMPOUND_DEG_PER_LAP: Record<string, number> = {
-    SOFT: 0.06,        // ~0.06 s/lap^2 cap, fastest but gravest
-    MEDIUM: 0.04,      // balanced
-    HARD: 0.025,       // slowest deg, longest stints
-    INTERMEDIATE: 0.05,// wet but drying
-    WET: 0.045,        // full wet
+    SOFT: 0.10,        // fastest qualifier, wears fastest
+    MEDIUM: 0.07,      // balanced workhorse
+    HARD: 0.05,        // slowest deg, longest stints
+    INTERMEDIATE: 0.09,// wet but drying
+    WET: 0.08,         // full wet
 };
 
 const COMPOUND_BASE_PACE: Record<string, number> = {
-    SOFT: -0.4,        // ~0.4s faster than MEDIUM on a fresh set
+    SOFT: -0.45,       // ~0.45s faster than MEDIUM on a fresh set
     MEDIUM: 0.0,
     HARD: 0.3,         // ~0.3s slower than MEDIUM on a fresh set
     INTERMEDIATE: 3.0, // significantly slower in dry conditions
@@ -482,7 +490,6 @@ const COMPOUND_BASE_PACE: Record<string, number> = {
 };
 
 const FUEL_BURN_S_PER_LAP = 0.035; // ~0.035s/lap regained as fuel burns off
-const MAX_DEG_PER_STINT = 8.0;      // cap quadratic degradation at 8s/lap
 
 export interface TireStrategyStint {
     compound: string;
@@ -497,7 +504,10 @@ export interface TireStrategyInput {
     stints: TireStrategyStint[];
     /** Base lap time at full fuel on a fresh MEDIUM, in seconds. Default 90. */
     baseLapTime?: number;
-    /** Pit-stop time loss in seconds. Default 22.0 (typical F1 stationary). */
+    /**
+     * Total pit-lane time loss in seconds (stationary ~2.5s + transit).
+     * Default 22.0 (observed band 19-25s across circuits).
+     */
     pitStopSeconds?: number;
     /** Optional seed for deterministic output. */
     seed?: number;
@@ -588,12 +598,11 @@ export function simulateTireStrategy(
 
         for (let i = 0; i < stint.laps; i++) {
             const tyreAge = i + 1;
-            // Quadratic-in-age degradation, capped at MAX_DEG_PER_STINT
-            // so even a long SOFT stint can't produce an absurdly slow
-            // lap. Without the cap, deg * (n-1)^2 on a 30-lap SOFT
-            // stint adds ~50s to the last lap.
-            const rawDeg = deg * i * i;
-            const degradation = Math.min(rawDeg, MAX_DEG_PER_STINT);
+            // Linear-in-age degradation: the first flying lap on a fresh
+            // set pays nothing, then +rate for each additional lap of age.
+            // Linear (not quadratic) because measured F1 degradation is
+            // ~0.05-0.10 s/lap, roughly constant through a stint.
+            const degradation = deg * i;
             // Fuel effect: every lap is slightly faster as the car burns fuel.
             const fuelEffect = -(currentLap - 1) * FUEL_BURN_S_PER_LAP;
             // Light stochastic noise (±0.15s) so runs aren't perfectly identical.

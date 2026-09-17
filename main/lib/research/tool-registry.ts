@@ -196,7 +196,7 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
         description: "Run Monte Carlo simulation for what-if / counterfactual / predictive analysis. To ground simulations in real data, first fetch historical data (get_laps, get_race, etc.) and pass it via reference_data with reference_field naming the numeric field to derive base/variance from. Examples: 'What if Verstappen retired in 3 races?', 'What if Abu Dhabi 2021 didn't end under safety car?'",
         category: "simulation",
         outputType: "simulation",
-        outputShape: "{ scenario_id, summary, key_metrics: {mean, min, max, std_dev, p50_median, p95}, visualization, statistics, raw_values, parameters_used: {base_value, variance, derived_from_reference_data, reference_field} }",
+            outputShape: "{ scenario_id, summary, key_metrics: {mean, min, max, std_dev, p50_median, p95}, visualization, statistics, raw_values, parameters_used: {base_value, variance, derived_from_reference_data, grounding: explicit|derived|defaults|defaults-despite-reference, reference_field, warning?} }",
         requires: [],
         provides: ["simulation"],
         deepResearchOnly: true,

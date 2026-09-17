@@ -1,0 +1,22 @@
+# Vercel CLI deploys: keep uploads small — remote builder reinstalls deps.
+node_modules
+main/node_modules
+main/.next
+**/.next
+main/out
+main/build
+main/coverage
+*.log
+main/*.log
+__pycache__
+**/__pycache__
+.pytest_cache/
+main/.e2e-logs/
+.git/
+.kilo/
+cache/
+temp_pdfs/
+.venv/
+venv/
+*.tsbuildinfo
+main/next-env.d.ts

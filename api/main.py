@@ -14,6 +14,7 @@ Features:
 
 import asyncio
 import os
+import time
 import logging
 from collections import OrderedDict
 from typing import Optional
@@ -21,11 +22,13 @@ from typing import Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+import secrets
+
 import fastf1
 from fastf1.ergast import Ergast
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -113,13 +116,85 @@ MAX_TELEMETRY_POINTS = 5000  # Hard cap on telemetry data points
 # App Configuration
 # =============================================================================
 
+_IS_PRODUCTION = os.getenv("ENV", "development").lower() == "production"
+
 app = FastAPI(
     title="Fast-F1 API",
     description="HTTP API exposing Fast-F1 library functionality",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    # Hide interactive docs in production (info disclosure + attack surface).
+    docs_url=None if _IS_PRODUCTION else "/docs",
+    redoc_url=None if _IS_PRODUCTION else "/redoc",
 )
+
+# =============================================================================
+# API-key auth + rate limiting (cost / DoS protection)
+# =============================================================================
+# Set F1_API_KEY in production and configure the Next.js backend with the same
+# value (F1_API_KEY env). When unset, requests are allowed (dev) with a warning.
+_F1_API_KEY = os.getenv("F1_API_KEY", "")
+
+# Simple in-process sliding-window limiter per client IP. Suitable for the
+# single-worker Cloud Run deployment (workers=1); use a shared store if you
+# ever scale beyond one instance.
+_RATE_WINDOW_S = 60
+_RATE_MAX_REQUESTS = 120
+_rate_buckets: dict[str, list[float]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()[:64]
+        if first:
+            return first
+    return request.headers.get("x-real-ip", "")[:64] or (request.client.host if request.client else "anon")
+
+
+def _check_rate_limit(ip: str) -> None:
+    now = time.monotonic()
+    cutoff = now - _RATE_WINDOW_S
+    bucket = [t for t in _rate_buckets.get(ip, []) if t > cutoff]
+    if len(bucket) >= _RATE_MAX_REQUESTS:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please slow down.")
+    bucket.append(now)
+    _rate_buckets[ip] = bucket
+    if len(_rate_buckets) > 5000:
+        # Opportunistic eviction of fully-expired keys.
+        expired = [k for k, v in _rate_buckets.items() if not v or v[-1] <= cutoff]
+        for k in expired:
+            del _rate_buckets[k]
+
+
+def _check_api_key(request: Request) -> None:
+    if request.url.path in ("/health", "/openapi.json"):
+        return
+    if request.url.path in ("/docs", "/redoc", "/openapi.json"):
+        return
+    if not _F1_API_KEY:
+        return
+    provided = request.headers.get("x-api-key", "")
+    if not provided:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            provided = auth[7:].strip()
+    if not provided or not secrets.compare_digest(provided, _F1_API_KEY):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+@app.middleware("http")
+async def _auth_rate_limit_middleware(request: Request, call_next):
+    try:
+        _check_api_key(request)
+        if request.url.path.startswith("/f1/"):
+            _check_rate_limit(_client_ip(request))
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+    return await call_next(request)
+
+
+if _IS_PRODUCTION and not _F1_API_KEY:
+    logger.warning("F1_API_KEY is empty in production. The /f1/* API is unauthenticated.")
 
 # CORS middleware for cross-origin requests
 # Allow origins are restricted to a configurable allowlist; credentials are not
@@ -287,10 +362,24 @@ async def get_session(year: int, gp: str, session_type: str) -> fastf1.core.Sess
         return session
 
 
+_SCHEDULE_CACHE: dict[int, tuple[float, pd.DataFrame]] = {}
+_SCHEDULE_TTL_S = 3600
+
+
 def get_event_schedule(year: int) -> pd.DataFrame:
-    """Get event schedule for a year."""
+    """Get event schedule for a year (cached 1h to avoid upstream hammering)."""
     _validate_year(year)
-    return fastf1.get_event_schedule(year)
+    now = time.monotonic()
+    cached = _SCHEDULE_CACHE.get(year)
+    if cached and now - cached[0] < _SCHEDULE_TTL_S:
+        return cached[1]
+    schedule = fastf1.get_event_schedule(year)
+    _SCHEDULE_CACHE[year] = (now, schedule)
+    # Bound memory: schedules are small, but never grow without limit.
+    if len(_SCHEDULE_CACHE) > 64:
+        oldest = min(_SCHEDULE_CACHE, key=lambda k: _SCHEDULE_CACHE[k][0])
+        del _SCHEDULE_CACHE[oldest]
+    return schedule
 
 
 def validate_gp_param(gp: str) -> str:
@@ -1118,7 +1207,10 @@ async def get_car_data(request: CarDataRequest):
             if request.lap == "fastest":
                 lap = driver_laps.pick_fastest()
             else:
-                lap_number = int(request.lap)
+                try:
+                    lap_number = int(request.lap)
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail=f"Invalid lap identifier: {request.lap}")
                 lap_df = driver_laps[driver_laps["LapNumber"] == lap_number]
                 if lap_df.empty:
                     raise HTTPException(status_code=404, detail=f"Lap {lap_number} not found")

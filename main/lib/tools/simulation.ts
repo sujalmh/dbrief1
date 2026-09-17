@@ -29,6 +29,8 @@ export const runSimulationTool = tool(
             let effectiveBase = base_value;
             let effectiveVariance = variance;
             const effectiveSeed = seed;
+            let grounding: "explicit" | "derived" | "defaults" | "defaults-despite-reference" =
+                base_value !== undefined || variance !== undefined ? "explicit" : "defaults";
 
             if (reference_data != null) {
                 const derived = deriveBaseAndVariance(reference_data, reference_field);
@@ -36,6 +38,13 @@ export const runSimulationTool = tool(
                     // Explicitly provided values take precedence; otherwise use derived.
                     if (effectiveBase === undefined) effectiveBase = derived.base;
                     if (effectiveVariance === undefined) effectiveVariance = derived.variance;
+                    grounding = "derived";
+                } else if (effectiveBase === undefined && effectiveVariance === undefined) {
+                    // Reference data was supplied but nothing numeric could be
+                    // extracted: the run falls back to generic defaults. The
+                    // flag below forces the synthesizer to disclose that
+                    // instead of presenting the answer as data-grounded.
+                    grounding = "defaults-despite-reference";
                 }
             }
 
@@ -71,8 +80,17 @@ export const runSimulationTool = tool(
                 parameters_used: {
                     base_value: effectiveBase,
                     variance: effectiveVariance,
-                    derived_from_reference_data: reference_data != null,
+                    derived_from_reference_data: reference_data != null && grounding === "derived",
+                    grounding,
                     reference_field: reference_field ?? null,
+                    ...(grounding === "defaults-despite-reference"
+                        ? {
+                              warning:
+                                  "reference_data was provided but no numeric values could be extracted from it, " +
+                                  "so generic defaults were used. Do NOT present this answer as grounded in the " +
+                                  "reference data; say the grounding failed and prefer fetching cleaner inputs.",
+                          }
+                        : {}),
                 },
             });
         } catch (error) {
@@ -137,10 +155,10 @@ function deriveBaseAndVariance(
         try {
             parsed = JSON.parse(trimmed);
         } catch {
-            // Maybe a comma/space separated list of numbers
+            // Maybe a comma/space separated list of numbers (or lap times)
             const nums = trimmed
                 .split(/[\s,]+/)
-                .map((s) => Number(s))
+                .map((s) => parseNumericToken(s))
                 .filter((n) => Number.isFinite(n));
             if (nums.length > 0) {
                 return computeMeanStd(nums);
@@ -181,11 +199,30 @@ function deriveBaseAndVariance(
 }
 
 /**
- * Extract an array of numbers from a mixed array.
- * - number[] → as-is
- * - object[] → extract the named field (or a heuristic best numeric field)
- * - string[] → parse
+ * Parse one token into seconds. Handles plain numbers ("86.415"),
+ * lap-time clocks ("1:26.415", "0 days 0:01:26.415") and returns NaN when
+ * the token carries no numeric meaning.
  */
+function parseNumericToken(value: unknown): number {
+    if (typeof value === "number") return value;
+    if (typeof value !== "string") return NaN;
+    const cleaned = value.replace(/^\s*\d+\s+days?\s+/i, "").trim();
+    if (!cleaned) return NaN;
+    const parts = cleaned.split(":");
+    if (parts.length === 2 || parts.length === 3) {
+        // Lap-time clock "M:SS.mmm" (or "H:MM:SS.mmm"). Every part must be
+        // numeric — a bare "12:xx" or range like "1:26-1:28" is not a time.
+        const nums = parts.map((p) => Number(p));
+        if (nums.every((n) => Number.isFinite(n))) {
+            if (parts.length === 2) return nums[0]! * 60 + nums[1]!;
+            return nums[0]! * 3600 + nums[1]! * 60 + nums[2]!;
+        }
+        return NaN;
+    }
+    if (parts.length > 3) return NaN;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : NaN;
+}
 function extractNumbersFromArray(arr: unknown[], field?: string): number[] {
     if (arr.length === 0) return [];
 
@@ -194,10 +231,10 @@ function extractNumbersFromArray(arr: unknown[], field?: string): number[] {
         return arr as number[];
     }
 
-    // Strings that look like numbers
+    // Strings: plain numbers or lap-time clocks ("1:26.415").
     if (typeof arr[0] === "string") {
         const nums = arr
-            .map((s) => Number(s))
+            .map((s) => parseNumericToken(s))
             .filter((n) => Number.isFinite(n));
         if (nums.length > 0) return nums;
         return [];
@@ -212,18 +249,7 @@ function extractNumbersFromArray(arr: unknown[], field?: string): number[] {
             const nums = objs
                 .map((o) => o[field])
                 .filter((v) => v !== undefined && v !== null)
-                .map((v) => {
-                    if (typeof v === "number") return v;
-                    if (typeof v === "string") {
-                        // Handle "1:23.456" lap time format → seconds
-                        const lapMatch = v.match(/^(\d+):(\d{2})\.(\d{3})$/);
-                        if (lapMatch) {
-                            return parseInt(lapMatch[1], 10) * 60 + parseInt(lapMatch[2], 10) + parseInt(lapMatch[3], 10) / 1000;
-                        }
-                        return Number(v);
-                    }
-                    return NaN;
-                })
+                .map((v) => parseNumericToken(v))
                 .filter((n) => Number.isFinite(n));
             if (nums.length > 0) return nums;
         }

@@ -346,7 +346,17 @@ export function SettingsModal() {
                 <DialogFooter className="sm:justify-between items-center mt-4">
                     <Button
                         variant="ghost"
-                        onClick={clearMessages}
+                        onClick={() => {
+                            clearMessages()
+                            // Keep the cloud copy in sync: drop this
+                            // session's messages (D1 + R2 blobs) too.
+                            const sessionId = useChatStore.getState().currentSessionId
+                            if (sessionId && !sessionId.startsWith("local_")) {
+                                import("@/lib/cf/client").then(({ clearCloudMessages }) => {
+                                    clearCloudMessages(sessionId)
+                                })
+                            }
+                        }}
                         type="button"
                         className="text-muted-foreground hover:text-[var(--f1-red)] hover:bg-[var(--f1-red)]/10 text-xs uppercase tracking-wide"
                     >

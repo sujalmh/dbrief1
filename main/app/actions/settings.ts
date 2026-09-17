@@ -11,9 +11,13 @@ export async function saveApiKeyAction(key: string) {
         return { success: true }
     }
 
-    // Simple validation based on common prefixes, could be expanded
+    // Simple validation based on common prefixes, could be expanded.
+    // H5: reject overlong values to bound cookie/header size.
     if (key.length < 10) {
         return { success: false, error: "API key is too short" }
+    }
+    if (key.length > 512 || /[\s\r\n]/.test(key)) {
+        return { success: false, error: "API key format is invalid" }
     }
 
     cookieStore.set("api_key", key, {
@@ -21,7 +25,9 @@ export async function saveApiKeyAction(key: string) {
         secure: process.env.NODE_ENV === "production",
         sameSite: "strict",
         path: "/",
-        maxAge: 60 * 60 * 24 * 30 // 30 days
+        // H5: 7-day retention (was 30) to shrink the exposure window.
+        // Never log or return this value; `hasApiKeyAction` only reveals presence.
+        maxAge: 60 * 60 * 24 * 7
     })
 
     return { success: true }

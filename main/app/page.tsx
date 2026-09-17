@@ -9,13 +9,12 @@ import { ErrorModal } from "@/components/ui/error-modal"
 import { VisualizationPanel } from "@/components/visualization/visualization-panel"
 import { useChatStore } from "@/lib/store"
 import { useMediaQuery } from "@/lib/hooks/use-media-query"
-import { useAuth } from "@/lib/firebase/auth-context"
-import { LoginPage } from "@/components/auth/login-page"
+import { useSession } from "@/lib/cf/session-context"
 import { Loader2 } from "lucide-react"
 
 export default function Home() {
   const { settings, visualizationWidth, isVisualizationCollapsed } = useChatStore()
-  const { user, loading } = useAuth()
+  const { loading } = useSession()
   const isDesktop = useMediaQuery("(min-width: 768px)")
 
   // Calculate dynamic padding based on visualization state - ONLY on Desktop
@@ -29,10 +28,6 @@ export default function Home() {
         <Loader2 className="h-8 w-8 animate-spin text-f1-red" />
       </div>
     )
-  }
-
-  if (!user) {
-    return <LoginPage />
   }
 
   return (

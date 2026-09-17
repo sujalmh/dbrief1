@@ -13,7 +13,14 @@ import { tool, StructuredTool } from "@langchain/core/tools";
 // =============================================================================
 
 const F1_API_BASE = process.env.F1_API_URL || "http://localhost:8000";
+const F1_API_KEY = process.env.F1_API_KEY || "";
 const TOOL_TIMEOUT_MS = 60000;
+
+function f1Headers(): Record<string, string> {
+    const h: Record<string, string> = { "Content-Type": "application/json" };
+    if (F1_API_KEY) h["x-api-key"] = F1_API_KEY;
+    return h;
+}
 // Cap on response body size (bytes) accepted from the F1 API.
 // Telemetry responses can be many MB; we refuse anything larger to avoid
 // running the server out of memory. 50MB is enough for any reasonable
@@ -30,7 +37,7 @@ const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
 async function f1Get(endpoint: string): Promise<unknown> {
     const response = await fetch(`${F1_API_BASE}${endpoint}`, {
         method: "GET",
-        headers: { "Content-Type": "application/json" },
+        headers: f1Headers(),
         signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
     });
 
@@ -48,7 +55,7 @@ async function f1Get(endpoint: string): Promise<unknown> {
 async function f1Post(endpoint: string, body: unknown): Promise<unknown> {
     const response = await fetch(`${F1_API_BASE}${endpoint}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: f1Headers(),
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
     });

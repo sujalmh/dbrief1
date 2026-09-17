@@ -17,9 +17,8 @@
  *      paste-from-elsewhere workflows.
  *
  * We deliberately re-fetch the catalog every time the dialog opens so
- * newly released models show up without requiring a deploy. The user's
- * OpenRouter API key is forwarded via the `x-openrouter-key` header so
- * they get the higher rate limit (and we get a consistent shape).
+ * newly released models show up without requiring a deploy. No user API
+ * key is forwarded (H5) — the public catalog quota applies.
  */
 
 import { useEffect, useMemo, useState } from "react"
@@ -63,9 +62,9 @@ export function AddModelsDialog({ open, onOpenChange }: AddModelsDialogProps) {
     /**
      * Fetch the catalog every time the dialog opens. We don't cache
      * results across opens because the catalog changes (new models,
-     * deprecations) and the response is small. The user's API key is
-     * forwarded when available for a higher rate limit; if absent
-     * the public endpoint is used and just gives fewer models.
+     * deprecations) and the response is small. H5: no stored key is
+     * forwarded — the public endpoint quota applies; BYOK users rely
+     * on the server env key.
      */
     useEffect(() => {
         if (!open) return
@@ -77,9 +76,6 @@ export function AddModelsDialog({ open, onOpenChange }: AddModelsDialogProps) {
         setError(null)
         fetch("/api/models/openrouter", {
             method: "GET",
-            headers: settings.apiKey
-                ? { "x-openrouter-key": settings.apiKey }
-                : {},
         })
             .then(async (res) => {
                 if (!res.ok) {
@@ -104,7 +100,7 @@ export function AddModelsDialog({ open, onOpenChange }: AddModelsDialogProps) {
         return () => {
             cancelled = true
         }
-    }, [open, settings.apiKey])
+    }, [open])
 
     // Client-side search filter — the server already filters by the
     // same `search` param, but we re-filter on every keystroke so the

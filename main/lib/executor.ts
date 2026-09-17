@@ -557,10 +557,17 @@ export function aggregateContext(context: ExecutionContext): string {
 
     for (const result of reducedResults) {
         if (result.success && result.data) {
+            // Neutralize tag-breakout attempts from untrusted tool data
+            // (e.g. a document containing "</f1_data>") so the responder's
+            // <f1_data> wrapper in the chat route cannot be escaped.
+            const safeJson = JSON.stringify(result.data, null, 2).replace(
+                /<\/(f1_data|system|human)/gi,
+                "<\\/$1"
+            );
             sections.push(
                 `### ${result.tool} (Step ${result.step})\n` +
                 "```json\n" +
-                `${JSON.stringify(result.data, null, 2)}\n` +
+                `${safeJson}\n` +
                 "```"
             );
         } else if (!result.success) {

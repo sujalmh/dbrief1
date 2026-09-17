@@ -23,6 +23,17 @@ export interface ResearchEvidence {
     driver?: string
     summary: string
     confidence: number
+    /**
+     * Full tool output for this evidence item. Present in live sessions;
+     * persisted to the cloud store inline when small, offloaded to R2 via
+     * `dataRef` when large (see lib/cf/store.ts). Needed so a
+     * reopened session can re-render charts/debug without re-execution.
+     */
+    data?: unknown
+    /** Storage path pointer when `data` was offloaded (e.g. telemetry dumps). */
+    dataRef?: string | null
+    /** True when `data` was truncated to fit Firestore limits. */
+    dataTruncated?: boolean
 }
 
 export interface ResearchReflection {
@@ -43,6 +54,8 @@ export interface ResearchIteration {
         tool: string
         status: 'pending' | 'running' | 'success' | 'failed' | 'skipped'
         evidenceId?: string
+        /** Tool args for this task (preserved from plan_iteration SSE). */
+        args?: Record<string, unknown>
     }[]
     reasoning?: string
 }
@@ -98,7 +111,22 @@ export interface Message {
         tool: string
         status: 'pending' | 'running' | 'success' | 'failed'
         result?: string
+        /** Tool args for this step (preserved from the plan SSE event). */
+        args?: Record<string, unknown>
+        /** Error message when status is failed. */
+        error?: string
+        /** Wall time for this step in ms (when known). */
+        durationMs?: number
     }[]
+    /**
+     * Pointer to the offloaded full visualization payload in Firebase
+     * Storage (set when visualizationData exceeded inline limits).
+     * On load the payload is fetched and merged back into
+     * `visualizationData` so charts render without re-execution.
+     */
+    visualizationRef?: string | null
+    /** True when visualizationData was truncated to fit Firestore limits. */
+    visualizationTruncated?: boolean
     citations?: {
         source: string
         type: string
@@ -165,6 +193,7 @@ export interface Message {
 }
 
 interface Settings {
+    /** Memory-only BYOK override (never persisted — see persist partialize). */
     apiKey: string
     provider: string
     model: string
@@ -219,8 +248,8 @@ export interface VisualizationResultItem {
 }
 
 /**
- * Session row kept in the client store. Mirrors the Firestore ChatSession
- * shape but stays decoupled so the store doesn't import firebase types.
+ * Session row kept in the client store. Mirrors the cloud ChatSession
+ * shape but stays decoupled so the store doesn't import server types.
  * All fields optional except `id` so Firestore snapshots (which always
  * carry an id plus a subset of fields) assign cleanly in both directions.
  */
@@ -527,20 +556,29 @@ export const useChatStore = create<ChatStore>()(
             // graph history, and the panel UI state. We deliberately
             // exclude ephemeral per-message UI state (currentIndex,
             // localWidth during resize, etc.) and the loading flag.
-            partialize: (state) => ({
-                settings: state.settings,
-                messages: state.messages,
-                visualizationData: state.visualizationData,
-                graphHistory: state.graphHistory,
-                isVisualizationCollapsed: state.isVisualizationCollapsed,
-                visualizationWidth: state.visualizationWidth,
-            }),
+            // SECURITY: `settings.apiKey` is NEVER persisted (memory-only).
+            // Persisted IndexedDB is readable by any XSS payload; the key
+            // lives in the httpOnly `api_key` cookie + server env instead.
+            partialize: (state) => {
+                const { apiKey: _dropped, ...safeSettings } = state.settings;
+                void _dropped;
+                return {
+                    settings: safeSettings,
+                    messages: state.messages,
+                    visualizationData: state.visualizationData,
+                    graphHistory: state.graphHistory,
+                    isVisualizationCollapsed: state.isVisualizationCollapsed,
+                    visualizationWidth: state.visualizationWidth,
+                };
+            },
             // Bump the version when the persisted shape changes so old
             // clients drop stale data instead of crashing on load.
-            version: 4,
+            version: 5,
             // v2 -> v3: Settings gained a `customModels: string[]` field.
             // v3 -> v4: Settings gained a `plannerModel: string` field
             //   (the dedicated planner model, separate from `model`).
+            // v4 -> v5: `settings.apiKey` is no longer persisted (H5: keys
+            //   in IndexedDB are XSS-exfiltratable). Dropped on migrate.
             // We backfill both on the fly so existing users keep their
             // messages (with the new optional `usage.plannerModel`
             // field left as undefined, which the UI handles by hiding
@@ -556,6 +594,12 @@ export const useChatStore = create<ChatStore>()(
                     }
                     if (typeof (state.settings as Partial<Settings>).plannerModel !== "string") {
                         state.settings = { ...state.settings, plannerModel: "" }
+                    }
+                    // H5: purge any key persisted by older versions.
+                    if ("apiKey" in state.settings) {
+                        const { apiKey: _old, ...rest } = state.settings as Partial<Settings> & { apiKey?: unknown };
+                        void _old;
+                        state.settings = { ...rest, apiKey: "" };
                     }
                 }
                 return state as { settings?: Partial<Settings>; messages?: Message[] }

@@ -43,9 +43,46 @@ interface OpenRouterModel {
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
+// In-process limiter for the catalog proxy (10/min per caller). Same
+// multi-instance caveat as the chat limiter — swap for a shared store if
+// abuse is observed.
+const CATALOG_WINDOW_MS = 60_000;
+const CATALOG_MAX = 10;
+const catalogBuckets = new Map<string, number[]>();
+
+function catalogKey(req: NextRequest): string {
+    const fwd = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    const ip = (fwd && /^[A-Za-z0-9.:]{3,64}$/.test(fwd) ? fwd : null)
+        || req.headers.get("x-real-ip")?.trim()
+        || "anon";
+    return `catalog:${ip}`;
+}
+
+function catalogAllowed(req: NextRequest): number | null {
+    const now = Date.now();
+    const cutoff = now - CATALOG_WINDOW_MS;
+    const key = catalogKey(req);
+    const bucket = (catalogBuckets.get(key) || []).filter((t) => t > cutoff);
+    if (bucket.length >= CATALOG_MAX) {
+        return Math.max(0, CATALOG_WINDOW_MS - (now - bucket[0]!));
+    }
+    bucket.push(now);
+    catalogBuckets.set(key, bucket);
+    return null;
+}
+
 export async function GET(request: NextRequest) {
-    const apiKey = request.headers.get("x-openrouter-key")?.trim() || ""
-    const search = request.nextUrl.searchParams.get("search")?.toLowerCase().trim() || ""
+    const waitMs = catalogAllowed(request);
+    if (waitMs !== null) {
+        return NextResponse.json(
+            { error: "Rate limit exceeded. Please slow down." },
+            { status: 429, headers: { "Retry-After": Math.ceil(waitMs / 1000).toString(), "Cache-Control": "no-store" } }
+        );
+    }
+    const rawKey = request.headers.get("x-openrouter-key")?.trim() || "";
+    // Validate key shape to block header-injection / log-pollution attempts.
+    const apiKey = /^[A-Za-z0-9._~-]{8,512}$/.test(rawKey) ? rawKey : "";
+    const search = request.nextUrl.searchParams.get("search")?.toLowerCase().trim().slice(0, 128) || ""
 
     const headers: Record<string, string> = {
         // Identify ourselves to OpenRouter per their attribution policy.
@@ -69,7 +106,7 @@ export async function GET(request: NextRequest) {
         if (!upstream.ok) {
             return NextResponse.json(
                 { error: `OpenRouter catalog returned ${upstream.status}` },
-                { status: upstream.status }
+                { status: upstream.status, headers: { "Cache-Control": "no-store" } }
             )
         }
 

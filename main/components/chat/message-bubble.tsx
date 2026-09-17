@@ -17,9 +17,9 @@ import { EvidencePanel } from "@/components/chat/evidence-panel"
 import { ReflectionTrace } from "@/components/chat/reflection-trace"
 import { RadioWave } from "@/components/chat/radio-wave"
 import { UsageFooter } from "@/components/chat/usage-footer"
-import { useEffect, useRef, memo, useCallback, useState } from "react"
+import { useEffect, useRef, memo, useCallback, useState, useMemo } from "react"
 import { useChatHandler } from "@/lib/hooks/use-chat-handler"
-import { getDriverColor, DRIVER_REGEX } from "@/lib/f1-colors"
+import { getDriverColor, getDriverPattern, seasonFromPayload } from "@/lib/f1-colors"
 import type { Components } from "react-markdown"
 
 import rehypeSanitize from "rehype-sanitize"
@@ -30,13 +30,16 @@ interface MessageBubbleProps {
 }
 
 // --- HELPER: Highlights driver names in text ---
-const highlightDrivers = (text: string) => {
+// Pattern is rebuilt per call so drivers learned from live API payloads
+// (new codes, mid-season swaps) highlight without a reload. `season`
+// prefers that year's learned colors when available.
+const highlightDrivers = (text: string, season?: number) => {
     if (!text) return text;
 
-    const parts = text.split(DRIVER_REGEX);
+    const parts = text.split(getDriverPattern());
 
     return parts.map((part, index) => {
-        const color = getDriverColor(part);
+        const color = getDriverColor(part, season);
 
         if (color !== "#FFFFFF") {
             return (
@@ -54,16 +57,16 @@ const highlightDrivers = (text: string) => {
 };
 
 // Reusable component for Markdown elements - memoized
-const HighlightedText = memo(function HighlightedText({ children }: { children: React.ReactNode }) {
+const HighlightedText = memo(function HighlightedText({ children, season }: { children: React.ReactNode; season?: number }) {
     if (typeof children === 'string') {
-        return <>{highlightDrivers(children)}</>;
+        return <>{highlightDrivers(children, season)}</>;
     }
 
     if (Array.isArray(children)) {
         return (
             <>
                 {children.map((child, i) => {
-                    if (typeof child === 'string') return <span key={i}>{highlightDrivers(child)}</span>;
+                    if (typeof child === 'string') return <span key={i}>{highlightDrivers(child, season)}</span>;
                     return <span key={i}>{child}</span>;
                 })}
             </>
@@ -74,7 +77,7 @@ const HighlightedText = memo(function HighlightedText({ children }: { children: 
 });
 
 // Memoized markdown components - defined outside component to avoid recreation
-const createMarkdownComponents = (): Components => ({
+const createMarkdownComponents = (season?: number): Components => ({
     table: ({ ...props }) => <div className="my-4 w-full overflow-x-auto"><table className="w-full text-sm border-collapse" {...props} /></div>,
     thead: ({ ...props }) => <thead className="bg-muted/50 text-left font-medium" {...props} />,
     th: ({ ...props }) => <th className="px-4 py-3 font-bold border-b border-border/70 text-left" {...props} />,
@@ -82,14 +85,11 @@ const createMarkdownComponents = (): Components => ({
     h1: ({ ...props }) => <h1 className="mt-6 mb-4 text-2xl font-black uppercase italic tracking-widest text-foreground border-b border-[var(--f1-red)] pb-2" {...props} />,
     h2: ({ ...props }) => <h2 className="mt-5 mb-3 text-lg font-bold uppercase italic tracking-wider text-foreground" {...props} />,
     h3: ({ ...props }) => <h3 className="mt-4 mb-2 text-base font-bold uppercase italic tracking-wide text-muted-foreground" {...props} />,
-    p: ({ children }) => <p className="mb-4 last:mb-0"><HighlightedText>{children}</HighlightedText></p>,
-    li: ({ children, ...props }) => <li {...props}><HighlightedText>{children}</HighlightedText></li>,
-    td: ({ children, ...props }) => <td className="px-4 py-3 border-b border-border/70" {...props}><HighlightedText>{children}</HighlightedText></td>,
-    strong: ({ children, ...props }) => <strong {...props}><HighlightedText>{children}</HighlightedText></strong>
+    p: ({ children }) => <p className="mb-4 last:mb-0"><HighlightedText season={season}>{children}</HighlightedText></p>,
+    li: ({ children, ...props }) => <li {...props}><HighlightedText season={season}>{children}</HighlightedText></li>,
+    td: ({ children, ...props }) => <td className="px-4 py-3 border-b border-border/70" {...props}><HighlightedText season={season}>{children}</HighlightedText></td>,
+    strong: ({ children, ...props }) => <strong {...props}><HighlightedText season={season}>{children}</HighlightedText></strong>
 });
-
-// Cache the markdown components
-const markdownComponents = createMarkdownComponents();
 
 // Memoized remark plugins array
 const remarkPlugins = [remarkGfm];
@@ -99,18 +99,23 @@ const rehypePlugins = [rehypeSanitize];
 const MessageContent = memo(function MessageContent({
     content,
     isUser,
-    isError
+    isError,
+    season,
 }: {
     content: string;
     isUser: boolean;
     isError?: boolean;
+    season?: number;
 }) {
+    // Per-season component set so driver highlights prefer that year's
+    // learned colors. Memoized on season (stable across re-renders).
+    const components = useMemo(() => createMarkdownComponents(season), [season]);
     if (content) {
         return (
             <ReactMarkdown
                 remarkPlugins={remarkPlugins}
                 rehypePlugins={rehypePlugins}
-                components={markdownComponents}
+                components={components}
             >
                 {content}
             </ReactMarkdown>
@@ -149,6 +154,19 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
     const deleteMessage = useChatStore(state => state.deleteMessage)
     const { handleSend, isLoading } = useChatHandler()
 
+    // Delete locally AND in the cloud store (D1 + R2 blobs) so a
+    // reopened session stays in sync. Best-effort: local delete always
+    // applies; cloud failures only log.
+    const deleteEverywhere = useCallback((id: string) => {
+        deleteMessage(id)
+        const sessionId = useChatStore.getState().currentSessionId
+        if (sessionId && !sessionId.startsWith("local_")) {
+            import("@/lib/cf/client").then(({ deleteCloudMessage }) => {
+                deleteCloudMessage(sessionId, id)
+            })
+        }
+    }, [deleteMessage])
+
     // Use stable selector to avoid re-renders from unrelated store changes
     const setActiveMessageId = useChatStore(
         useCallback((state) => state.setActiveMessageId, [])
@@ -170,11 +188,11 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
         if (!prevUserMsg) return
 
         // Delete the current message (the one we want to replace)
-        deleteMessage(message.id)
+        deleteEverywhere(message.id)
 
         // Regenerate
         await handleSend(prevUserMsg.content)
-    }, [message.id, deleteMessage, handleSend])
+    }, [message.id, deleteEverywhere, handleSend])
 
     // Memoize the intersection observer callback
     const handleIntersection = useCallback((entries: IntersectionObserverEntry[]) => {
@@ -280,7 +298,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 rounded-sm hover:bg-muted/50 text-muted-foreground hover:text-red-500 transition-colors"
-                        onClick={() => deleteMessage(message.id)}
+                        onClick={() => deleteEverywhere(message.id)}
                     >
                         <Trash2 className="h-3.5 w-3.5" />
                         <span className="sr-only">Delete</span>
@@ -374,6 +392,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
                         content={message.content}
                         isUser={isUser}
                         isError={isError}
+                        season={seasonFromPayload(message.visualizationData)}
                     />
                 </div>
 

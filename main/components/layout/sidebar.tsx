@@ -4,9 +4,15 @@ import React from "react";
 import { Plus, MessageSquare, LogOut, User as UserIcon, PanelLeft, Trash2 } from "lucide-react";
 import { useChatStore } from "@/lib/store"
 import type { StoredSession } from "@/lib/store"
-import { firestoreTimestampToMs } from "@/lib/firebase/firestore";
-import { useAuth } from "@/lib/firebase/auth-context";
-import { createSession, getSessions, getSessionMessages, deleteSession } from "@/lib/firebase/firestore";
+import { useSession } from "@/lib/cf/session-context";
+import { UsageIndicator } from "@/components/layout/usage-indicator";
+import {
+    listSessions,
+    createSession,
+    deleteSession,
+    loadMessages,
+    loadContext,
+} from "@/lib/cf/client";
 import { cn, sanitizeCitations } from "@/lib/utils";
 
 export function Sidebar() {
@@ -19,17 +25,18 @@ export function Sidebar() {
         isSidebarOpen,
         setSidebarOpen
     } = useChatStore();
-    const { user, logout } = useAuth();
+    const { user, signOut } = useSession();
 
     React.useEffect(() => {
+        // Sessions are scoped to the server-issued identity cookie; user
+        // is always present after bootstrap (null only when cloud sync is
+        // unconfigured, in which case we stay local-only).
         if (user) {
-            getSessions(user.uid).then(setSessions);
+            listSessions().then(setSessions).catch(() => undefined);
         }
     }, [user, setSessions]);
 
     const handleNewChat = async () => {
-        if (!user) return;
-
         // Check if an empty session already exists
         const emptySession = sessions.find(s => s.title === "New Chat");
         if (emptySession) {
@@ -37,40 +44,84 @@ export function Sidebar() {
             return;
         }
 
-        const sessionId = await createSession(user.uid);
-        const newSession = {
-            id: sessionId,
-            userId: user.uid,
-            title: "New Chat",
-            createdAt: new Date(),
-            lastMessageAt: new Date(),
-            context: {}
-        };
-        setSessions([newSession, ...sessions]);
-        setCurrentSessionId(sessionId);
+        try {
+            const sessionId = await createSession("New Chat");
+            const now = Date.now();
+            const newSession = {
+                id: sessionId,
+                title: "New Chat",
+                createdAt: now,
+                lastMessageAt: now,
+                context: {}
+            };
+            setSessions([newSession, ...sessions]);
+            setCurrentSessionId(sessionId);
+        } catch {
+            // Cloud sync unavailable — fall back to a local-only session.
+            const sessionId = `local_${Date.now()}`;
+            const now = Date.now();
+            setSessions([{
+                id: sessionId,
+                title: "New Chat",
+                createdAt: now,
+                lastMessageAt: now,
+                context: {}
+            }, ...sessions]);
+            setCurrentSessionId(sessionId);
+        }
         setMessages([]); // Clear messages for new chat
+        // Reset panel state so the previous session's charts don't linger.
+        useChatStore.setState({ visualizationData: null, graphHistory: [], activeMessageId: null });
     };
 
     const handleSelectSession = async (sessionId: string) => {
         setCurrentSessionId(sessionId);
-        const messages = await getSessionMessages(sessionId);
-        setMessages(messages.map(m => {
-            const citations = sanitizeCitations(m.citations);
-            return {
-                id: m.id!,
-                role: m.role,
-                content: m.content,
-                timestamp: firestoreTimestampToMs(m.timestamp) ?? Date.now(),
-                ...(citations.length > 0 ? { citations } : {}),
-            };
-        }));
+        try {
+            // Full resume: messages with steps/visualization/evidence/usage
+            // plus session-level UI (panel data, pinned graphs, active msg).
+            const [messages, ui] = await Promise.all([
+                loadMessages(sessionId),
+                loadContext(sessionId),
+            ]);
+            setMessages(messages.map(m => {
+                const citations = sanitizeCitations(m.citations);
+                return { ...m, ...(citations.length > 0 ? { citations } : m.citations ? { citations: [] } : {}) };
+            }));
+            // Re-learn driver colors from restored payloads so highlights
+            // are season-correct even before any new query runs.
+            try {
+                const { learnColorsFromPayload } = await import("@/lib/f1-colors");
+                for (const m of messages) {
+                    if (m.visualizationData) learnColorsFromPayload(m.visualizationData);
+                }
+            } catch {
+                // Best-effort: static grid fallback still applies.
+            }
+            // Restore panel + pinned graphs + active message. Fall back to
+            // the latest message's visualization when no UI state was ever
+            // saved (pre-existing sessions).
+            type StoreState = ReturnType<typeof useChatStore.getState>;
+            const patch: { graphHistory?: StoreState["graphHistory"]; visualizationData?: StoreState["visualizationData"]; activeMessageId?: string | null } = {};
+            if (ui.graphHistory) {
+                patch.graphHistory = ui.graphHistory as StoreState["graphHistory"];
+            }
+            const activeId = ui.activeMessageId ?? messages.filter(m => m.role === "assistant").slice(-1)[0]?.id ?? null;
+            const activeMsg = messages.find(m => m.id === activeId);
+            const panelData = ui.visualizationData ?? activeMsg?.chartSpecs ?? activeMsg?.visualizationData ?? null;
+            useChatStore.setState({
+                ...patch,
+                visualizationData: (panelData ?? null) as StoreState["visualizationData"],
+                activeMessageId: activeId,
+            });
+        } catch (err) {
+            console.error("Session load failed:", err);
+            setMessages([]);
+        }
     };
 
     const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
         e.stopPropagation();
         e.preventDefault();
-
-        if (!user) return;
 
         // Optimistic update
         setSessions(sessions.filter(s => s.id !== sessionId));
@@ -85,7 +136,7 @@ export function Sidebar() {
         } catch (error) {
             console.error("Failed to delete session:", error);
             // Revert on failure (optional, but good practice)
-            if (user) getSessions(user.uid).then(setSessions);
+            listSessions().then(setSessions).catch(() => undefined);
         }
     };
 
@@ -107,8 +158,10 @@ export function Sidebar() {
         return () => window.clearInterval(intervalId);
     }, []);
 
-    const getSessionTimeMs = (session: StoredSession): number | null =>
-        firestoreTimestampToMs(session?.lastMessageAt ?? session?.createdAt);
+    const getSessionTimeMs = (session: StoredSession): number | null => {
+        const v = session?.lastMessageAt ?? session?.createdAt;
+        return typeof v === "number" && Number.isFinite(v) ? v : null;
+    };
 
     const formatSessionDelta = (session: StoredSession, isActive: boolean): string => {
         const sessionMs = getSessionTimeMs(session);
@@ -264,9 +317,13 @@ export function Sidebar() {
                     "flex items-center rounded-md p-2 hover:bg-sidebar-accent transition-colors cursor-default overflow-hidden",
                     !isSidebarOpen && "justify-center"
                 )}>
-                    {user?.photoURL ? (
-                        // eslint-disable-next-line @next/next/no-img-element -- user avatar from arbitrary OAuth domains; unsuitable for next/image without wildcard remotePatterns
-                            <img src={user.photoURL} alt="User" className="h-8 w-8 rounded-full border border-sidebar-border shrink-0" />
+                    {user ? (
+                        <div className="relative h-8 w-8 rounded-full bg-sidebar-accent flex items-center justify-center border border-sidebar-border shrink-0 text-foreground">
+                            <span className="text-[10px] font-bold">
+                                {(user.displayName || "DRV").slice(0, 3).toUpperCase()}
+                            </span>
+                            <UsageIndicator />
+                        </div>
                     ) : (
                         <div className="h-8 w-8 rounded-full bg-sidebar-accent flex items-center justify-center border border-sidebar-border shrink-0 text-foreground">
                             <UserIcon className="h-4 w-4" />
@@ -277,9 +334,9 @@ export function Sidebar() {
                         "flex flex-col overflow-hidden whitespace-nowrap transition-all duration-300",
                         isSidebarOpen ? "w-full opacity-100 ml-3" : "w-0 opacity-0 ml-0"
                     )}>
-                        <p className="text-xs font-medium truncate">{user?.displayName || "User"}</p>
+                        <p className="text-xs font-medium truncate">{user?.displayName || "Driver"}</p>
                         <button
-                            onClick={() => logout()}
+                            onClick={() => signOut()}
                             className="text-[10px] text-muted-foreground hover:text-f1-red transition-colors flex items-center gap-1 mt-0.5"
                         >
                             <LogOut className="h-3 w-3" />

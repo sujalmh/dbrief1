@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AuthProvider } from "@/lib/firebase/auth-context";
+import { SessionProvider } from "@/lib/cf/session-context";
 import "./globals.css";
 
 const inter = Inter({
@@ -30,7 +30,7 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} antialiased h-screen overflow-hidden`}
       >
-        <AuthProvider>
+        <SessionProvider>
           <ThemeProvider
             attribute="class"
             defaultTheme="system"
@@ -41,7 +41,7 @@ export default function RootLayout({
               {children}
             </TooltipProvider>
           </ThemeProvider>
-        </AuthProvider>
+        </SessionProvider>
       </body>
     </html>
   );

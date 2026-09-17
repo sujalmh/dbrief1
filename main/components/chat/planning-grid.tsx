@@ -21,6 +21,9 @@ interface PlanningGridProps {
 function PlanningGridComponent({ steps, reasoning, iterations, researchType }: PlanningGridProps) {
     const [isReasoningExpanded, setIsReasoningExpanded] = useState(false)
     const [expandedIterations, setExpandedIterations] = useState<Set<number>>(new Set([1]))
+    // Touch screens have no hover, so the strategy breakdown is also
+    // tap-toggleable (desktop keeps the hover reveal as well).
+    const [detailsOpen, setDetailsOpen] = useState(false)
 
     // Deep research mode: render iterations
     if (iterations && iterations.length > 0) {
@@ -175,13 +178,19 @@ function PlanningGridComponent({ steps, reasoning, iterations, researchType }: P
             {/* Combined Visualization */}
             <div className="flex flex-col gap-1 group">
 
-                {/* 1. Progress Lines Container */}
-                <div className="flex h-1.5 w-full gap-1 overflow-hidden rounded-full bg-muted/20">
+                {/* 1. Progress Lines Container (tap to expand on touch) */}
+                <button
+                    type="button"
+                    onClick={() => setDetailsOpen((o) => !o)}
+                    aria-expanded={detailsOpen}
+                    aria-label="Toggle strategy details"
+                    className="flex h-1.5 w-full gap-1 overflow-hidden rounded-full bg-muted/20 cursor-pointer min-h-[12px] items-center py-1"
+                >
                     {steps.map((step, index) => (
                         <div
                             key={step.description || index}
                             className={cn(
-                                "relative flex-1 transition-colors duration-300",
+                                "relative flex-1 h-1.5 rounded-full transition-colors duration-300",
                                 // Background base
                                 "bg-muted",
                                 // Completed states
@@ -197,13 +206,16 @@ function PlanningGridComponent({ steps, reasoning, iterations, researchType }: P
                             )}
                         </div>
                     ))}
-                </div>
+                </button>
 
-                {/* 2. Expanded Details (Reveals on Hover) */}
+                {/* 2. Expanded Details (hover on desktop, tap on touch) */}
                 <div className={cn(
                     "grid gap-1 overflow-hidden transition-all duration-300 ease-out",
-                    "grid-rows-[0fr] opacity-0 group-hover:grid-rows-[1fr] group-hover:opacity-100",
-                    "group-hover:mt-1"
+                    detailsOpen
+                        ? "grid-rows-[1fr] opacity-100 mt-1"
+                        : "grid-rows-[0fr] opacity-0",
+                    "md:group-hover:grid-rows-[1fr] md:group-hover:opacity-100",
+                    "md:group-hover:mt-1"
                 )}>
                     <div className="min-h-0 rounded-lg border bg-background/95 p-2 shadow-lg backdrop-blur">
                         <div className="mb-2 flex items-center justify-between px-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">

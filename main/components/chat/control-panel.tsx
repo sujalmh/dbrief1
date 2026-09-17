@@ -201,11 +201,11 @@ export function ControlPanel() {
                     <Button
                         variant="ghost"
                         size="sm"
-                        className="btn-wheel btn-wheel-orange h-8 gap-2 text-xs px-3"
+                        className="btn-wheel btn-wheel-orange h-8 gap-2 text-xs px-3 max-w-[140px] sm:max-w-none"
                         title="Select AI Provider & Model"
                     >
-                        <ProviderIcon className="h-3.5 w-3.5" />
-                        <span className="max-w-[80px] truncate hidden sm:inline-block font-bold">
+                        <ProviderIcon className="h-3.5 w-3.5 shrink-0" />
+                        <span className="max-w-[80px] sm:max-w-[120px] truncate inline-block font-bold">
                             {settings.model.split("/").pop()?.split(":")[0] ||
                                 settings.model}
                         </span>
@@ -214,7 +214,7 @@ export function ControlPanel() {
 
                 <DropdownMenuContent
                     align="end"
-                    className="w-64 bg-background/95 backdrop-blur border border-border shadow-lg"
+                    className="w-64 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto bg-background/95 backdrop-blur border border-border shadow-lg"
                 >
                     <DropdownMenuLabel className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                         Provider

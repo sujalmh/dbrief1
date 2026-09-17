@@ -66,6 +66,23 @@ function formatValue(value: number, unit: string): string {
     return value.toFixed(2);
 }
 
+/**
+ * Compact axis-tick formatter for narrow viewports. The full
+ * `formatValue` repeats the unit on every tick ("300 km/h"), which
+ * wraps inside a 390px chart next to an axis label that already
+ * carries the unit. Compact ticks show bare values; the axis label
+ * and the tooltip keep the unit. Desktop benefits too (less ink).
+ */
+function formatTick(value: number, unit: string): string {
+    if (value == null || isNaN(value)) return "—";
+    if (unit === "s") return formatValue(value, unit);
+    if (unit === "°C") return `${value}°`;
+    if (unit === "%") return `${value}%`;
+    if (unit === "pos") return `P${value}`;
+    if (Number.isInteger(value)) return value.toString();
+    return value.toFixed(1);
+}
+
 // =============================================================================
 // Header
 // =============================================================================
@@ -171,10 +188,11 @@ export function HorizontalBarChart({ spec }: { spec: HorizontalBarSpec }) {
                 >
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} horizontal={false} />
                     <XAxis
+                        minTickGap={28}
                         type="number"
                         stroke={CHART_TOKENS.axis}
                         tick={{ fontSize: 11 }}
-                        tickFormatter={(v) => formatValue(v, spec.unit)}
+                        tickFormatter={(v) => formatTick(v, spec.unit)}
                         label={{ value: spec.xAxisLabel, position: "insideBottom", offset: -10, fontSize: 11, fill: CHART_TOKENS.axis }}
                     />
                     <YAxis
@@ -243,6 +261,7 @@ export function LineOrAreaChart({ spec }: { spec: LineSpec }) {
                     <AreaChart data={spec.data} margin={{ top: 10, right: 30, left: 20, bottom: 25 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} />
                         <XAxis
+                        minTickGap={28}
                             dataKey={spec.xField}
                             stroke={CHART_TOKENS.axis}
                             tick={{ fontSize: 11 }}
@@ -251,11 +270,11 @@ export function LineOrAreaChart({ spec }: { spec: LineSpec }) {
                         <YAxis
                             stroke={CHART_TOKENS.axis}
                             tick={{ fontSize: 11 }}
-                            tickFormatter={(v) => formatValue(v, spec.unit)}
+                            tickFormatter={(v) => formatTick(v, spec.unit)}
                             label={{ value: spec.yAxisLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_TOKENS.axis }}
                         />
                         <Tooltip content={<SmartTooltip unit={spec.unit} />} />
-                        <Legend wrapperStyle={{ paddingTop: 10, fontSize: 11 }} />
+                        <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: 10, fontSize: 11 }} />
                         {spec.series.map((s, i) => (
                             <Area
                                 key={s}
@@ -273,6 +292,7 @@ export function LineOrAreaChart({ spec }: { spec: LineSpec }) {
                     <LineChart data={spec.data} margin={{ top: 10, right: 30, left: 20, bottom: 25 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} />
                         <XAxis
+                        minTickGap={28}
                             dataKey={spec.xField}
                             stroke={CHART_TOKENS.axis}
                             tick={{ fontSize: 11 }}
@@ -281,11 +301,11 @@ export function LineOrAreaChart({ spec }: { spec: LineSpec }) {
                         <YAxis
                             stroke={CHART_TOKENS.axis}
                             tick={{ fontSize: 11 }}
-                            tickFormatter={(v) => formatValue(v, spec.unit)}
+                            tickFormatter={(v) => formatTick(v, spec.unit)}
                             label={{ value: spec.yAxisLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_TOKENS.axis }}
                         />
                         <Tooltip content={<SmartTooltip unit={spec.unit} />} />
-                        <Legend wrapperStyle={{ paddingTop: 10, fontSize: 11 }} />
+                        <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: 10, fontSize: 11 }} />
                         {spec.series.map((s, i) => (
                             <Line
                                 key={s}
@@ -339,6 +359,7 @@ export function ScatterPlot({ spec }: { spec: ScatterSpec }) {
                 <ScatterChart margin={{ top: 10, right: 30, left: 20, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} />
                     <XAxis
+                        minTickGap={28}
                         type="number"
                         dataKey="x"
                         stroke={CHART_TOKENS.axis}
@@ -350,12 +371,12 @@ export function ScatterPlot({ spec }: { spec: ScatterSpec }) {
                         dataKey="y"
                         stroke={CHART_TOKENS.axis}
                         tick={{ fontSize: 11 }}
-                        tickFormatter={(v) => formatValue(v, spec.unit)}
+                        tickFormatter={(v) => formatTick(v, spec.unit)}
                         label={{ value: spec.yAxisLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_TOKENS.axis }}
                     />
                     <ZAxis range={[60, 60]} />
                     <Tooltip content={<SmartTooltip unit={spec.unit} />} cursor={{ strokeDasharray: "3 3" }} />
-                    <Legend wrapperStyle={{ paddingTop: 10, fontSize: 11 }} />
+                    <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: 10, fontSize: 11 }} />
                     {spec.diagonal && (
                         <ReferenceLine
                             segment={[
@@ -420,6 +441,7 @@ export function StackedBarChart({ spec }: { spec: StackedBarSpec }) {
                 <BarChart data={spec.data} margin={{ top: 10, right: 30, left: 20, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} />
                     <XAxis
+                        minTickGap={28}
                         dataKey={spec.xField}
                         stroke={CHART_TOKENS.axis}
                         tick={{ fontSize: 11 }}
@@ -428,11 +450,11 @@ export function StackedBarChart({ spec }: { spec: StackedBarSpec }) {
                     <YAxis
                         stroke={CHART_TOKENS.axis}
                         tick={{ fontSize: 11 }}
-                        tickFormatter={(v) => formatValue(v, spec.unit)}
+                        tickFormatter={(v) => formatTick(v, spec.unit)}
                         label={{ value: spec.yAxisLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_TOKENS.axis }}
                     />
                     <Tooltip content={<SmartTooltip unit={spec.unit} />} />
-                    <Legend wrapperStyle={{ paddingTop: 10, fontSize: 11 }} />
+                    <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: 10, fontSize: 11 }} />
                     {spec.series.map((s, i) => (
                         <Bar
                             key={s}
@@ -483,10 +505,11 @@ export function DumbbellChart({ spec }: { spec: DumbbellSpec }) {
                 >
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} horizontal={false} />
                     <XAxis
+                        minTickGap={28}
                         type="number"
                         stroke={CHART_TOKENS.axis}
                         tick={{ fontSize: 11 }}
-                        tickFormatter={(v) => formatValue(v, spec.unit)}
+                        tickFormatter={(v) => formatTick(v, spec.unit)}
                         label={{ value: spec.xAxisLabel, position: "insideBottom", offset: -10, fontSize: 11, fill: CHART_TOKENS.axis }}
                     />
                     <YAxis
@@ -497,7 +520,7 @@ export function DumbbellChart({ spec }: { spec: DumbbellSpec }) {
                         width={80}
                     />
                     <Tooltip content={<SmartTooltip unit={spec.unit} />} />
-                    <Legend wrapperStyle={{ paddingTop: 10, fontSize: 11 }} />
+                    <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: 10, fontSize: 11 }} />
                     {/* Connecting bar */}
                     <Bar dataKey="left" fill="transparent" />
                     <Scatter dataKey="left" fill={F1_PALETTE[0]} name={spec.leftLabel} />
@@ -596,10 +619,11 @@ export function BoxPlot({ spec }: { spec: BoxPlotSpec }) {
                 >
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} horizontal={false} />
                     <XAxis
+                        minTickGap={28}
                         type="number"
                         stroke={CHART_TOKENS.axis}
                         tick={{ fontSize: 11 }}
-                        tickFormatter={(v) => formatValue(v, spec.unit)}
+                        tickFormatter={(v) => formatTick(v, spec.unit)}
                         label={{ value: spec.xAxisLabel, position: "insideBottom", offset: -10, fontSize: 11, fill: CHART_TOKENS.axis }}
                     />
                     <YAxis
@@ -666,6 +690,7 @@ export function Histogram({ spec }: { spec: HistogramSpec }) {
                 <BarChart data={spec.data} margin={{ top: 10, right: 30, left: 20, bottom: 25 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} />
                     <XAxis
+                        minTickGap={28}
                         dataKey="bin"
                         stroke={CHART_TOKENS.axis}
                         tick={{ fontSize: 11 }}

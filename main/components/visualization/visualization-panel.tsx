@@ -194,7 +194,9 @@ export function VisualizationPanel() {
             <div
                 className={cn(
                     "fixed z-30 flex items-center transition-all duration-300",
-                    isDesktop ? "right-0 top-14 h-[calc(100vh-3.5rem)]" : "bottom-6 right-4"
+                    // Parked above the floating chat input on phones so it
+                    // never covers Send; desktop keeps the edge tab.
+                    isDesktop ? "right-0 top-14 h-[calc(100vh-3.5rem)]" : "bottom-28 right-4"
                 )}
             >
                 <Tooltip>
@@ -203,6 +205,7 @@ export function VisualizationPanel() {
                             variant="ghost"
                             size="icon"
                             onClick={() => toggleVisualizationCollapse(false)}
+                            aria-label="Expand visualization"
                             className={cn(
                                 "bg-muted/50 hover:bg-muted border-border shadow-lg backdrop-blur-sm",
                                 isDesktop
@@ -225,10 +228,10 @@ export function VisualizationPanel() {
     return (
         <div
             className={cn(
-                "fixed z-30 bg-background/95 flex flex-col shadow-[inset_10px_0_20px_-10px_rgba(0,0,0,0.5)] transition-[width,transform,opacity]",
+                "fixed z-30 bg-background/95 flex flex-col shadow-[inset_10px_0_20px_-10px_rgba(0,0,0,0.5)] transition-[width,transform,opacity] overscroll-contain",
                 isDesktop && "right-0 top-14 h-[calc(100vh-3.5rem)] border-l border-white/10",
                 isDesktop && (isResizing ? "duration-0 select-none" : "duration-300"),
-                !isDesktop && "inset-0 top-14 w-full h-[calc(100vh-3.5rem)]"
+                !isDesktop && "inset-x-0 top-14 bottom-0 w-full viz-mobile-height"
             )}
             style={{ width: isDesktop ? `${localWidth}px` : "100%" }}
         >
@@ -274,9 +277,10 @@ export function VisualizationPanel() {
                             variant="ghost"
                             size="icon"
                             onClick={() => toggleVisualizationCollapse(true)}
-                            className="h-8 w-8"
+                            className="h-10 w-10"
+                            aria-label="Close visualization"
                         >
-                            <X className="h-4 w-4" />
+                            <X className="h-5 w-5" />
                             <span className="sr-only">Collapse</span>
                         </Button>
                     </TooltipTrigger>
@@ -358,7 +362,7 @@ function SimplePager({
     onSelect: (i: number) => void;
 }) {
     return (
-        <div className="flex items-center justify-between px-4 py-2 border-t border-border/50 bg-muted/5">
+        <div className="flex items-center justify-between px-4 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] border-t border-border/50 bg-muted/5">
             <Tooltip>
                 <TooltipTrigger asChild>
                     <Button variant="ghost" size="icon" onClick={onPrev} className="h-9 w-9">

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -20,15 +20,28 @@ export const metadata: Metadata = {
   description: "AI-powered Formula 1 data analyst",
 };
 
+// Mobile-first viewport: device width, no auto-zoom shrink, notch
+// safe-area support via viewport-fit=cover (paired with the
+// env(safe-area-inset-*) padding in page.tsx / globals.css).
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f4f4f5" },
+    { media: "(prefers-color-scheme: dark)", color: "#0c0c0c" },
+  ],
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className="h-screen overflow-hidden">
+    <html lang="en" suppressHydrationWarning className="h-dvh overflow-hidden">
       <body
-        className={`${inter.variable} ${jetbrainsMono.variable} antialiased h-screen overflow-hidden`}
+        className={`${inter.variable} ${jetbrainsMono.variable} antialiased h-dvh overflow-hidden overscroll-none`}
       >
         <SessionProvider>
           <ThemeProvider

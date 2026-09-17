@@ -1,6 +1,6 @@
 "use client"
 
-import { Flag, Settings, Sun, Moon, Info, Download, FileText, FileJson } from "lucide-react"
+import { Flag, Settings, Sun, Moon, Info, Download, FileText, FileJson, Menu } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { useChatStore } from "@/lib/store"
@@ -22,7 +22,7 @@ import { useMemo } from "react"
 import { exportConversation } from "@/lib/utils/export-conversation"
 
 export function Header() {
-    const { setSettingsOpen, activeMessageId, messages, sessions, currentSessionId } = useChatStore()
+    const { setSettingsOpen, activeMessageId, messages, sessions, currentSessionId, setSidebarOpen, isSidebarOpen } = useChatStore()
     const { setTheme, theme } = useTheme()
 
     const toggleTheme = () => {
@@ -83,20 +83,31 @@ export function Header() {
 
     return (
         <header className="sticky top-0 z-50 w-full border-b border-white/10 bg-carbon-header text-white shadow-md transition-all duration-500">
-            <div className="w-full max-w-screen-2xl mx-auto flex h-16 items-center justify-between px-6">
+            <div className="w-full max-w-screen-2xl mx-auto flex h-14 md:h-16 items-center justify-between px-3 md:px-6 gap-2">
 
                 {/* Left: Identity + Session Context */}
-                <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2 md:gap-6 min-w-0">
+                    {/* Mobile hamburger — opens the session drawer */}
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setSidebarOpen(!isSidebarOpen)}
+                        className="btn-wheel h-9 w-9 shrink-0 md:hidden"
+                        title="Open sessions"
+                    >
+                        <Menu className="h-5 w-5" />
+                        <span className="sr-only">Open sessions</span>
+                    </Button>
                     {/* Logo Area - Icon Only */}
-                    <div className="flex items-center gap-3 opacity-90 hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-3 opacity-90 hover:opacity-100 transition-opacity shrink-0">
                         <div className="flex items-center justify-center rounded-sm bg-[var(--f1-red)] p-1.5 shadow-[0_0_10px_rgba(225,6,0,0.4)]">
                             <Flag className="h-4 w-4 text-white fill-current" />
                         </div>
                     </div>
 
-                    {/* Dynamic Session Badge */}
-                    <div className="hidden md:flex items-center gap-3 px-4 py-1.5 rounded-full bg-black/40 border border-white/5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.5)] transition-all duration-500">
-                        <span className="text-xs font-mono font-medium text-zinc-300 tracking-wide truncate max-w-[300px]">
+                    {/* Dynamic Session Badge — compact + truncated on phones */}
+                    <div className="flex items-center gap-3 px-3 md:px-4 py-1.5 rounded-full bg-black/40 border border-white/5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.5)] transition-all duration-500 min-w-0">
+                        <span className="text-xs font-mono font-medium text-zinc-300 tracking-wide truncate max-w-[110px] sm:max-w-[200px] md:max-w-[300px]">
                             {context.sessionString}
                         </span>
                     </div>
@@ -120,7 +131,7 @@ export function Header() {
                 </div>
 
                 {/* Right: Controls Cluster */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 md:gap-3 shrink-0">
 
                     {/* Export Conversation Dropdown */}
                     <DropdownMenu>
@@ -133,7 +144,7 @@ export function Header() {
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                className="btn-wheel btn-wheel-green h-10 w-10"
+                                className="btn-wheel btn-wheel-green h-9 w-9 md:h-10 md:w-10"
                                 disabled={messages.length === 0}
                                 title="Export Conversation"
                             >
@@ -169,13 +180,13 @@ export function Header() {
                         </DropdownMenuContent>
                     </DropdownMenu>
 
-                    {/* Info Button */}
+                    {/* Info Button — desktop only (no room on phones) */}
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                className="btn-wheel btn-wheel-blue h-10 w-10"
+                                className="btn-wheel btn-wheel-blue h-9 w-9 md:h-10 md:w-10 hidden sm:inline-flex"
                             >
                                 <Info className="h-5 w-5" />
                                 <span className="sr-only">Information</span>
@@ -193,7 +204,7 @@ export function Header() {
                                 variant="ghost"
                                 size="icon"
                                 onClick={toggleTheme}
-                                className="btn-wheel btn-wheel-amber h-10 w-10"
+                                className="btn-wheel btn-wheel-amber h-9 w-9 md:h-10 md:w-10"
                             >
                                 <Sun className="h-5 w-5 rotate-0 scale-100  dark:-rotate-90 dark:scale-0" />
                                 <Moon className="absolute h-5 w-5 rotate-90 scale-0  dark:rotate-0 dark:scale-100" />
@@ -211,7 +222,7 @@ export function Header() {
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                className="btn-wheel h-10 w-10"
+                                className="btn-wheel h-9 w-9 md:h-10 md:w-10"
                                 onClick={() => setSettingsOpen(true)}
                             >
                                 <Settings className="h-5 w-5" />

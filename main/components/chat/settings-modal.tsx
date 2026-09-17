@@ -12,20 +12,11 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
-import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
-import { PROVIDERS, PROVIDER_MAP, getProviderMeta } from "@/lib/providers"
+import { getProviderMeta } from "@/lib/providers"
 import { saveApiKeyAction, hasApiKeyAction } from "@/app/actions/settings"
 import { useState, useEffect } from "react"
-import { Loader2, Sparkles } from "lucide-react"
-import { AddModelsDialog } from "@/components/chat/add-models-dialog"
+import { Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export function SettingsModal() {
@@ -36,7 +27,6 @@ export function SettingsModal() {
     const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null)
     const [errorMsg, setErrorMsg] = useState("")
     const [hasKey, setHasKey] = useState(false)
-    const [isAddModelsOpen, setIsAddModelsOpen] = useState(false)
 
     useEffect(() => {
         if (isSettingsOpen) {
@@ -68,10 +58,12 @@ export function SettingsModal() {
     }
 
     /**
-     * Verify the key by hitting the provider's list-models endpoint
-     * (or equivalent) with a short timeout. Anything other than a
-     * 200 response is treated as a failure. The key is sent in an
-     * Authorization header — the body of the response is discarded.
+     * Verify the key against the current provider's key-test endpoint
+     * from the provider registry (works for every configured provider —
+     * OpenRouter, Gemini, HuggingFace, Zen, and Go). Anything other than
+     * a 200 response is treated as a failure. The key is sent in an
+     * Authorization header (or ?key= query param for Gemini-style
+     * endpoints) — the body of the response is discarded.
      */
     async function handleTestKey() {
         if (!apiKeyInput) return
@@ -84,26 +76,19 @@ export function SettingsModal() {
             return
         }
         try {
-            const provider = settings.provider
-            let testUrl: string
-            let headers: Record<string, string>
-            switch (provider) {
-                case "openrouter":
-                    testUrl = "https://openrouter.ai/api/v1/models"
-                    headers = { Authorization: `Bearer ${apiKeyInput}` }
-                    break;
-                case "gemini":
-                    testUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKeyInput)}`
-                    headers = {}
-                    break;
-                case "huggingface":
-                    testUrl = "https://huggingface.co/api/whoami-v2"
-                    headers = { Authorization: `Bearer ${apiKeyInput}` }
-                    break;
-                default:
-                    setErrorMsg(`Unknown provider: ${provider}`)
-                    setIsTesting(false)
-                    return
+            const meta = getProviderMeta(settings.provider)
+            if (!meta?.keyTest) {
+                setErrorMsg(`Key testing isn't supported for this provider yet — save and try a chat.`)
+                setIsTesting(false)
+                return
+            }
+            let testUrl = meta.keyTest.url
+            const headers: Record<string, string> = {}
+            if (meta.keyTest.auth === "bearer") {
+                headers.Authorization = `Bearer ${apiKeyInput}`
+            } else {
+                const sep = testUrl.includes("?") ? "&" : "?"
+                testUrl = `${testUrl}${sep}key=${encodeURIComponent(apiKeyInput)}`
             }
             const controller = new AbortController()
             const timeoutId = setTimeout(() => controller.abort(), 10_000)
@@ -161,15 +146,16 @@ export function SettingsModal() {
 
     return (
         <Dialog open={isSettingsOpen} onOpenChange={setSettingsOpen}>
-            <DialogContent className="sm:max-w-[500px] border-none bg-background/95 backdrop-blur-xl shadow-2xl">
+            <DialogContent className="sm:max-w-[500px] max-h-[90dvh] overflow-y-auto border-none bg-background/95 backdrop-blur-xl shadow-2xl">
                 <DialogHeader className="mb-4 text-center">
                     <DialogTitle className="text-xl font-bold tracking-tight">Race Configuration</DialogTitle>
                     <DialogDescription className="text-muted-foreground/80">
-                        Fine-tune your telemetry and pit crew parameters.
+                        Manage your team access key and app preferences. Model
+                        selection lives in the picker above the chat input.
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="grid gap-6 px-2">
+                <div className="grid gap-6 px-2 min-w-0 [&>*]:min-w-0">
                     {/* API Key Section */}
                     <div className="space-y-2">
                         <Label htmlFor="apiKey" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">
@@ -227,105 +213,24 @@ export function SettingsModal() {
                         </div>
                     </div>
 
-                    {/* Model Configuration Grid */}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">Provider</Label>
-                            <Select
-                                value={settings.provider}
-                                onValueChange={(value) => updateSettings({
-                                    provider: value,
-                                    // Apply the new provider's default model so the
-                                    // selection never goes stale (mirrors ControlPanel).
-                                    model: PROVIDER_MAP[value as keyof typeof PROVIDER_MAP]?.defaultModel ?? settings.model,
-                                })}
-                            >
-                                <SelectTrigger className="border-muted/40 focus:ring-1 focus:ring-[var(--f1-green)] focus:border-[var(--f1-green)]/50 transition-all">
-                                    <SelectValue placeholder="Select provider" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {PROVIDERS.map((p) => (
-                                        <SelectItem key={p.id} value={p.id}>{p.menuLabel}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="space-y-2">
-                            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">Model Engine</Label>
-                            <Select
-                                value={settings.model}
-                                onValueChange={(value) => updateSettings({ model: value })}
-                            >
-                                <SelectTrigger className="border-muted/40 focus:ring-1 focus:ring-[var(--f1-green)] focus:border-[var(--f1-green)]/50 transition-all">
-                                    <SelectValue placeholder="Select model" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {(getProviderMeta(settings.provider)?.models ?? []).map((m) => (
-                                        <SelectItem key={m.id} value={m.id}>{m.label}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                    </div>
-
-                    {/* Custom Models Row — opens the "Add other models" dialog
-                        so the user can browse the OpenRouter catalog or paste
-                        a custom model id. Any models they add are listed
-                        alongside the built-in presets in the model picker
-                        (ControlPanel). */}
+                    {/* Current setup (read-only) — provider and models are
+                        picked from the model picker above the chat input,
+                        which also supports custom models and a dedicated
+                        planner model. */}
                     <div className="flex items-center justify-between rounded-lg border border-muted/40 p-3 bg-muted/5">
-                        <div className="space-y-0.5 min-w-0">
-                            <Label className="text-sm font-medium">Custom Models</Label>
-                            <p className="text-xs text-muted-foreground">
-                                {settings.customModels.length > 0
-                                    ? `${settings.customModels.length} model${settings.customModels.length === 1 ? "" : "s"} added`
-                                    : "Add any OpenRouter model or paste a custom id."}
+                        <div className="space-y-0.5 min-w-0 flex-1">
+                            <Label className="text-sm font-medium">Active Setup</Label>
+                            {/* Wraps (never truncates): on a 390px phone the
+                                full model id would otherwise push the dialog
+                                wider than the viewport (grid blowout). */}
+                            <p className="text-xs text-muted-foreground break-all leading-relaxed">
+                                {getProviderMeta(settings.provider)?.menuLabel ?? settings.provider}
+                                {" · "}
+                                <span className="font-mono">{settings.model}</span>
+                                {settings.plannerModel ? (
+                                    <span className="font-mono"> (planner: {settings.plannerModel})</span>
+                                ) : null}
                             </p>
-                        </div>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setIsAddModelsOpen(true)}
-                            className="shrink-0 gap-1.5"
-                        >
-                            <Sparkles className="h-3.5 w-3.5" />
-                            Add other models
-                        </Button>
-                    </div>
-
-                    {/* Sliders Section */}
-                    <div className="space-y-6 pt-2">
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center">
-                                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">Temperature</Label>
-                                <span className="text-xs font-mono text-[var(--f1-yellow)] bg-[var(--f1-yellow)]/10 px-2 py-0.5 rounded border border-[var(--f1-yellow)]/20">
-                                    {settings.temperature}
-                                </span>
-                            </div>
-                            <Slider
-                                defaultValue={[settings.temperature]}
-                                max={1}
-                                step={0.1}
-                                className="[&_.bg-primary]:bg-[var(--f1-yellow)] [&_.border-primary]:border-[var(--f1-yellow)] [&_.bg-secondary]:bg-muted/30"
-                                onValueChange={(vals) => updateSettings({ temperature: Math.round(vals[0] * 10) / 10 })}
-                            />
-                        </div>
-
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center">
-                                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70">Max Tokens</Label>
-                                <span className="text-xs font-mono text-[var(--f1-yellow)] bg-[var(--f1-yellow)]/10 px-2 py-0.5 rounded border border-[var(--f1-yellow)]/20">
-                                    {settings.maxTokens}
-                                </span>
-                            </div>
-                            <Slider
-                                defaultValue={[settings.maxTokens]}
-                                max={4000}
-                                step={100}
-                                className="[&_.bg-primary]:bg-[var(--f1-yellow)] [&_.border-primary]:border-[var(--f1-yellow)] [&_.bg-secondary]:bg-muted/30"
-                                onValueChange={(vals) => updateSettings({ maxTokens: vals[0] })}
-                            />
                         </div>
                     </div>
 
@@ -373,15 +278,6 @@ export function SettingsModal() {
                     </Button>
                 </DialogFooter>
             </DialogContent>
-            {/* The "Add other models" dialog is rendered as a child of
-                the settings dialog (rather than a sibling) so it
-                inherits the same modal stacking context. Closing
-                settings also closes the add-models dialog, which is
-                the behaviour users expect. */}
-            <AddModelsDialog
-                open={isAddModelsOpen}
-                onOpenChange={setIsAddModelsOpen}
-            />
         </Dialog>
     )
 }

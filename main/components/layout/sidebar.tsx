@@ -6,6 +6,7 @@ import { useChatStore } from "@/lib/store"
 import type { StoredSession } from "@/lib/store"
 import { useSession } from "@/lib/cf/session-context";
 import { UsageIndicator } from "@/components/layout/usage-indicator";
+import { useMediaQuery } from "@/lib/hooks/use-media-query";
 import {
     listSessions,
     createSession,
@@ -25,7 +26,27 @@ export function Sidebar() {
         isSidebarOpen,
         setSidebarOpen
     } = useChatStore();
-    const { user, signOut } = useSession();
+    const { user, signOut, googleLoginAvailable } = useSession();
+    // Mobile (<md) renders as an overlay drawer instead of squeezing
+    // the chat column; desktop keeps the collapsible rail.
+    const isDesktop = useMediaQuery("(min-width: 768px)");
+
+    // The store defaults the sidebar to open (desktop-first). On a
+    // phone that would cover the whole chat on first paint, so park
+    // it closed on mobile mounts and whenever the viewport shrinks
+    // below md. The header hamburger re-opens it as a drawer.
+    // (Mount check reads window directly so desktop SSR hydration
+    // doesn't collapse the rail.)
+    React.useEffect(() => {
+        if (typeof window !== "undefined" && window.innerWidth < 768) {
+            setSidebarOpen(false);
+        }
+    }, [setSidebarOpen]);
+    const prevDesktop = React.useRef<boolean | null>(null);
+    React.useEffect(() => {
+        if (prevDesktop.current === true && !isDesktop) setSidebarOpen(false);
+        prevDesktop.current = isDesktop;
+    }, [isDesktop, setSidebarOpen]);
 
     React.useEffect(() => {
         // Sessions are scoped to the server-issued identity cookie; user
@@ -72,10 +93,14 @@ export function Sidebar() {
         setMessages([]); // Clear messages for new chat
         // Reset panel state so the previous session's charts don't linger.
         useChatStore.setState({ visualizationData: null, graphHistory: [], activeMessageId: null });
+        // On phones the sidebar is a drawer — get out of the way.
+        if (!isDesktop) setSidebarOpen(false);
     };
 
     const handleSelectSession = async (sessionId: string) => {
         setCurrentSessionId(sessionId);
+        // On phones the sidebar is a drawer — get out of the way.
+        if (!isDesktop) setSidebarOpen(false);
         try {
             // Full resume: messages with steps/visualization/evidence/usage
             // plus session-level UI (panel data, pinned graphs, active msg).
@@ -189,10 +214,29 @@ export function Sidebar() {
     };
 
     return (
+        <>
+            {/* Mobile drawer backdrop — taps dismiss. Desktop has no
+                backdrop (the rail is in-flow). */}
+            {!isDesktop && isSidebarOpen && (
+                <button
+                    aria-label="Close session menu"
+                    onClick={() => setSidebarOpen(false)}
+                    className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[1px] md:hidden"
+                />
+            )}
         <div
+            // Off-canvas drawer content must not be focusable/tappable.
+            // (Desktop rail stays interactive — its toggle lives inside.)
+            {...(!isDesktop && !isSidebarOpen ? { inert: true } : {})}
             className={cn(
-                "flex flex-col h-screen bg-sidebar border-r border-sidebar-border transition-all duration-300 ease-in-out relative z-30 shadow-2xl", // Added shadow-2xl
-                isSidebarOpen ? "w-64" : "w-[60px]"
+                "flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 ease-in-out shadow-2xl",
+                // Mobile: fixed overlay drawer (never squeezes chat).
+                !isDesktop && "fixed inset-y-0 left-0 z-50 h-dvh w-72",
+                !isDesktop && !isSidebarOpen && "-translate-x-full",
+                !isDesktop && isSidebarOpen && "translate-x-0",
+                // Desktop: collapsible in-flow rail (unchanged).
+                isDesktop && "relative z-30 h-screen",
+                isDesktop && (isSidebarOpen ? "w-64" : "w-[60px]")
             )}
         >
             {/* Header / Toggle */}
@@ -278,17 +322,20 @@ export function Sidebar() {
                                         <span className="text-xs font-medium truncate min-w-0">
                                             {session.title || "New Chat"}
                                         </span>
-                                        <div className="relative h-6 w-6 shrink-0">
-                                            <span className="absolute inset-0 flex items-center justify-end text-[10px] font-mono tracking-wide text-muted-foreground/80 transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0">
+                                        <div className="relative h-6 w-6 shrink-0 max-md:h-9 max-md:w-9">
+                                            {/* Delta badge is hover-revealed on desktop; on
+                                                touch there is no hover, so the delete action
+                                                stays visible instead. */}
+                                            <span className="absolute inset-0 flex items-center justify-end text-[10px] font-mono tracking-wide text-muted-foreground/80 transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0 max-md:hidden">
                                                 {formatSessionDelta(session, currentSessionId === session.id)}
                                             </span>
                                             {isSidebarOpen && (
                                                 <button
                                                     onClick={(e) => handleDeleteSession(session.id, e)}
-                                                    className="absolute inset-0 flex items-center justify-center rounded-md opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 bg-sidebar-accent hover:bg-red-500/20 text-muted-foreground hover:text-f1-red"
+                                                    className="absolute inset-0 flex items-center justify-center rounded-md transition-opacity duration-150 bg-sidebar-accent hover:bg-red-500/20 text-muted-foreground hover:text-f1-red max-md:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
                                                     title="Delete Session"
                                                 >
-                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                    <Trash2 className="h-3.5 w-3.5 max-md:h-4 max-md:w-4" />
                                                 </button>
                                             )}
                                         </div>
@@ -317,7 +364,18 @@ export function Sidebar() {
                     "flex items-center rounded-md p-2 hover:bg-sidebar-accent transition-colors cursor-default overflow-hidden",
                     !isSidebarOpen && "justify-center"
                 )}>
-                    {user ? (
+                    {user?.google?.avatarUrl ? (
+                        <span className="relative h-8 w-8 shrink-0">
+                            {/* eslint-disable-next-line @next/next/no-img-element -- Google avatar from verified ID-token claim */}
+                            <img
+                                src={user.google.avatarUrl}
+                                alt=""
+                                referrerPolicy="no-referrer"
+                                className="h-8 w-8 rounded-full border border-sidebar-border object-cover"
+                            />
+                            <UsageIndicator />
+                        </span>
+                    ) : user ? (
                         <div className="relative h-8 w-8 rounded-full bg-sidebar-accent flex items-center justify-center border border-sidebar-border shrink-0 text-foreground">
                             <span className="text-[10px] font-bold">
                                 {(user.displayName || "DRV").slice(0, 3).toUpperCase()}
@@ -334,17 +392,38 @@ export function Sidebar() {
                         "flex flex-col overflow-hidden whitespace-nowrap transition-all duration-300",
                         isSidebarOpen ? "w-full opacity-100 ml-3" : "w-0 opacity-0 ml-0"
                     )}>
-                        <p className="text-xs font-medium truncate">{user?.displayName || "Driver"}</p>
-                        <button
-                            onClick={() => signOut()}
-                            className="text-[10px] text-muted-foreground hover:text-f1-red transition-colors flex items-center gap-1 mt-0.5"
-                        >
-                            <LogOut className="h-3 w-3" />
-                            SIGN OUT
-                        </button>
+                        <p className="text-xs font-medium truncate" title={user?.google?.email}>
+                            {user?.displayName || "Driver"}
+                        </p>
+                        {user?.google ? (
+                            <button
+                                onClick={() => signOut()}
+                                className="text-[10px] text-muted-foreground hover:text-f1-red transition-colors flex items-center gap-1 mt-0.5"
+                            >
+                                <LogOut className="h-3 w-3" />
+                                SIGN OUT
+                            </button>
+                        ) : googleLoginAvailable && user ? (
+                            <a
+                                href="/api/auth/google"
+                                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 mt-0.5"
+                            >
+                                <UserIcon className="h-3 w-3" />
+                                SIGN IN WITH GOOGLE
+                            </a>
+                        ) : (
+                            <button
+                                onClick={() => signOut()}
+                                className="text-[10px] text-muted-foreground hover:text-f1-red transition-colors flex items-center gap-1 mt-0.5"
+                            >
+                                <LogOut className="h-3 w-3" />
+                                NEW IDENTITY
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
         </div>
+        </>
     );
 }

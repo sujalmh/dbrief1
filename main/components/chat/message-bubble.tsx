@@ -78,9 +78,12 @@ const HighlightedText = memo(function HighlightedText({ children, season }: { ch
 
 // Memoized markdown components - defined outside component to avoid recreation
 const createMarkdownComponents = (season?: number): Components => ({
-    table: ({ ...props }) => <div className="my-4 w-full overflow-x-auto"><table className="w-full text-sm border-collapse" {...props} /></div>,
+    table: ({ ...props }) => <div className="my-4 w-full max-w-full overflow-x-auto"><table className="w-full min-w-[520px] text-sm border-collapse" {...props} /></div>,
     thead: ({ ...props }) => <thead className="bg-muted/50 text-left font-medium" {...props} />,
-    th: ({ ...props }) => <th className="px-4 py-3 font-bold border-b border-border/70 text-left" {...props} />,
+    th: ({ ...props }) => <th className="px-4 py-3 font-bold border-b border-border/70 text-left whitespace-nowrap" {...props} />,
+    // Long code/JSON dumps scroll internally instead of pushing the
+    // bubble (and the whole 390px layout) wider than the viewport.
+    pre: ({ ...props }) => <pre className="max-w-full overflow-x-auto rounded-lg bg-muted/50 p-3 text-xs leading-relaxed" {...props} />,
     hr: ({ ...props }) => <hr className="my-8 border-muted" {...props} />,
     h1: ({ ...props }) => <h1 className="mt-6 mb-4 text-2xl font-black uppercase italic tracking-widest text-foreground border-b border-[var(--f1-red)] pb-2" {...props} />,
     h2: ({ ...props }) => <h2 className="mt-5 mb-3 text-lg font-bold uppercase italic tracking-wider text-foreground" {...props} />,
@@ -252,7 +255,9 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
         <div className={cn(
             "flex items-center gap-1",
             isUser
-                ? "opacity-0 group-hover:opacity-100 transition-opacity self-center mr-2"
+                // Hover-reveal on desktop; touch has no hover so the
+                // actions stay visible on phones.
+                ? "opacity-0 group-hover:opacity-100 max-md:opacity-100 transition-opacity self-center mr-2"
                 : "mt-2 justify-start"
         )}>
             <Tooltip>
@@ -312,7 +317,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
     );
 
     return (
-        <div ref={containerRef} className={cn("group flex w-full gap-3 p-4", isUser ? "flex-row-reverse" : "flex-row")}>
+        <div ref={containerRef} className={cn("group flex w-full gap-2 md:gap-3 p-3 md:p-4", isUser ? "flex-row-reverse" : "flex-row")}>
             <Avatar className={cn("h-8 w-8 border", isUser ? "bg-muted/50 border-[var(--f1-red)]" : "bg-background")}>
                 <AvatarFallback className={cn("text-xs font-bold", isUser ? "text-[var(--f1-red)] bg-transparent" : "bg-background text-foreground")}>
                     {isUser ? "DRV" : "PIT"}

@@ -314,4 +314,47 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* --- Mobile hardening ---------------------------------------- */
+  html,
+  body {
+    /* 100vh fallback for browsers without dynamic viewport units;
+       Tailwind's h-dvh (100dvh) wins where supported so the iOS
+       address bar show/hide doesn't jump the layout. */
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  button,
+  [role="button"] {
+    /* Kill tap highlight + double-tap zoom delay on controls. */
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  /* iOS Safari zooms on focus when text is <16px — that zoom breaks
+     the fixed chat layout, so form controls never go below 16px. */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  .overflow-x-auto,
+  .overflow-y-auto {
+    /* Momentum scrolling on iOS for tables, charts, drawers. */
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Mobile visualization overlay height tracks the *dynamic* viewport
+   (100dvh) where supported, falling back to 100vh. Matches the
+   h-14 mobile header (3.5rem). */
+.viz-mobile-height {
+  height: calc(100vh - 3.5rem);
+}
+@supports (height: 100dvh) {
+  .viz-mobile-height {
+    height: calc(100dvh - 3.5rem);
+  }
 }

@@ -31,7 +31,7 @@ loadDotenv({ path: path.resolve(__dirname, "../.env.local") });
 const MODEL = "muse-spark-1.3-contributor";
 const GO_BASE_URL = "https://opencode.ai/zen/go/v1";
 const RESPONSES_URL = `${GO_BASE_URL}/responses`;
-const OPENCODE_USER_AGENT = "f1-ai-chatbot/1.0";
+const OPENCODE_USER_AGENT = "dbrief1/1.0";
 const OPENCODE_SESSION_HEADER = "x-opencode-session";
 
 function buildOpenCodeHeaders(sessionId) {

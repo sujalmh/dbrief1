@@ -1,5 +1,5 @@
 /**
- * Test Prompts for F1 Chatbot Testing
+ * Test Prompts for Dbrief1 Testing
  * ====================================
  * Comprehensive test prompts organized by category
  */

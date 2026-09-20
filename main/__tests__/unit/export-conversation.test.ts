@@ -91,7 +91,7 @@ describe("exportToMarkdown", () => {
 
     it("falls back to the default title when none is provided", () => {
         const md = exportToMarkdown(sampleMessages, { generatedAt: "x" })
-        expect(md).toContain("# F1 Telemetry Conversation")
+        expect(md).toContain("# Dbrief1 Conversation")
     })
 })
 

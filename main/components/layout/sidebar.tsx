@@ -249,7 +249,7 @@ export function Sidebar() {
                     isSidebarOpen ? "w-full opacity-100" : "w-0 opacity-0"
                 )}>
                     <div className="font-orbitron font-bold text-sm tracking-wider text-f1-red whitespace-nowrap flex-1">
-                        F1 TELEM.AI
+                        DBRIEF1
                     </div>
                 </div>
 

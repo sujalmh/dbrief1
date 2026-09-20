@@ -64,13 +64,16 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
   (2000/5000) + sim metering from executed tool results; 10-provisions/
   IP/day anti-farming in `/api/cf/me`. Fail-open on D1 errors,
   `QUOTAS_ENABLED=false` kill-switch, `ADMIN_UIDS` bypass. Live-verified
-  deny + allow paths. `IP_HASH_SALT`/`QUOTAS_ENABLED` set on Vercel
+  deny + allow paths.   `IP_HASH_SALT`/`QUOTAS_ENABLED` set on Vercel
   (prod+dev) and `.env.local`; full reference in `env.example`. Tests:
   `__tests__/unit/quotas.test.ts` (14 green). Deployed to production
   2026-09-17 via `vercel deploy --prod` (all working-tree changes incl. CF
   migration + quotas + indicator + sim fixes; `.vercelignore` added to keep
   uploads small); prod `/api/cf/health` → `ok:true d1:true r2:true`.
   Tightened caps: free 20 chats/3 sims, IP 2× (40/6), BYOK 100/10/20.
+  Commit c9fc3f9 pushed + auto-deployed; prod verified: health ok,
+  `/api/auth/google` 307s to Google with correct client/redirect,
+  anonymous chat → 401 `auth_required`, quota caps live as tightened.
 - [x] **Direct Google OAuth, no Firebase:** optional "Sign in
   with Google" in the sidebar footer (hidden until configured; app stays
   passwordless-first). Plain OAuth 2.0 code flow in `main/lib/auth/

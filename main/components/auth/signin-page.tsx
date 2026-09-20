@@ -29,10 +29,10 @@ export function SignInPage() {
 
                 <div className="space-y-2">
                     <h1 className="text-3xl font-bold tracking-tighter text-white">
-                        F1 TELEMETRY<span className="text-f1-red">.AI</span>
+                        DBRIEF<span className="text-f1-red">1</span>
                     </h1>
                     <p className="text-muted-foreground text-sm font-medium tracking-wide">
-                        ADVANCED RACE ANALYTICS &amp; STRATEGY
+                        RACE ENGINEERING &amp; STRATEGY ANALYSIS
                     </p>
                 </div>
 

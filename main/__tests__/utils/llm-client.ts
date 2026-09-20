@@ -1,5 +1,5 @@
 /**
- * LLM Test Client for F1 Chatbot Testing
+ * LLM Test Client for Dbrief1 Testing
  * =======================================
  * Uses the cheapest OpenCode Go model (Muse Spark 1.3 Contributor:
  * $0.10/1M in, $0.20/1M out — highest request allowance on Go).
@@ -52,7 +52,7 @@ export function createTestModel(temperature: number = 0): BaseChatModel {
             // Required by Go: own user agent + stable per-conversation session
             // for routing and prompt caching. See: https://opencode.ai/docs/go/
             defaultHeaders: {
-                'User-Agent': 'f1-ai-chatbot/1.0',
+                'User-Agent': 'dbrief1/1.0',
                 'x-opencode-session': 'f1-local-tests',
             },
         },

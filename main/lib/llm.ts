@@ -59,7 +59,7 @@ export { GO_BASE_URL, ZEN_BASE_URL } from "./providers";
  * requests can be routed + prompt-cached.
  * See: https://opencode.ai/docs/go ("Where can I use it?")
  */
-export const OPENCODE_USER_AGENT = "f1-ai-chatbot/1.0";
+export const OPENCODE_USER_AGENT = "dbrief1/1.0";
 export const OPENCODE_SESSION_HEADER = "x-opencode-session";
 
 // =============================================================================

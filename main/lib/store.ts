@@ -527,7 +527,7 @@ export const useChatStore = create<ChatStore>()(
                 })),
         }),
         {
-            name: 'f1-chat-storage',
+            name: 'dbrief1-storage',
             storage: createJSONStorage(() => idbStorage),
             // Persist settings, messages (which carry chartSpecs for
             // deep-research mode), the active visualization payload, the

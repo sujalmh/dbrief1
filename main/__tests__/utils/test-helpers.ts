@@ -1,7 +1,7 @@
 /**
  * Test Helper Utilities
  * =====================
- * Assertion helpers for F1 chatbot testing
+ * Assertion helpers for Dbrief1 testing
  */
 
 import { Plan, Step } from '@/lib/planner'

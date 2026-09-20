@@ -1,6 +1,6 @@
 /**
- * F1 AI Chatbot API Route
- * ========================
+ * Dbrief1 Chat API Route
+ * ======================
  * Main API endpoint that orchestrates F1 data queries using LangChain JS.
  * Follows the planner → executor → responder pattern.
  *
@@ -1151,7 +1151,7 @@ export async function GET() {
     return Response.json({
         status: "ok",
         version: "1.0.0",
-        description: "F1 AI Chatbot API - Use POST to send messages",
+        description: "Dbrief1 Chat API - Use POST to send messages",
         endpoints: {
             "POST /api/chat": {
                 description: "Send a chat message",

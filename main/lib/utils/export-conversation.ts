@@ -27,7 +27,7 @@ export interface ExportOptions {
     prettyJson?: boolean;
 }
 
-const DEFAULT_TITLE = "F1 Telemetry Conversation";
+const DEFAULT_TITLE = "Dbrief1 Conversation";
 
 /**
  * Build a Markdown representation of the given messages. Reasoning, steps,

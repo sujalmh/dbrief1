@@ -16,8 +16,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "F1 AI Companion",
-  description: "AI-powered Formula 1 data analyst",
+  title: "Dbrief1",
+  description: "Race-engineering analysis for Formula 1",
 };
 
 // Mobile-first viewport: device width, no auto-zoom shrink, notch

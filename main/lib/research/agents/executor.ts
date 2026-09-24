@@ -19,6 +19,7 @@ import type { EvidenceStore } from "../evidence-store";
 import type { ResearchMemory } from "../memory";
 import type { Task, TaskStatus, Evidence } from "../types";
 import type { ExecutionResult } from "../evidence-store";
+import { findPlaceholderArg, placeholderError, PLACEHOLDER_ERROR_PREFIX } from "@/lib/args-guard";
 
 // =============================================================================
 // Configuration
@@ -29,6 +30,9 @@ const MAX_RETRIES = 2;
 
 function isRetryableError(error: unknown): boolean {
     const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes(PLACEHOLDER_ERROR_PREFIX)) {
+        return false;
+    }
     if (msg.includes("400") || msg.includes("401") || msg.includes("403") || msg.includes("404")) {
         return false;
     }
@@ -192,6 +196,25 @@ export class Executor {
         }
 
         onUpdate?.({ taskId: task.id, status: "running" });
+
+        // Fail closed on placeholder args (e.g. gp="LAST_COMPLETED_GP"):
+        // the FastF1 backend fuzzy-matches unknown strings to *some* event
+        // instead of failing, so executing would poison the evidence store
+        // with wrong-race data. Checked before schema validation (which may
+        // strip unknown keys) so the original values are always inspected.
+        const placeholder = findPlaceholderArg(resolvedArgs);
+        if (placeholder) {
+            const errorMsg = placeholderError(task.tool, placeholder);
+            onUpdate?.({ taskId: task.id, status: "failed", error: errorMsg });
+            return {
+                taskId: task.id,
+                tool: task.tool,
+                args: resolvedArgs,
+                success: false,
+                error: errorMsg,
+                durationMs: Date.now() - startTime,
+            };
+        }
 
         // Validate args against tool schema. Some tool schemas are
         // JSON-schema objects without a parse method, so guard with a

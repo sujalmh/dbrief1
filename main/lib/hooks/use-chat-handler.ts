@@ -135,6 +135,19 @@ export function useChatHandler() {
 
             abortControllerRef.current = new AbortController()
 
+            // Conversation history for follow-up resolution (server-side
+            // planner + intent analyzer). Last 10 non-empty turns, content
+            // capped so the body stays small (schema allows 50 x 8000).
+            // The just-added current user message is excluded — `message`
+            // already carries it.
+            const history = useChatStore.getState().messages
+                .filter((m) => m.id !== userMsgId && m.content && m.content.trim())
+                .slice(-10)
+                .map((m) => ({
+                    role: m.role as "user" | "assistant",
+                    content: m.content.slice(0, 2000),
+                }));
+
             const response = await fetch("/api/chat", {
                 method: "POST",
                 headers: {
@@ -152,7 +165,8 @@ export function useChatHandler() {
                     deepResearchMode: state.settings.deepResearchMode,
                     web_search: state.settings.webSearchEnabled,
                     sessionId: effectiveSessionId,
-                    isFirstMessage
+                    isFirstMessage,
+                    history
                 }),
                 signal: abortControllerRef.current.signal
             })
@@ -215,6 +229,8 @@ export function useChatHandler() {
                         ...(storeMsg?.confidence ? { confidence: storeMsg.confidence } : {}),
                         ...(storeMsg?.reflections ? { reflections: storeMsg.reflections } : {}),
                         ...(storeMsg?.chartSpecs ? { chartSpecs: storeMsg.chartSpecs } : {}),
+                        ...(storeMsg?.planTrace ? { planTrace: storeMsg.planTrace } : {}),
+                        ...(storeMsg?.refusal ? { refusal: storeMsg.refusal } : {}),
                     };
                     const sid = effectiveSessionId;
                     const s = useChatStore.getState();
@@ -285,6 +301,40 @@ export function useChatHandler() {
                                                 : {}),
                                         }))
                                         useChatStore.getState().updateMessageSteps(assistantMsgId, currentSteps)
+                                        // Plan-decision trace: persisted with the
+                                        // message so every turn (including
+                                        // no-tool direct replies) records WHY
+                                        // the backend chose its path.
+                                        useChatStore.getState().setMessagePlanTrace(assistantMsgId, {
+                                            needsPlan: data.needsPlan !== false,
+                                            ...(typeof data.reasoning === "string" && data.reasoning
+                                                ? { reasoning: data.reasoning.slice(0, 2000) }
+                                                : {}),
+                                            ...(typeof data.replyPreview === "string" && data.replyPreview
+                                                ? { replyPreview: data.replyPreview.slice(0, 500) }
+                                                : {}),
+                                        })
+                                        break
+                                    case "refusal":
+                                        // Backend refused (no tool data) — persist
+                                        // the reason + failed steps with the
+                                        // message so the trace shows WHY.
+                                        useChatStore.getState().setMessageRefusal(assistantMsgId, {
+                                            reason: typeof data.reason === "string" ? data.reason : "unknown",
+                                            ...(Array.isArray(data.failedSteps)
+                                                ? {
+                                                    failedSteps: data.failedSteps.slice(0, 25).map((s: {
+                                                        step?: unknown; tool?: unknown; error?: unknown
+                                                    }) => ({
+                                                        step: typeof s.step === "number" ? s.step : 0,
+                                                        tool: typeof s.tool === "string" ? s.tool : "",
+                                                        ...(typeof s.error === "string" && s.error
+                                                            ? { error: s.error.slice(0, 2000) }
+                                                            : {}),
+                                                    })),
+                                                }
+                                                : {}),
+                                        })
                                         break
                                     case "step_update":
                                         const stepIndex = (typeof data.step === 'number' ? data.step : parseInt(data.step)) - 1
@@ -392,9 +442,10 @@ export function useChatHandler() {
                                         break
                                     case "intent_analysis":
                                         // (Normal mode) Backend has the structured intent
-                                        // breakdown. Nothing to do UI-side today — the planner
-                                        // already consumed it server-side. Kept for parity with
-                                        // deep mode in case future UI surfaces it.
+                                        // breakdown. Nothing to do UI-side today — the
+                                        // planner resolves follow-ups from the history
+                                        // it now receives server-side. Kept for parity
+                                        // with deep mode in case future UI surfaces it.
                                         break
                                     case "intent_analysis_unavailable":
                                         // The backend's IntentAnalyzer couldn't reach the

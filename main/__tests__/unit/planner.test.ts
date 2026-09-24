@@ -382,11 +382,23 @@ describe('decidePlan', () => {
         }));
         const model = stubModel(JSON.stringify({ needs_plan: true, reasoning: 't', steps }));
 
-        const decision = await decidePlan(model, 'news?', false, false);
+        const decision = await decidePlan(model, 'Tell me about Monaco 2024', false, false);
 
         expect(decision.needsPlan).toBe(true);
         expect(decision.plan.steps.every((s) => s.tool !== 'web_search')).toBe(true);
         expect(decision.plan.steps.length).toBeLessThanOrEqual(5);
+    });
+
+    it('auto-allows web_search for recency queries even when disabled', async () => {
+        const steps = [
+            { description: 'Search news', tool: 'web_search', args: { query: 'last F1 race winner', domain_type: 'news' } },
+        ];
+        const model = stubModel(JSON.stringify({ needs_plan: true, reasoning: 't', steps }));
+
+        const decision = await decidePlan(model, 'Who won the last race?', false, false);
+
+        expect(decision.needsPlan).toBe(true);
+        expect(decision.plan.steps.some((s) => s.tool === 'web_search')).toBe(true);
     });
 
     it('throws on non-JSON responses instead of inventing a plan', async () => {

@@ -58,6 +58,8 @@ export interface FullMessageDoc extends StoredMessageRow {
     confidence?: NonNullable<Message["confidence"]>;
     reflections?: NonNullable<Message["reflections"]>;
     chartSpecs?: NonNullable<Message["chartSpecs"]>;
+    planTrace?: NonNullable<Message["planTrace"]>;
+    refusal?: NonNullable<Message["refusal"]>;
 }
 
 /** Session-level UI state persisted to the session doc `context`. */
@@ -262,6 +264,27 @@ export function buildFullMessageDoc(userId: string, message: Message): FullMessa
             title: String(s.title ?? "").slice(0, 256),
         }));
     }
+    if (message.planTrace) {
+        docBase.planTrace = {
+            needsPlan: !!message.planTrace.needsPlan,
+            ...(message.planTrace.reasoning ? { reasoning: String(message.planTrace.reasoning).slice(0, 2000) } : {}),
+            ...(message.planTrace.replyPreview ? { replyPreview: String(message.planTrace.replyPreview).slice(0, 500) } : {}),
+        };
+    }
+    if (message.refusal) {
+        docBase.refusal = {
+            reason: String(message.refusal.reason ?? "").slice(0, 128),
+            ...(Array.isArray(message.refusal.failedSteps) && message.refusal.failedSteps.length > 0
+                ? {
+                    failedSteps: message.refusal.failedSteps.slice(0, 25).map((s) => ({
+                        step: Math.max(0, Math.round(s.step ?? 0)),
+                        tool: String(s.tool ?? "").slice(0, 128),
+                        ...(typeof s.error === "string" && s.error ? { error: s.error.slice(0, 2000) } : {}),
+                    })),
+                }
+                : {}),
+        };
+    }
     return docBase;
 }
 
@@ -311,5 +334,11 @@ export function docToMessage(id: string, data: Record<string, unknown>): Message
     }
     if (Array.isArray(data.reflections)) msg.reflections = data.reflections as Message["reflections"];
     if (Array.isArray(data.chartSpecs)) msg.chartSpecs = data.chartSpecs as Message["chartSpecs"];
+    if (typeof data.planTrace === "object" && data.planTrace !== null && !Array.isArray(data.planTrace)) {
+        msg.planTrace = data.planTrace as Message["planTrace"];
+    }
+    if (typeof data.refusal === "object" && data.refusal !== null && !Array.isArray(data.refusal)) {
+        msg.refusal = data.refusal as Message["refusal"];
+    }
     return msg;
 }

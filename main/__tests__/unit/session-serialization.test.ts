@@ -77,6 +77,37 @@ describe("session-io buildFullMessageDoc", () => {
         expect(msg.evidence).toHaveLength(1);
         expect(msg.usage?.model).toBe("x/y");
     });
+
+    it("persists the plan-decision trace even for no-tool direct replies", () => {
+        const doc = buildFullMessageDoc(
+            "u1",
+            assistantMessage({
+                steps: undefined,
+                planTrace: { needsPlan: false, reasoning: "Greeting", replyPreview: "Hey!" },
+            })
+        );
+        expect(doc.planTrace?.needsPlan).toBe(false);
+        expect(doc.planTrace?.replyPreview).toBe("Hey!");
+        const msg = docToMessage("m_1", doc as unknown as Record<string, unknown>);
+        expect(msg.planTrace?.needsPlan).toBe(false);
+        expect(msg.planTrace?.reasoning).toBe("Greeting");
+    });
+
+    it("persists the refusal trace with failed steps", () => {
+        const doc = buildFullMessageDoc(
+            "u1",
+            assistantMessage({
+                refusal: {
+                    reason: "all_steps_failed",
+                    failedSteps: [{ step: 2, tool: "get_race", error: "Placeholder argument rejected" }],
+                },
+            })
+        );
+        expect(doc.refusal?.reason).toBe("all_steps_failed");
+        expect(doc.refusal?.failedSteps).toHaveLength(1);
+        const msg = docToMessage("m_1", doc as unknown as Record<string, unknown>);
+        expect(msg.refusal?.failedSteps?.[0]?.tool).toBe("get_race");
+    });
 });
 
 describe("session-io truncation fallback", () => {

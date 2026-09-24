@@ -216,7 +216,16 @@ const RESPONDER_SYSTEM_PROMPT = `You are an expert Formula 1 AI assistant with d
 - Use tables for comparisons when appropriate
 - Bold important information
 - Keep responses focused and relevant
-- When the F1 Data Context contains \`retrieve_regulations\` results, base every regulation/decision claim on the retrieved documents, preferring higher \`relevance_score\` hits`;
+- When the F1 Data Context contains \`retrieve_regulations\` results, base every regulation/decision claim on the retrieved documents, preferring higher \`relevance_score\` hits
+
+## Recency Answers (latest / last race / current — web-backed)
+- When the context contains \`web_search\` results, answer from them — NOT from training data. Prefer \`domain_type: news\` hits and \`fetch_web_pages\` extractions over bare snippets.
+- ALWAYS name the event (Grand Prix + year + date) you are reporting on, cite each source inline as [title](url), and state the result date ("as of <date>").
+- If the sources disagree or none names a winner, say so explicitly instead of picking one.
+- NEVER present FastF1 tool data as "the latest" unless you verified its event date against the current date in the context — FastF1 lookups resolve a NAMED event, not "latest".
+
+## Race-Result Grounding
+- Every race answer MUST name the Grand Prix and year the data came from (it is in the tool payload). "The most recent race" is never an acceptable substitute for the event name.`;
 
 // =============================================================================
 // Main API Handler
@@ -670,7 +679,8 @@ export async function POST(request: NextRequest) {
                                     plannerModel,
                                     message,
                                     effectiveWebSearch,
-                                    deepResearchMode
+                                    deepResearchMode,
+                                    history
                                 );
                             } catch (firstError) {
                                 // Retry once on gateway timeout/abort: the
@@ -683,7 +693,8 @@ export async function POST(request: NextRequest) {
                                     plannerModel,
                                     message,
                                     effectiveWebSearch,
-                                    deepResearchMode
+                                    deepResearchMode,
+                                    history
                                 );
                             }
                         })();
@@ -773,8 +784,18 @@ export async function POST(request: NextRequest) {
                         plan = createFallbackPlan(message);
                     }
 
-                    // Send plan to frontend
-                    sendEvent("plan", { steps: plan.steps });
+                    // Send plan to frontend. The reasoning + needsPlan flag
+                    // travel with it so every turn — including direct
+                    // replies with no tool calls — leaves a decision trace
+                    // the client persists (closes the trace gap).
+                    sendEvent("plan", {
+                        steps: plan.steps,
+                        reasoning: plan.reasoning ?? null,
+                        needsPlan: directReply === undefined,
+                        ...(directReply !== undefined
+                            ? { replyPreview: directReply.slice(0, 300) }
+                            : {}),
+                    });
 
                     // Clamp simulation iterations to the caller's tier cap
                     // (CPU + persisted-payload guard). Deep-research plans
@@ -819,17 +840,19 @@ export async function POST(request: NextRequest) {
                             ...getSearchTools(), // Always include in deep mode
                         };
                     } else {
-                        // Normal Mode: Data API + Retrieval + Simulation.
-                        // run_simulation is included (not gated on deep mode)
-                        // because the planner advertises what-if queries for
-                        // every request — and it is a local deterministic
-                        // tool with no backend cost. Web search stays
-                        // deep-mode-only (or explicit opt-in) to avoid
-                        // surprise external calls.
+                        // Normal Mode: Data API + Retrieval + Simulation +
+                        // Web (search + fetch). Web tools are always
+                        // registered — the planner prompt scopes them: full
+                        // access when the user enabled web search, otherwise
+                        // recency-only auto-allow (latest/last-race/news).
+                        // Without TINYFISH_API_KEY they fail soft (a
+                        // "not configured" payload, never a throw), so
+                        // registering them is safe.
                         tools = {
                             ...f1Tools,
                             ...getRegulationTools(),
                             ...getSimulationTools(),
+                            ...getSearchTools(),
                         };
                     }
 
@@ -908,10 +931,20 @@ export async function POST(request: NextRequest) {
                     const allFailed = executionContext.failureCount > 0 && executionContext.successCount === 0;
                     const contextEmpty = !contextString || contextString.trim() === "" || contextString.includes("No data was retrieved");
                     if (allFailed || contextEmpty) {
+                        const failedSteps = executionContext.results
+                            .filter((r) => !r.success)
+                            .map((r) => ({ step: r.step, tool: r.tool, error: r.error || "unknown error" }));
+                        // Persist the refusal decision (reason + failed
+                        // steps) as its own event before the refusal text
+                        // streams — otherwise this path leaves no trace of
+                        // WHY no tools produced data.
+                        sendEvent("refusal", {
+                            reason: allFailed ? "all_steps_failed" : "context_empty",
+                            failedSteps,
+                        });
                         const refusalMsg = "I was unable to retrieve any F1 data for your query. This may be due to an invalid Grand Prix name, session type, or year. Please verify the details and try again.\n\n**What went wrong:**\n" +
-                            executionContext.results
-                                .filter((r) => !r.success)
-                                .map((r) => `- Step ${r.step} (${r.tool}): ${r.error || "unknown error"}`)
+                            failedSteps
+                                .map((r) => `- Step ${r.step} (${r.tool}): ${r.error}`)
                                 .join("\n");
                         sendEvent("token", { content: refusalMsg });
                         sendEvent("done", {});

@@ -184,6 +184,26 @@ export interface Message {
     confidence?: ConfidenceScore
     reflections?: ResearchReflection[]
     chartSpecs?: ChartSpec[]
+    /**
+     * Plan-decision trace. Set for EVERY assistant turn — including
+     * direct replies with no tool calls — so the persisted trace always
+     * records why the backend chose its path (closes the trace gap).
+     */
+    planTrace?: {
+        needsPlan: boolean
+        reasoning?: string
+        /** First chars of the direct reply (needsPlan=false only). */
+        replyPreview?: string
+    }
+    /**
+     * Refusal trace. Set when the backend answered without tool data
+     * (all steps failed or context empty) instead of calling the
+     * responder LLM.
+     */
+    refusal?: {
+        reason: string
+        failedSteps?: { step: number; tool: string; error?: string }[]
+    }
 }
 
 export type AiModeSetting = "managed" | "byok";
@@ -299,6 +319,22 @@ interface ChatStore {
     setMessageUsage: (
         id: string,
         usage: NonNullable<Message['usage']>
+    ) => void
+    /**
+     * Attach the backend's plan-decision trace to a message. Sent with
+     * every `plan` SSE event (including needsPlan=false direct replies).
+     */
+    setMessagePlanTrace: (
+        id: string,
+        trace: NonNullable<Message['planTrace']>
+    ) => void
+    /**
+     * Attach the backend's refusal trace to a message. Sent with the
+     * `refusal` SSE event when the backend answers without tool data.
+     */
+    setMessageRefusal: (
+        id: string,
+        refusal: NonNullable<Message['refusal']>
     ) => void
     setVisualizationData: (data: unknown) => void
     addGraphToHistory: (name: string, type: GraphHistoryItem['type'], data: unknown) => void
@@ -443,6 +479,22 @@ export const useChatStore = create<ChatStore>()(
                     messages: state.messages.map(msg =>
                         msg.id === id
                             ? { ...msg, usage }
+                            : msg
+                    )
+                })),
+            setMessagePlanTrace: (id, trace) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id
+                            ? { ...msg, planTrace: trace }
+                            : msg
+                    )
+                })),
+            setMessageRefusal: (id, refusal) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id
+                            ? { ...msg, refusal }
                             : msg
                     )
                 })),

@@ -66,7 +66,8 @@ Available Tools (FastAPI):
 
 - get_driver_standings(year, driver?): Final driver standings (points, wins).
 - retrieve_regulations(query, season, section, doc_type?, event?): Search FIA regulations + stewards' decisions (section: Sporting, Technical, Financial; doc_type: regulation or decision; event e.g. "Austrian Grand Prix" for decisions). Returns relevant chunks with source citations.
-- web_search(query): For news/current events ONLY.
+- web_search(query, domain_type?, recency_minutes?, after_date?, before_date?): TinyFish web search. REQUIRED for latest/most-recent/last-race/current/news questions — use domain_type="news" plus a recency window (e.g. recency_minutes=10080 for the last 7 days). Returns sources with title/url/snippet/publisher/date.
+- fetch_web_pages(urls, question?): TinyFish page extraction (clean markdown). Use AFTER web_search on the top 1-3 URLs to verify key facts before answering. NOT a substitute for searching.
 
 Simulation Tool:
 - run_simulation(scenario_id, horizon, metric, iterations?, base_value?, variance?, seed?): Run counterfactual/predictive simulations for "what-if" analysis.
@@ -100,28 +101,31 @@ Rules:
 3. Use 3-letter driver codes (NOR, not "Lando Norris"). If unsure of a driver's code for a specific year, plan a get_results or get_driver_standings call first to discover it.
 4. For race: use session="R". For qualifying: use session="Q".
 5. Always use correct GP names: "Abu Dhabi" (not "abu dhabi 23"). If unsure of the canonical GP name, include a get_gp_names(year) or get_events(year) step FIRST to discover valid names.
-6. **YEAR RANGE**: Years 1950-${PLANNER_CURRENT_YEAR} are supported with different data availability:
+6. **CONCRETE ARGS ONLY (no placeholders, ever)**: Every step's args must be fully concrete values — a real GP name, a real driver code, a real year. NEVER emit placeholder tokens like LAST_COMPLETED_GP, LATEST, TBD, "latest", "previous", or "current" in any structured arg (gp, driver, session, year, ...). Steps are validated before execution and placeholders are rejected, failing the step. If the GP/year is genuinely unknown, plan ONLY discovery steps (get_gp_names / get_events / web_search) with a concrete year — NO dependent data steps in the same plan.
+7. **RECENCY ("latest" / "last race" / "most recent" / "current" / news)**: NEVER resolve these with FastF1 tools — you cannot know which GP was last without searching, and guessing a GP returns the wrong race. ALWAYS plan web_search first (domain_type="news", recency_minutes covering the question, e.g. 10080 for ~last week), then fetch_web_pages on the top URLs to verify. FastF1 tools are for NAMED GP + year analysis only.
+8. **FOLLOW-UPS**: The conversation history (below, when present) is authoritative for pronouns and references — "that race", "the winner", "his fastest lap", "compare them" MUST be resolved from history into concrete args (GP name, year, driver codes). Only ask for clarification (needs_plan=false) when history contains no resolvable entity.
+9. **YEAR RANGE**: Years 1950-${PLANNER_CURRENT_YEAR} are supported with different data availability:
    - **1950-2017**: Use ergast tools ONLY (get_driver_standings, get_race, get_qualifying). NO telemetry/laps/weather available.
    - **2018-${PLANNER_PRE_TELEMETRY_LAST_YEAR}**: All tools available including telemetry, laps, weather, etc.
    - **${PLANNER_CURRENT_YEAR} (current season)**: Sessions that have already finished are available. Live / in-progress sessions are blocked at the API layer for cost protection; if the user asks about a session that is currently running, fall back to web_search for live updates.
    Example for "Senna 1994 championship": {"steps": [{"tool": "get_driver_standings", "args": {"year": 1994}}], "reasoning": "1994 is pre-2018, using ergast API for standings."}
    Example for "1994 Monaco race telemetry": {"steps": [], "reasoning": "Telemetry not available for 1994. Only standings and results available for pre-2018 seasons."}
    Example for "${PLANNER_CURRENT_YEAR} Australian GP results": {"needs_plan": true, "reasoning": "Current-season completed race results are available via FastF1.", "steps": [{"description": "Get race results", "tool": "get_race", "args": {"year": ${PLANNER_CURRENT_YEAR}, "gp": "Australia"}}]}
-7. **TOOL SELECTION**:
+10. **TOOL SELECTION**:
    - Use get_telemetry for comparisons and visualization queries
    - Use get_telemetry_summary only when user explicitly asks for "stats" or "summary"
    - Use get_fastest_lap for single lap analysis
-8. **WHAT-IF / HYPOTHETICAL QUERIES**: Use run_simulation for:
+11. **WHAT-IF / HYPOTHETICAL QUERIES**: Use run_simulation for:
    - "What if X didn't happen?" (counterfactuals)
    - "What would happen if...?" (predictions)
    - "How would X affect Y?" (impact analysis)
    - "Simulate...", "Project...", "Predict..." queries
    DO NOT use LLM reasoning for hypotheticals. Always use run_simulation with appropriate parameters.
-9. **DATA-DRIVEN SIMULATIONS**: For what-if queries about specific races/events:
+12. **DATA-DRIVEN SIMULATIONS**: For what-if queries about specific races/events:
    - Step 1: Fetch relevant historical data (get_laps, get_race, etc.) to ground the simulation
    - Step 2: Run simulation with base_value/variance informed by the fetched data
    This ensures simulations are based on REAL data, not guessed parameters.
-10. **PENALTIES / STEWARDS' DECISIONS**: Queries about penalties, fines, disqualifications,
+13. **PENALTIES / STEWARDS' DECISIONS**: Queries about penalties, fines, disqualifications,
     investigations, protests, or appeals MUST use retrieve_regulations with doc_type="decision".
     Results/telemetry endpoints contain NO penalty data — never use get_events, get_race,
     or get_results for these. Use season=<year from query>; include event only when the
@@ -152,11 +156,39 @@ Output: {"needs_plan": true, "reasoning": "Counterfactual needs real lap data fi
 
 Example D (penalty / stewards' decision):
 Input: "Who got the first penalty in 2024?"
-Output: {"needs_plan": true, "reasoning": "Penalty question needs stewards' decision documents, not results.", "steps": [{"description": "Search 2024 stewards' decisions for penalties", "tool": "retrieve_regulations", "args": {"query": "penalty", "season": 2024, "section": "Sporting", "doc_type": "decision"}}]}`;
+Output: {"needs_plan": true, "reasoning": "Penalty question needs stewards' decision documents, not results.", "steps": [{"description": "Search 2024 stewards' decisions for penalties", "tool": "retrieve_regulations", "args": {"query": "penalty", "season": 2024, "section": "Sporting", "doc_type": "decision"}}]}
+
+Example E (recency — NEVER guess a GP):
+Input: "Who won the last race?"
+Output: {"needs_plan": true, "reasoning": "Recency question needs web search, not a guessed GP.", "steps": [{"description": "Search news for the most recent F1 race winner", "tool": "web_search", "args": {"query": "most recent Formula 1 race winner", "domain_type": "news", "recency_minutes": 10080}}, {"description": "Verify winner on top sources", "tool": "fetch_web_pages", "args": {"urls": ["https://www.formula1.com/en/latest/article/..."], "question": "Who won the most recent Formula 1 race?"}}]}`;
 
 // =============================================================================
 // Conversational Detection + Shared Planner Helpers
 // =============================================================================
+
+/**
+ * A single conversation turn passed to the planner so follow-ups
+ * ("in that race", "his fastest lap", "compare them") can be resolved
+ * into concrete args. Content should be pre-truncated by the caller.
+ */
+export interface ChatHistoryItem {
+    role: "user" | "assistant";
+    content: string;
+}
+
+/**
+ * True when the message asks about recency: latest / last race /
+ * most recent / current standings / news. Recency questions MUST be
+ * answered from web search (TinyFish), never by pointing FastF1 tools
+ * at a guessed or placeholder GP — the FastF1 backend fuzzy-matches
+ * unknown GP strings to *some* event instead of failing, which
+ * produces confidently-wrong "latest winner" answers (observed in prod).
+ */
+export function isRecencyQuery(message: string): boolean {
+    return /\b(latest|most\s+recent|last\s+(race|grand\s*prix|gp|round|weekend|event)|who\s+won\s+(the\s+)?(last|latest)|just\s+(happened|finished|ended|announced)|breaking|this\s+week|current\s+(standings|season|championship|driver|drivers)|news\b)/i.test(
+        message
+    );
+}
 
 // =============================================================================
 // Decide + Plan (single model call)
@@ -183,7 +215,8 @@ function resolveDecision(
     parsed: unknown,
     extractedReasoning: string | undefined,
     webSearchEnabled: boolean,
-    deepResearchMode: boolean
+    deepResearchMode: boolean,
+    webRecencyOnly: boolean = false
 ): PlanDecision {
     if (typeof parsed !== "object" || parsed === null) {
         throw new Error(`Failed to parse planner response as JSON`);
@@ -194,7 +227,7 @@ function resolveDecision(
     if (!("needs_plan" in obj)) {
         return {
             needsPlan: true,
-            plan: validateAndFilterPlan(parsed, extractedReasoning, webSearchEnabled, deepResearchMode),
+            plan: validateAndFilterPlan(parsed, extractedReasoning, webSearchEnabled, deepResearchMode, webRecencyOnly),
         };
     }
 
@@ -217,7 +250,8 @@ function resolveDecision(
                 { steps: obj.steps ?? [], reasoning: obj.reasoning },
                 extractedReasoning,
                 webSearchEnabled,
-                deepResearchMode
+                deepResearchMode,
+                webRecencyOnly
             ),
         };
     }
@@ -225,16 +259,43 @@ function resolveDecision(
     throw new Error(`Failed to parse planner response: invalid needs_plan value`);
 }
 
+/** Web tools are gated separately from FastF1 tools (recency auto-allow). */
+const WEB_TOOLS = new Set(["web_search", "fetch_web_pages"]);
+
 /**
- * Build the full system prompt with date, web-search flag, and deep-research overrides.
+ * Render recent conversation turns for the planner prompt so follow-up
+ * references ("that race", "the winner", "his fastest lap") resolve to
+ * concrete args. Kept short: last 6 turns, 500 chars each.
  */
-function buildPlannerPrompt(webSearchEnabled: boolean, deepResearchMode: boolean): string {
+function renderHistoryBlock(history: ChatHistoryItem[]): string {
+    const turns = (history || [])
+        .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
+        .slice(-6)
+        .map((m) => `${m.role}: ${m.content.trim().slice(0, 500)}`);
+    if (turns.length === 0) return "";
+    return `\n\n## Conversation History (resolve pronouns/references from this — it is authoritative)\n${turns.join("\n")}`;
+}
+
+/**
+ * Build the full system prompt with date, web-search scope, history,
+ * and deep-research overrides.
+ */
+function buildPlannerPrompt(
+    webSearchEnabled: boolean,
+    deepResearchMode: boolean,
+    webRecencyOnly: boolean = false,
+    history: ChatHistoryItem[] = []
+): string {
     let prompt = PLANNER_SYSTEM_PROMPT;
     const currentDate = new Date().toISOString().split('T')[0];
     prompt += `\n\nCurrent Date: ${currentDate}`;
 
-    if (!webSearchEnabled) {
-        prompt += "\n\n**NOTE: Web search is DISABLED. Do not use the web_search tool.**";
+    if (webSearchEnabled) {
+        // Full web access — no extra note needed.
+    } else if (webRecencyOnly) {
+        prompt += "\n\n**NOTE: Web search is RESTRICTED to this recency query. Use web_search/fetch_web_pages ONLY for the latest/most-recent/current/news question at hand — not for general historical analysis (use FastF1 tools for that).**";
+    } else {
+        prompt += "\n\n**NOTE: Web search is DISABLED. Do not use the web_search or fetch_web_pages tools.**";
     }
 
     if (deepResearchMode) {
@@ -244,17 +305,22 @@ function buildPlannerPrompt(webSearchEnabled: boolean, deepResearchMode: boolean
         );
     }
 
+    prompt += renderHistoryBlock(history);
+
     return prompt;
 }
 
 /**
- * Validate raw parsed plan, merge reasoning, filter web_search, and cap step count.
+ * Validate raw parsed plan, merge reasoning, filter web tools when they
+ * are not allowed, and cap step count. Web tools survive the filter when
+ * web search is enabled OR auto-allowed for a recency query.
  */
 function validateAndFilterPlan(
     parsedPlan: unknown,
     extractedReasoning: string | undefined,
     webSearchEnabled: boolean,
-    deepResearchMode: boolean
+    deepResearchMode: boolean,
+    webRecencyOnly: boolean = false
 ): Plan {
     const validatedPlan = PlanSchema.parse(parsedPlan);
 
@@ -264,9 +330,9 @@ function validateAndFilterPlan(
         validatedPlan.reasoning = `${extractedReasoning}\n\n${validatedPlan.reasoning}`;
     }
 
-    if (!webSearchEnabled) {
+    if (!webSearchEnabled && !webRecencyOnly) {
         validatedPlan.steps = validatedPlan.steps.filter(
-            (step) => step.tool !== "web_search"
+            (step) => !WEB_TOOLS.has(step.tool)
         );
     }
 
@@ -292,14 +358,21 @@ function responseToText(response: { content: unknown }): string {
  * Decide AND plan in a SINGLE model call.
  * Conversational messages come back with a direct reply (no tools, no
  * second call); data questions come back with an execution plan.
+ *
+ * @param history - recent conversation turns for follow-up resolution.
+ *   Recency queries ("who won the last race") auto-allow web tools even
+ *   when `webSearchEnabled` is false — FastF1 tools must never be used
+ *   to guess "latest".
  */
 export async function decidePlan(
     model: BaseChatModel,
     message: string,
     webSearchEnabled: boolean = false,
-    deepResearchMode: boolean = false
+    deepResearchMode: boolean = false,
+    history: ChatHistoryItem[] = []
 ): Promise<PlanDecision> {
-    const systemPrompt = buildPlannerPrompt(webSearchEnabled, deepResearchMode);
+    const webRecencyOnly = !webSearchEnabled && isRecencyQuery(message);
+    const systemPrompt = buildPlannerPrompt(webSearchEnabled, deepResearchMode, webRecencyOnly, history);
 
     const messages = [
         new SystemMessage(systemPrompt),
@@ -313,7 +386,7 @@ export async function decidePlan(
     });
     const { plan: parsed, reasoning } = parseJsonResponse(responseToText(response));
 
-    return resolveDecision(parsed, reasoning, webSearchEnabled, deepResearchMode);
+    return resolveDecision(parsed, reasoning, webSearchEnabled, deepResearchMode, webRecencyOnly);
 }
 
 /**
@@ -324,9 +397,10 @@ export async function planQuery(
     model: BaseChatModel,
     message: string,
     webSearchEnabled: boolean = false,
-    deepResearchMode: boolean = false
+    deepResearchMode: boolean = false,
+    history: ChatHistoryItem[] = []
 ): Promise<Plan> {
-    return (await decidePlan(model, message, webSearchEnabled, deepResearchMode)).plan;
+    return (await decidePlan(model, message, webSearchEnabled, deepResearchMode, history)).plan;
 }
 
 /**
@@ -341,9 +415,10 @@ export async function streamPlanQuery(
     webSearchEnabled: boolean = false,
     deepResearchMode: boolean = false,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    onReasoningToken?: (token: string) => void
+    onReasoningToken?: (token: string) => void,
+    history: ChatHistoryItem[] = []
 ): Promise<Plan> {
-    return (await decidePlan(model, message, webSearchEnabled, deepResearchMode)).plan;
+    return (await decidePlan(model, message, webSearchEnabled, deepResearchMode, history)).plan;
 }
 
 /**

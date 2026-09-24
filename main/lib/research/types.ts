@@ -58,6 +58,7 @@ export const EVIDENCE_TYPES = [
     "standings",
     "regulation",
     "web_search",
+    "web_fetch",
     "simulation",
     "visualization",
 ] as const;

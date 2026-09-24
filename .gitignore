@@ -39,6 +39,8 @@ tools and agents.txt
 parse-test-result.txt
 Project_Review_Checklists.md
 RE_ENABLE_FIA_REGS.md
+# Local API key files (never commit secrets)
+tinyfish
 
 # Editor / OS
 .idea/

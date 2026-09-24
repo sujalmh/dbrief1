@@ -20,7 +20,7 @@ import {
     getF1Tools,
 } from "@/lib/tools/fastf1";
 import { regulationRetrieveTool, getRegulationTools } from "@/lib/tools/regulation";
-import { webSearchTool, getSearchTools } from "@/lib/tools/search";
+import { webSearchTool, fetchWebPagesTool, getSearchTools } from "@/lib/tools/search";
 import { runSimulationTool, getSimulationTools } from "@/lib/tools/simulation";
 import { createVisualizationTool, getVisualizationTools } from "@/lib/tools/visualization";
 import type { Evidence, EvidenceType, ToolMetadata } from "./types";
@@ -183,12 +183,22 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
     },
     web_search: {
         name: "web_search",
-        description: "Search the web for current F1 news and context using DuckDuckGo",
+        description: "TinyFish web search for current F1 news and context. REQUIRED for latest/most-recent/last-race/current questions (use domain_type 'news' + a recency window). Never resolve recency with FastF1 tools.",
         category: "search",
         outputType: "web_search",
-        outputShape: "{ abstract, abstract_source, abstract_url, heading, answer, related_topics[], results[] }",
+        outputShape: "{ results: [{ title, url, snippet, date?, publisher? }], query }",
         requires: [],
         provides: ["web_search"],
+        deepResearchOnly: true,
+    },
+    fetch_web_pages: {
+        name: "fetch_web_pages",
+        description: "TinyFish page extraction (clean markdown) for URLs from web_search results. Use AFTER web_search on the top 1-3 URLs to verify key facts for latest/news answers.",
+        category: "search",
+        outputType: "web_fetch",
+        outputShape: "{ pages: [{ url, final_url, title, published_date?, text }], errors[] }",
+        requires: [],
+        provides: ["web_fetch"],
         deepResearchOnly: true,
     },
     run_simulation: {
@@ -339,6 +349,7 @@ export function createToolRegistry(deepResearch: boolean = true): ToolRegistry {
     // Deep-research-only tools
     if (deepResearch) {
         registry.register(webSearchTool, TOOL_METADATA.web_search);
+        registry.register(fetchWebPagesTool, TOOL_METADATA.fetch_web_pages);
         registry.register(runSimulationTool, TOOL_METADATA.run_simulation);
     }
 

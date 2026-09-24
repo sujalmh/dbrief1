@@ -7,6 +7,7 @@
 
 import { StructuredTool } from "@langchain/core/tools";
 import { Step } from "./planner";
+import { findPlaceholderArg, placeholderError, PLACEHOLDER_ERROR_PREFIX } from "./args-guard";
 
 // =============================================================================
 // Types
@@ -100,6 +101,9 @@ const MAX_RETRIES = 2;
 
 function isRetryableError(error: unknown): boolean {
     const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes(PLACEHOLDER_ERROR_PREFIX)) {
+        return false;
+    }
     if (msg.includes("400") || msg.includes("401") || msg.includes("403") || msg.includes("404")) {
         return false;
     }
@@ -138,6 +142,22 @@ async function executeStep(
         );
     }
 
+    // Fail closed on placeholder args (e.g. gp="LAST_COMPLETED_GP"): the
+    // FastF1 backend fuzzy-matches unknown strings to *some* event instead
+    // of failing, so executing would return confidently-wrong data. Checked
+    // against the RAW step args (before schema validation can strip them).
+    const placeholder = findPlaceholderArg(step.args);
+    if (placeholder) {
+        return {
+            step: stepIndex,
+            tool: step.tool,
+            args: step.args,
+            success: false,
+            error: placeholderError(normalizedTool, placeholder),
+            durationMs: Date.now() - startTime,
+        };
+    }
+
     // Validate args against tool schema. LangChain's tool.schema can be a
     // Zod schema, a JSON schema, or a callable returning either. Only Zod
     // schemas expose .parseAsync; fall back to safeParse or skipping when
@@ -166,6 +186,7 @@ async function executeStep(
     }
 
     let lastError: unknown;
+
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
             // Execute with timeout. The timer is always cleared so we never
@@ -478,11 +499,60 @@ function summarizeLapsForLLM(data: { laps: unknown[];[key: string]: unknown }): 
 }
 
 /**
+ * Check if data is web-fetch output (has 'pages' array with text extracts)
+ */
+function isFetchData(data: unknown): data is { pages: unknown[];[key: string]: unknown } {
+    return (
+        typeof data === "object" &&
+        data !== null &&
+        "pages" in data &&
+        Array.isArray((data as { pages: unknown[] }).pages)
+    );
+}
+
+/** Max chars kept per fetched page for LLM context (full text stays in the trace). */
+const MAX_FETCH_CHARS_PER_PAGE = 2000;
+
+/**
+ * Trim fetched pages for LLM consumption: keep title/url/date plus the
+ * head of each extraction. Without this the generic 10k stub below would
+ * nuke the whole payload and the responder would get nothing.
+ */
+function summarizeFetchForLLM(data: { pages: unknown[];[key: string]: unknown }): Record<string, unknown> {
+    const pages = (data.pages as Array<Record<string, unknown>>).map((p) => {
+        const text = typeof p.text === "string" ? p.text : "";
+        return {
+            url: p.url,
+            final_url: p.final_url,
+            title: p.title,
+            ...(typeof p.published_date === "string" ? { published_date: p.published_date } : {}),
+            text: text.length > MAX_FETCH_CHARS_PER_PAGE
+                ? text.slice(0, MAX_FETCH_CHARS_PER_PAGE) + "\n\n[truncated for context]"
+                : text,
+        };
+    });
+    return {
+        pages,
+        ...("errors" in data ? { errors: data.errors } : {}),
+        ...("question" in data ? { question: data.question } : {}),
+        note: "Page texts trimmed to head excerpts for LLM context efficiency",
+    };
+}
+
+/**
  * Reduce a single result's data if it's too large
  */
 function reduceResultData(result: ExecutionResult): ExecutionResult {
     if (!result.success || !result.data) {
         return result;
+    }
+
+    // Check if it's web-fetch output and trim page texts
+    if (isFetchData(result.data)) {
+        return {
+            ...result,
+            data: summarizeFetchForLLM(result.data),
+        };
     }
 
     // Check if it's telemetry data and summarize

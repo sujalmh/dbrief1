@@ -41,7 +41,7 @@ import { getRegulationTools } from "@/lib/tools/regulation";
 import { getSimulationTools } from "@/lib/tools/simulation";
 import { ResearchManager } from "@/lib/research/manager";
 import { IntentAnalyzer, IntentAnalyzerUnavailableError } from "@/lib/research/agents/intent-analyzer";
-import { classifyLlmError, isNonRecoverable, isTimeoutAbort, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
+import { classifyLlmError, isNonRecoverable, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
 import {
     extractRegulationDocs,
     pickUsedSources,
@@ -665,6 +665,10 @@ export async function POST(request: NextRequest) {
                     let plan: Plan;
                     let directReply: string | undefined;
                     let intentUnavailableError: IntentAnalyzerUnavailableError | null = null;
+                    // When the planner LLM fails and we serve a heuristic
+                    // fallback plan, the failure reason travels with the
+                    // plan event so the persisted trace shows WHY.
+                    let plannerErrorMsg: string | null = null;
                     try {
                         // In Deep Research Mode, force web search to be enabled
                         const effectiveWebSearch = deepResearchMode ? true : web_search;
@@ -683,12 +687,16 @@ export async function POST(request: NextRequest) {
                                     history
                                 );
                             } catch (firstError) {
-                                // Retry once on gateway timeout/abort: the
-                                // plan call is side-effect-free and most
-                                // stalls clear within seconds. Anything else
-                                // propagates to the handler below.
-                                if (!isTimeoutAbort(firstError)) throw firstError;
-                                console.warn("[Planner] Attempt timed out/aborted, retrying once...");
+                                // Retry once on ANY first failure (timeout,
+                                // abort, or unparsable prose — the upstream
+                                // model occasionally returns non-JSON even
+                                // for the strict planner prompt, and most
+                                // such stalls clear within seconds). The plan
+                                // call is side-effect-free.
+                                console.warn(
+                                    "[Planner] Attempt failed, retrying once:",
+                                    firstError instanceof Error ? firstError.message.slice(0, 300) : firstError
+                                );
                                 return decidePlan(
                                     plannerModel,
                                     message,
@@ -763,6 +771,11 @@ export async function POST(request: NextRequest) {
                         // is terminal — there's no point falling back to a
                         // heuristic plan if the responder will also fail on
                         // the same root cause. Surface it instead.
+                        // Either way, the failure reason is captured into the
+                        // plan trace below so future "bad response" reviews
+                        // don't need server logs to see the planner failed.
+                        plannerErrorMsg =
+                            error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
                         const cls = classifyLlmError(error, "Planner");
                         if (isNonRecoverable(cls)) {
                             console.error(
@@ -795,6 +808,7 @@ export async function POST(request: NextRequest) {
                         ...(directReply !== undefined
                             ? { replyPreview: directReply.slice(0, 300) }
                             : {}),
+                        ...(plannerErrorMsg ? { plannerError: plannerErrorMsg } : {}),
                     });
 
                     // Clamp simulation iterations to the caller's tier cap

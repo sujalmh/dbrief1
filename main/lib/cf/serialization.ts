@@ -269,6 +269,7 @@ export function buildFullMessageDoc(userId: string, message: Message): FullMessa
             needsPlan: !!message.planTrace.needsPlan,
             ...(message.planTrace.reasoning ? { reasoning: String(message.planTrace.reasoning).slice(0, 2000) } : {}),
             ...(message.planTrace.replyPreview ? { replyPreview: String(message.planTrace.replyPreview).slice(0, 500) } : {}),
+            ...(message.planTrace.plannerError ? { plannerError: String(message.planTrace.plannerError).slice(0, 500) } : {}),
         };
     }
     if (message.refusal) {

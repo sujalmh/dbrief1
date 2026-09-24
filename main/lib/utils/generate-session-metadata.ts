@@ -1,4 +1,5 @@
 import { getChatModel, chatContentToText, type AiMode } from "@/lib/llm";
+import { extractJson } from "@/lib/research/llm-parse";
 
 export interface SessionMetadata {
     title: string;
@@ -41,36 +42,42 @@ Respond ONLY with valid JSON in this exact format:
   "type": "telemetry|comparison|strategy|insights"
 }`;
 
-    try {
-        const response = await llm.invoke(prompt);
-        const content = chatContentToText(response.content);
+    // The upstream model occasionally returns prose with no JSON at all
+    // (observed in prod) — retry once before falling back to the raw
+    // query as the title. extractJson handles fences, markers, balanced
+    // braces, and common malformations (trailing commas, quotes).
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const response = await llm.invoke(prompt);
+            const content = chatContentToText(response.content);
+            const metadata = extractJson(content) as unknown as SessionMetadata;
 
-        // Extract JSON from the response
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-            throw new Error("Failed to extract JSON from LLM response");
+            // Validate the type
+            const validTypes = ["telemetry", "comparison", "strategy", "insights"];
+            if (!validTypes.includes(metadata.type)) {
+                metadata.type = "insights"; // Default fallback
+            }
+
+            // Title must be a non-empty string
+            if (typeof metadata.title !== "string" || !metadata.title.trim()) {
+                throw new Error("Missing title in session metadata");
+            }
+
+            // Truncate title if needed
+            if (metadata.title.length > 40) {
+                metadata.title = metadata.title.substring(0, 37) + "...";
+            }
+
+            return metadata;
+        } catch (error) {
+            lastError = error;
         }
-
-        const metadata = JSON.parse(jsonMatch[0]) as SessionMetadata;
-
-        // Validate the type
-        const validTypes = ["telemetry", "comparison", "strategy", "insights"];
-        if (!validTypes.includes(metadata.type)) {
-            metadata.type = "insights"; // Default fallback
-        }
-
-        // Truncate title if needed
-        if (metadata.title.length > 40) {
-            metadata.title = metadata.title.substring(0, 37) + "...";
-        }
-
-        return metadata;
-    } catch (error) {
-        console.error("Error generating session metadata:", error);
-        // Fallback to default values
-        return {
-            title: userQuery.substring(0, 37) + (userQuery.length > 37 ? "..." : ""),
-            type: "insights"
-        };
     }
+    console.error("Error generating session metadata:", lastError);
+    // Fallback to default values
+    return {
+        title: userQuery.substring(0, 37) + (userQuery.length > 37 ? "..." : ""),
+        type: "insights"
+    };
 }

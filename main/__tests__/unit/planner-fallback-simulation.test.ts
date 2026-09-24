@@ -67,3 +67,24 @@ describe("createFallbackPlan — simulation detection", () => {
         expect(plan.steps[0].tool).not.toBe("run_simulation");
     });
 });
+
+describe("createFallbackPlan — recency routing", () => {
+    it("routes 'who won the last race' to web_search (news), never a guessed GP", () => {
+        const plan = createFallbackPlan("who won the last race");
+        expect(plan.steps).toHaveLength(1);
+        expect(plan.steps[0].tool).toBe("web_search");
+        expect(plan.steps[0].args.domain_type).toBe("news");
+    });
+
+    it("routes latest/current/news queries to web_search", () => {
+        for (const q of ["latest F1 news", "current standings", "most recent race results"]) {
+            const plan = createFallbackPlan(q);
+            expect(plan.steps[0].tool).toBe("web_search");
+        }
+    });
+
+    it("does NOT route named-GP queries to web_search", () => {
+        const plan = createFallbackPlan("Who won the Monaco 2024 race?");
+        expect(plan.steps[0].tool).not.toBe("web_search");
+    });
+});

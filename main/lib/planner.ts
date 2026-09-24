@@ -511,6 +511,26 @@ function extractFirstBalancedJsonObject(s: string): string | null {
 export function createFallbackPlan(message: string): Plan {
     const lowerMessage = message.toLowerCase();
 
+    // RECENCY FIRST: when the LLM planner is down, "who won the last race"
+    // must still resolve via web search — never via a guessed GP (the
+    // FastF1 backend fuzzy-matches unknown strings to the wrong event).
+    // web_search is pure HTTP (no LLM), so it works during model outages.
+    if (isRecencyQuery(message)) {
+        return {
+            steps: [
+                {
+                    description: "Search news for the most recent F1 result (fallback)",
+                    tool: "web_search",
+                    args: {
+                        query: message.slice(0, 200),
+                        domain_type: "news",
+                    },
+                },
+            ],
+            reasoning: "Fallback: recency query — routing to web_search while the planner is unavailable",
+        };
+    }
+
     // Try to extract year. F1 history spans 1950+, so match 19xx and 20xx.
     // Only accept 4-digit years in the plausible F1 range — a bare 2-digit
     // number (e.g. the "21" in "Abu Dhabi 21") must NOT become year 21.

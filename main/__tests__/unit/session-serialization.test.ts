@@ -93,6 +93,22 @@ describe("session-io buildFullMessageDoc", () => {
         expect(msg.planTrace?.reasoning).toBe("Greeting");
     });
 
+    it("persists the planner error that forced a fallback plan", () => {
+        const doc = buildFullMessageDoc(
+            "u1",
+            assistantMessage({
+                planTrace: {
+                    needsPlan: true,
+                    reasoning: "Fallback: could not determine specific intent",
+                    plannerError: "Failed to parse planner response as JSON",
+                },
+            })
+        );
+        expect(doc.planTrace?.plannerError).toContain("Failed to parse");
+        const msg = docToMessage("m_1", doc as unknown as Record<string, unknown>);
+        expect(msg.planTrace?.plannerError).toContain("Failed to parse");
+    });
+
     it("persists the refusal trace with failed steps", () => {
         const doc = buildFullMessageDoc(
             "u1",

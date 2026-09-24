@@ -194,6 +194,8 @@ export interface Message {
         reasoning?: string
         /** First chars of the direct reply (needsPlan=false only). */
         replyPreview?: string
+        /** Planner LLM failure that forced a heuristic fallback plan. */
+        plannerError?: string
     }
     /**
      * Refusal trace. Set when the backend answered without tool data
@@ -581,24 +583,28 @@ export const useChatStore = create<ChatStore>()(
         {
             name: 'dbrief1-storage',
             storage: createJSONStorage(() => idbStorage),
-            // Persist settings, messages (which carry chartSpecs for
-            // deep-research mode), the active visualization payload, the
-            // graph history, and the panel UI state. We deliberately
-            // exclude ephemeral per-message UI state (currentIndex,
-            // localWidth during resize, etc.) and the loading flag.
+            // Persist ONLY lightweight UI prefs. Chat data (messages,
+            // visualizationData, graphHistory, activeMessageId) lives in
+            // the cloud store (D1 + R2) and is loaded per-session on
+            // demand — persisting it here caused two problems:
+            //   1. Stale chat on reopen: messages were rehydrated from
+            //      IndexedDB while currentSessionId/sessions were not,
+            //      so the previous session's messages rendered under a
+            //      "NEW CHAT" title. Every reload now starts empty.
+            //   2. Slow load + jank: each streamed token rewrote the full
+            //      message array (often MBs of telemetry payloads) to
+            //      IndexedDB, and rehydration parsed it before first
+            //      paint.
             // (BYOK keys are never in settings — they live in the
             // httpOnly cookie — so nothing sensitive is persisted here.)
             partialize: (state) => ({
                 settings: state.settings,
-                messages: state.messages,
-                visualizationData: state.visualizationData,
-                graphHistory: state.graphHistory,
                 isVisualizationCollapsed: state.isVisualizationCollapsed,
                 visualizationWidth: state.visualizationWidth,
             }),
             // Bump the version when the persisted shape changes so old
             // clients drop stale data instead of crashing on load.
-            version: 6,
+            version: 7,
             // v2 -> v3: Settings gained a `customModels: string[]` field.
             // v3 -> v4: Settings gained a `plannerModel: string` field.
             // v4 -> v5: `settings.apiKey` is no longer persisted (keys
@@ -608,11 +614,15 @@ export const useChatStore = create<ChatStore>()(
             //   provider/model/plannerModel/temperature/maxTokens/apiKey/
             //   customModels are dropped; messages keep rendering (the
             //   `usage` block is untouched).
+            // v6 -> v7: chat data is no longer persisted (cloud store is
+            //   the source of truth). Drop any previously stored
+            //   messages/visualizationData/graphHistory/activeMessageId
+            //   so reopening starts with a fresh chat.
             migrate: (persistedState) => {
                 const state = (persistedState ?? {}) as Partial<{
                     settings: Partial<Settings> & Record<string, unknown>
                     messages: Message[]
-                }>
+                }> & Record<string, unknown>
                 if (state.settings) {
                     const s = state.settings;
                     const aiMode = s.aiMode === "byok" ? "byok" : "managed";
@@ -628,7 +638,14 @@ export const useChatStore = create<ChatStore>()(
                         developerMode: s.developerMode === true,
                     };
                 }
-                return state as { settings?: Partial<Settings>; messages?: Message[] }
+                // Strip legacy persisted chat data (see v6 -> v7 above).
+                delete state.messages
+                delete state.visualizationData
+                delete state.graphHistory
+                delete state.activeMessageId
+                delete state.currentSessionId
+                delete state.sessions
+                return state as { settings?: Partial<Settings> }
             },
         }
     )

@@ -20,7 +20,10 @@ interface SseTask {
 }
 
 export function useChatHandler() {
-    const store = useChatStore()
+    // Subscribe ONLY to isLoading — a full-store subscription here would
+    // re-render every consumer (chat input, every message bubble) on each
+    // streamed token. Everything else goes through getState().
+    const isLoading = useChatStore((s) => s.isLoading)
     const { user } = useSession()
     const abortControllerRef = React.useRef<AbortController | null>(null)
 
@@ -35,9 +38,9 @@ export function useChatHandler() {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort()
             abortControllerRef.current = null
-            store.setLoading(false)
+            useChatStore.getState().setLoading(false)
         }
-    }, [store])
+    }, [])
 
     const handleSend = React.useCallback(async (overrideInput?: string) => {
         const state = useChatStore.getState()
@@ -312,6 +315,9 @@ export function useChatHandler() {
                                                 : {}),
                                             ...(typeof data.replyPreview === "string" && data.replyPreview
                                                 ? { replyPreview: data.replyPreview.slice(0, 500) }
+                                                : {}),
+                                            ...(typeof data.plannerError === "string" && data.plannerError
+                                                ? { plannerError: data.plannerError.slice(0, 500) }
                                                 : {}),
                                         })
                                         break
@@ -604,5 +610,5 @@ export function useChatHandler() {
         }
     }, [user])
 
-    return { handleSend, cancelGeneration, isLoading: store.isLoading }
+    return { handleSend, cancelGeneration, isLoading }
 }

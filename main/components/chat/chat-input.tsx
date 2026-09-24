@@ -7,6 +7,7 @@ import { useChatHandler } from "@/lib/hooks/use-chat-handler"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { ControlPanel } from "@/components/chat/control-panel"
+import { QuotaStrip } from "@/components/chat/quota-strip"
 import { cn } from "@/lib/utils"
 import {
     Tooltip,
@@ -106,9 +107,12 @@ export function ChatInput() {
                 </Tooltip>
             </div>
 
-            {/* Bottom Section: Integrated Control Panel */}
+            {/* Bottom Section: Integrated Control Panel + usage strip.
+                The strip is the always-visible usage surface on every
+                viewport (phones have no hover for the avatar tooltip). */}
             <div className="px-3 pb-2">
                 <ControlPanel />
+                <QuotaStrip />
             </div>
         </div>
     )

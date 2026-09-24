@@ -53,6 +53,96 @@ describe("webSearchTool", () => {
         expect(data.message).toMatch(/403/);
     });
 
+    it("fails fast on non-retryable HTTP errors (single call)", async () => {
+        process.env.TINYFISH_API_KEY = "test-key";
+        const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 403 });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const raw = await webSearchTool.invoke({ query: "x", domain_type: "news" });
+        const data = JSON.parse(raw as string);
+        expect(data.error).toBe(true);
+        expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
+    it("retries an empty result set and returns the later hits", async () => {
+        process.env.TINYFISH_API_KEY = "test-key";
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ query: "q", results: [], total_results: 0 }) })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    query: "q",
+                    results: [{ title: "Winner", url: "https://example.com/w", snippet: "won" }],
+                }),
+            });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const raw = await webSearchTool.invoke({ query: "q", domain_type: "news" });
+        const data = JSON.parse(raw as string);
+        expect(data.results).toHaveLength(1);
+        expect(data.note).toBeUndefined();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("relaxes filters after repeated empties and notes it", async () => {
+        process.env.TINYFISH_API_KEY = "test-key";
+        const empty = { ok: true, json: async () => ({ query: "q", results: [], total_results: 0 }) };
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce(empty)
+            .mockResolvedValueOnce(empty)
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    query: "q",
+                    results: [{ title: "Winner", url: "https://example.com/w", snippet: "won" }],
+                }),
+            });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const raw = await webSearchTool.invoke({ query: "q", domain_type: "news", recency_minutes: 10080 });
+        const data = JSON.parse(raw as string);
+        expect(data.results).toHaveLength(1);
+        expect(data.note).toMatch(/without date\/domain filters/);
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        const relaxedUrl = String(fetchMock.mock.calls[2][0]);
+        expect(relaxedUrl).not.toContain("domain_type");
+        expect(relaxedUrl).not.toContain("recency_minutes");
+    });
+
+    it("retries once after a 429 then succeeds", async () => {
+        process.env.TINYFISH_API_KEY = "test-key";
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce({ ok: false, status: 429, headers: { get: () => null } })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    query: "q",
+                    results: [{ title: "Winner", url: "https://example.com/w", snippet: "won" }],
+                }),
+            });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const raw = await webSearchTool.invoke({ query: "q" });
+        const data = JSON.parse(raw as string);
+        expect(data.results).toHaveLength(1);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("gives up with a note when an unfiltered query stays empty", async () => {
+        process.env.TINYFISH_API_KEY = "test-key";
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true, json: async () => ({ query: "q", results: [], total_results: 0 }),
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const raw = await webSearchTool.invoke({ query: "q" });
+        const data = JSON.parse(raw as string);
+        expect(data.results).toBeUndefined();
+        expect(data.note).toMatch(/No relevant web results/);
+        // Unfiltered: exact retry only (attempts 1-2), no relaxed 3rd.
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
     it("passes domain_type + recency params and maps date/publisher", async () => {
         process.env.TINYFISH_API_KEY = "test-key";
         const fetchMock = vi.fn().mockResolvedValue({
@@ -132,5 +222,18 @@ describe("fetchWebPagesTool", () => {
         const data = JSON.parse(raw as string);
         expect(data.error).toBe(true);
         expect(data.message).toMatch(/429/);
+    });
+
+    it("succeeds as a skip when no urls are provided", async () => {
+        process.env.TINYFISH_API_KEY = "test-key";
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const raw = await fetchWebPagesTool.invoke({ urls: [] });
+        const data = JSON.parse(raw as string);
+        expect(data.error).toBeUndefined();
+        expect(data.pages).toEqual([]);
+        expect(data.note).toMatch(/skipping/);
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 });

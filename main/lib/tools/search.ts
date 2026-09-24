@@ -71,75 +71,195 @@ const DomainTypeSchema = z.enum(["web", "news"]).describe(
     "Result category: 'news' for latest/recent/current-events queries (returns publisher + date), 'web' for everything else."
 );
 
+interface SearchParams {
+    query: string;
+    domain_type?: string;
+    recency_minutes?: number;
+    after_date?: string;
+    before_date?: string;
+}
+
+interface SearchHit {
+    title: string;
+    url: string;
+    snippet: string;
+    date?: string;
+    publisher?: string;
+}
+
+/**
+ * Retry policy for TinyFish Search (per https://docs.tinyfish.ai/error-codes):
+ *
+ * Empty 200-responses are a known transient failure mode of the upstream
+ * provider (identical queries flip between N results and zero), so an
+ * empty result set is retried — not accepted — up to MAX_SEARCH_ATTEMPTS:
+ *   1. exact params as requested,
+ *   2. exact params again after a short delay (transient blip),
+ *   3. relaxed params (freshness/domain filters stripped) when the
+ *      request carried any — tight windows (e.g. 7 days for a race
+ *      11 days ago) legitimately match nothing.
+ *
+ * HTTP-level transients follow the docs: honor Retry-After on 429
+ * (capped), brief backoff on 500/503. Anything else throws immediately.
+ */
+const MAX_SEARCH_ATTEMPTS = 3;
+const RETRY_AFTER_CAP_MS = 8000;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+function retryAfterMs(response: Response): number | null {
+    const raw = response.headers?.get?.("retry-after");
+    if (!raw) return null;
+    const secs = Number(raw);
+    if (!Number.isFinite(secs) || secs < 0) return null;
+    return Math.min(secs * 1000, RETRY_AFTER_CAP_MS);
+}
+
+function buildSearchUrl(params: SearchParams): string {
+    const qs = new URLSearchParams({
+        query: params.query,
+        purpose: "Answering a Formula 1 question; recent results and news matter most.",
+    });
+    if (params.domain_type) qs.set("domain_type", params.domain_type);
+    // TinyFish forbids combining recency_minutes with after/before_date.
+    if (typeof params.recency_minutes === "number") {
+        qs.set("recency_minutes", String(params.recency_minutes));
+    } else {
+        if (params.after_date) qs.set("after_date", params.after_date);
+        if (params.before_date) qs.set("before_date", params.before_date);
+    }
+    return `${searchBaseUrl()}?${qs.toString()}`;
+}
+
+function mapSearchHits(data: {
+    results?: {
+        title?: string;
+        url?: string;
+        snippet?: string;
+        site_name?: string;
+        date?: string;
+        publisher?: string;
+    }[];
+}): SearchHit[] {
+    return (data.results || [])
+        .map((r) => ({
+            title: r.title || r.site_name || r.url || "",
+            url: r.url || "",
+            snippet: (r.snippet || "").slice(0, 500),
+            ...(r.date ? { date: r.date } : {}),
+            ...(r.publisher ? { publisher: r.publisher } : {}),
+        }))
+        .filter((r) => r.title)
+        .slice(0, searchResultsLimit());
+}
+
 export const webSearchTool = tool(
     async ({ query, domain_type, recency_minutes, after_date, before_date }) => {
-        try {
-            const apiKey = searchApiKey();
-            if (!apiKey) {
-                return JSON.stringify({
-                    error: true,
-                    message: "Web search is not configured on the server (missing TINYFISH_API_KEY).",
-                    query,
-                });
-            }
-
-            const params = new URLSearchParams({
-                query,
-                purpose: "Answering a Formula 1 question; recent results and news matter most.",
-            });
-            if (domain_type) params.set("domain_type", domain_type);
-            // TinyFish forbids combining recency_minutes with after/before_date.
-            if (typeof recency_minutes === "number") {
-                params.set("recency_minutes", String(recency_minutes));
-            } else {
-                if (after_date) params.set("after_date", after_date);
-                if (before_date) params.set("before_date", before_date);
-            }
-            const response = await fetch(`${searchBaseUrl()}?${params.toString()}`, {
-                headers: { "X-API-Key": apiKey },
-                signal: AbortSignal.timeout(searchTimeoutMs()),
-            });
-
-            if (!response.ok) {
-                throw new Error(`Search failed: ${response.status}`);
-            }
-
-            const data = await response.json() as {
-                results?: {
-                    title?: string;
-                    url?: string;
-                    snippet?: string;
-                    site_name?: string;
-                    date?: string;
-                    publisher?: string;
-                }[];
-            };
-            const results = (data.results || [])
-                .map((r) => ({
-                    title: r.title || r.site_name || r.url || "",
-                    url: r.url || "",
-                    snippet: (r.snippet || "").slice(0, 500),
-                    ...(r.date ? { date: r.date } : {}),
-                    ...(r.publisher ? { publisher: r.publisher } : {}),
-                }))
-                .filter((r) => r.title)
-                .slice(0, searchResultsLimit());
-
-            if (results.length === 0) {
-                return JSON.stringify({
-                    note: "No relevant web results found for this query",
-                    query,
-                });
-            }
-
-            return JSON.stringify({ results, query });
-        } catch (error) {
+        const apiKey = searchApiKey();
+        if (!apiKey) {
             return JSON.stringify({
                 error: true,
-                message: error instanceof Error ? error.message : "Search failed",
+                message: "Web search is not configured on the server (missing TINYFISH_API_KEY).",
                 query,
             });
         }
+
+        const requested: SearchParams = { query };
+        if (domain_type) requested.domain_type = domain_type;
+        if (typeof recency_minutes === "number") {
+            requested.recency_minutes = recency_minutes;
+        } else {
+            if (after_date) requested.after_date = after_date;
+            if (before_date) requested.before_date = before_date;
+        }
+        const hasFilters =
+            !!requested.domain_type ||
+            typeof requested.recency_minutes === "number" ||
+            !!requested.after_date ||
+            !!requested.before_date;
+        // Relaxed fallback: bare query (docs' default web behavior, which
+        // proved far more reliable than news+recency in production).
+        const relaxed: SearchParams = { query };
+
+        let lastError: unknown = null;
+        for (let attempt = 1; attempt <= MAX_SEARCH_ATTEMPTS; attempt++) {
+            // Attempts 1-2 use exact params; attempt 3 drops the filters,
+            // but only when there were filters to drop (otherwise it would
+            // just repeat attempt 2).
+            const useRelaxed = attempt === MAX_SEARCH_ATTEMPTS && hasFilters;
+            if (attempt === MAX_SEARCH_ATTEMPTS && !hasFilters) break;
+            const params = useRelaxed ? relaxed : requested;
+
+            try {
+                const response = await fetch(buildSearchUrl(params), {
+                    headers: { "X-API-Key": apiKey },
+                    signal: AbortSignal.timeout(searchTimeoutMs()),
+                });
+
+                if (response.status === 429) {
+                    const wait = retryAfterMs(response) ?? 2000;
+                    lastError = new Error(`Search rate-limited (429)`);
+                    await sleep(wait);
+                    continue;
+                }
+                if (response.status === 500 || response.status === 503) {
+                    lastError = new Error(`Search unavailable: ${response.status}`);
+                    await sleep(2000);
+                    continue;
+                }
+                if (!response.ok) {
+                    // Non-retryable HTTP error (auth, validation, etc. —
+                    // 429/500/503 are handled above). Fail fast instead of
+                    // burning the remaining attempts on a certain repeat.
+                    return JSON.stringify({
+                        error: true,
+                        message: `Search failed: ${response.status}`,
+                        query,
+                    });
+                }
+
+                const data = await response.json() as {
+                    results?: Parameters<typeof mapSearchHits>[0]["results"];
+                    parameter_warnings?: unknown;
+                };
+                if (data.parameter_warnings) {
+                    console.warn("[web_search] parameter_warnings:", JSON.stringify(data.parameter_warnings).slice(0, 500));
+                }
+                const results = mapSearchHits(data);
+                if (results.length > 0) {
+                    return JSON.stringify({
+                        results,
+                        query,
+                        ...(useRelaxed
+                            ? { note: "Initial filtered search returned no results; retried without date/domain filters." }
+                            : {}),
+                    });
+                }
+                // Empty 200: transient upstream blip — space out requests
+                // per docs (1-2s) and retry.
+                lastError = new Error("Empty result set");
+                await sleep(1500);
+            } catch (error) {
+                // Abort/timeout/network: one of the transient class — retry
+                // within budget; anything else (programmer error) escapes
+                // via lastError below after attempts run out.
+                lastError = error;
+                await sleep(1500);
+            }
+        }
+
+        // All attempts exhausted (or unfiltered query kept coming back empty).
+        if (lastError instanceof Error && !/Empty result set/.test(lastError.message)) {
+            return JSON.stringify({
+                error: true,
+                message: lastError.message,
+                query,
+            });
+        }
+        return JSON.stringify({
+            note: "No relevant web results found for this query",
+            query,
+        });
     },
     {
         name: "web_search",
@@ -192,7 +312,10 @@ export const fetchWebPagesTool = tool(
                 });
             }
             if (sliced.length === 0) {
-                return JSON.stringify({ error: true, message: "No URLs provided.", urls: [] });
+                // Clean skip (not an error): the planner sometimes plans
+                // fetch alongside search before URLs are known. Succeeding
+                // keeps the step out of the failure count.
+                return JSON.stringify({ note: "No URLs to fetch — skipping", pages: [], errors: [] });
             }
 
             const response = await fetch(fetchBaseUrl(), {
@@ -251,13 +374,12 @@ export const fetchWebPagesTool = tool(
     {
         name: "fetch_web_pages",
         description:
-            "Fetch and extract clean markdown from web pages (URLs from web_search results) to verify facts for latest/news/recency answers. Use AFTER web_search, only for the top 1-3 most relevant URLs.",
+            "Fetch and extract clean markdown from web pages (concrete URLs from web_search results, the user message, or conversation history) to verify facts for latest/news/recency answers. NEVER invent URLs — leave urls empty when none are known (succeeds as a skip).",
         schema: z.object({
             urls: z
                 .array(z.string().url())
-                .min(1)
                 .max(10)
-                .describe("Page URLs to fetch (from web_search results, max ~3 recommended)."),
+                .describe("Page URLs to fetch (from web_search results, max ~3 recommended). May be empty (then the step succeeds as a no-op skip)."),
             question: z
                 .string()
                 .max(500)

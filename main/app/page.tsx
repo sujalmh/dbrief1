@@ -1,18 +1,35 @@
 "use client"
 
+import dynamic from "next/dynamic"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Header } from "@/components/layout/header"
 import { MessageList } from "@/components/chat/message-list"
 import { ChatInput } from "@/components/chat/chat-input"
-import { SettingsModal } from "@/components/chat/settings-modal"
-import { ErrorModal } from "@/components/ui/error-modal"
-import { VisualizationPanel } from "@/components/visualization/visualization-panel"
 import { useChatStore } from "@/lib/store"
 import { useMediaQuery } from "@/lib/hooks/use-media-query"
 import { useSession } from "@/lib/cf/session-context"
 import { SignInPage } from "@/components/auth/signin-page"
 import { Loader2 } from "lucide-react"
 import { useEffect } from "react"
+
+// Heavy, non-critical UI is code-split out of the initial bundle so
+// first paint only downloads the chat shell:
+// - VisualizationPanel pulls in recharts (~hundreds of KB) via
+//   ChartDispatcher → intelligent-charts.
+// - SettingsModal pulls in Radix Dialog + form controls.
+// - ErrorModal pulls in framer-motion.
+const VisualizationPanel = dynamic(
+    () => import("@/components/visualization/visualization-panel").then((m) => m.VisualizationPanel),
+    { ssr: false }
+)
+const SettingsModal = dynamic(
+    () => import("@/components/chat/settings-modal").then((m) => m.SettingsModal),
+    { ssr: false }
+)
+const ErrorModal = dynamic(
+    () => import("@/components/ui/error-modal").then((m) => m.ErrorModal),
+    { ssr: false }
+)
 
 const AUTH_ERRORS: Record<string, string> = {
   denied: "Google sign-in was cancelled before completing.",
@@ -34,7 +51,11 @@ function useAuthErrorBanner() {
 }
 
 export default function Home() {
-  const { settings, visualizationWidth, isVisualizationCollapsed } = useChatStore()
+  // Selector subscriptions (not a full-store spread) so streamed tokens
+  // updating `messages` don't re-render the whole page shell.
+  const settings = useChatStore((s) => s.settings)
+  const visualizationWidth = useChatStore((s) => s.visualizationWidth)
+  const isVisualizationCollapsed = useChatStore((s) => s.isVisualizationCollapsed)
   const { user, loading } = useSession()
   const isDesktop = useMediaQuery("(min-width: 768px)")
   useAuthErrorBanner()

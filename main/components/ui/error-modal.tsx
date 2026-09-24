@@ -6,7 +6,8 @@ import { useChatStore } from "@/lib/store"
 import { AnimatePresence, motion } from "framer-motion"
 
 export function ErrorModal() {
-    const { error, setError } = useChatStore()
+    const error = useChatStore((s) => s.error)
+    const setError = useChatStore((s) => s.setError)
     
     if (!error) return null
 

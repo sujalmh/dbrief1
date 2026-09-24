@@ -15,7 +15,10 @@ import {
 } from "@/components/ui/tooltip"
 
 export function ChatInput() {
-    const { input, setInput } = useChatStore()
+    // Select slices so streamed tokens (messages updates) and unrelated
+    // store changes don't re-render the input on every frame.
+    const input = useChatStore((s) => s.input)
+    const setInput = useChatStore((s) => s.setInput)
     const { handleSend, isLoading } = useChatHandler()
     const textareaRef = React.useRef<HTMLTextAreaElement>(null)
 

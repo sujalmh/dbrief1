@@ -10,7 +10,9 @@ import {
 import { Button } from "@/components/ui/button"
 
 export function ControlPanel() {
-    const { settings, updateSettings, setSettingsOpen } = useChatStore()
+    const settings = useChatStore((s) => s.settings)
+    const updateSettings = useChatStore((s) => s.updateSettings)
+    const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
     const isByok = settings.aiMode === "byok"
     const ModeIcon = isByok ? KeyRound : Server
     const modeLabel = isByok

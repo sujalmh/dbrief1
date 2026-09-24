@@ -19,16 +19,24 @@
 
 import * as React from "react";
 import { useState, useMemo, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { useChatStore } from "@/lib/store";
 import { BarChart3, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
-import { ChartDispatcher } from "./chart-dispatcher";
 import { EmptyDashboard } from "./visualization-dashboard";
 import { synthesizeChartSpecs } from "@/lib/visualization/smart-aggregator";
 import type { ChartSpec } from "@/lib/research/types";
+
+// Rechats (via intelligent-charts) is the heaviest dependency in the
+// app — load it only when a chart actually needs to render, not with
+// the initial page bundle.
+const ChartDispatcher = dynamic(
+    () => import("./chart-dispatcher").then((m) => m.ChartDispatcher),
+    { ssr: false, loading: () => null }
+);
 
 /**
  * Type guard: detects when the visualization panel was handed a list of
@@ -50,17 +58,30 @@ function looksLikeChartSpecs(data: unknown): boolean {
 }
 
 export function VisualizationPanel() {
-    const {
-        settings,
-        visualizationData,
-        visualizationWidth,
-        updateVisualizationWidth,
-        isVisualizationCollapsed,
-        toggleVisualizationCollapse,
-        activeMessageId,
-        setActiveMessageId,
-        messages,
-    } = useChatStore();
+    // Slice subscriptions: `messages` changes on every streamed token, so
+    // select only the derived values this panel renders (stable refs
+    // across token frames) instead of the full array.
+    const settings = useChatStore((s) => s.settings);
+    const visualizationData = useChatStore((s) => s.visualizationData);
+    const visualizationWidth = useChatStore((s) => s.visualizationWidth);
+    const updateVisualizationWidth = useChatStore((s) => s.updateVisualizationWidth);
+    const isVisualizationCollapsed = useChatStore((s) => s.isVisualizationCollapsed);
+    const toggleVisualizationCollapse = useChatStore((s) => s.toggleVisualizationCollapse);
+    const activeMessageId = useChatStore((s) => s.activeMessageId);
+    const setActiveMessageId = useChatStore((s) => s.setActiveMessageId);
+    const activeMessage = useChatStore((s) =>
+        s.activeMessageId
+            ? (s.messages.find((m) => m.id === s.activeMessageId) ?? null)
+            : null
+    );
+    const lastUserQuery = useChatStore((s) => {
+        if (!s.activeMessageId) return "";
+        const idx = s.messages.findIndex((m) => m.id === s.activeMessageId);
+        for (let i = idx - 1; i >= 0; i--) {
+            if (s.messages[i].role === "user") return s.messages[i].content;
+        }
+        return "";
+    });
     const [localWidth, setLocalWidth] = useState(visualizationWidth);
     const [isResizing, setIsResizing] = useState(false);
     const [isHoveringHandle, setIsHoveringHandle] = useState(false);
@@ -113,19 +134,7 @@ export function VisualizationPanel() {
     // Decide which chart specs to render
     // ---------------------------------------------------------------------
     const hasData = Array.isArray(visualizationData) && visualizationData.length > 0;
-    const activeMessage = useMemo(
-        () => messages.find((m) => m.id === activeMessageId) ?? null,
-        [messages, activeMessageId]
-    );
     const researchSpecs = activeMessage?.chartSpecs;
-    const lastUserQuery = useMemo(() => {
-        if (!activeMessageId) return "";
-        const idx = messages.findIndex((m) => m.id === activeMessageId);
-        for (let i = idx - 1; i >= 0; i--) {
-            if (messages[i].role === "user") return messages[i].content;
-        }
-        return "";
-    }, [activeMessageId, messages]);
 
     const chartSpecs: ChartSpec[] = useMemo(() => {
         if (researchSpecs && researchSpecs.length > 0) return researchSpecs;
@@ -150,22 +159,21 @@ export function VisualizationPanel() {
     const safeIndex = chartSpecs.length === 0 ? 0 : Math.min(currentIndex, chartSpecs.length - 1);
 
     // ---------------------------------------------------------------------
-    // Restore the active message after a refresh / new session
+    // Restore the active message after selecting a session
     // ---------------------------------------------------------------------
     //
-    // The persisted `visualizationData` survives across reloads, but
-    // `activeMessageId` is intentionally NOT persisted (it would get
-    // stale quickly as the user navigates messages). When the panel
-    // mounts without an active message but there IS persisted
-    // visualization data, fall back to the most recent assistant
-    // message that has either chartSpecs or visualizationData. This
-    // way the user sees the same chart they were looking at before
-    // refreshing the page.
+    // `activeMessageId` starts unset for a fresh chat. When the panel
+    // has visualization data but no active message (e.g. right after a
+    // session is loaded from the cloud store), fall back to the most
+    // recent assistant message that has either chartSpecs or
+    // visualizationData. Messages are read via getState() so streaming
+    // tokens don't re-trigger this effect.
     useEffect(() => {
         if (activeMessageId) return;
         if (!visualizationData || (Array.isArray(visualizationData) && visualizationData.length === 0)) {
             return;
         }
+        const messages = useChatStore.getState().messages;
         // Prefer messages with explicit chartSpecs (deep research).
         const withSpecs = [...messages].reverse().find(
             (m) => m.role === "assistant" && m.chartSpecs && m.chartSpecs.length > 0
@@ -182,7 +190,7 @@ export function VisualizationPanel() {
         if (withViz) {
             setActiveMessageId(withViz.id);
         }
-    }, [activeMessageId, visualizationData, messages, setActiveMessageId]);
+    }, [activeMessageId, visualizationData, setActiveMessageId]);
 
     // ---------------------------------------------------------------------
     // Conditional returns (all hooks above this point)

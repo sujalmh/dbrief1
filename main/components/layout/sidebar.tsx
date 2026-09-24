@@ -17,15 +17,16 @@ import {
 import { cn, sanitizeCitations } from "@/lib/utils";
 
 export function Sidebar() {
-    const {
-        sessions,
-        currentSessionId,
-        setCurrentSessionId,
-        setSessions,
-        setMessages,
-        isSidebarOpen,
-        setSidebarOpen
-    } = useChatStore();
+    // Slice subscriptions: streaming tokens update `messages`, which this
+    // component doesn't render — a full-store spread would re-render the
+    // whole session list on every token frame.
+    const sessions = useChatStore((s) => s.sessions);
+    const currentSessionId = useChatStore((s) => s.currentSessionId);
+    const setCurrentSessionId = useChatStore((s) => s.setCurrentSessionId);
+    const setSessions = useChatStore((s) => s.setSessions);
+    const setMessages = useChatStore((s) => s.setMessages);
+    const isSidebarOpen = useChatStore((s) => s.isSidebarOpen);
+    const setSidebarOpen = useChatStore((s) => s.setSidebarOpen);
     const { user, signOut, googleLoginAvailable } = useSession();
     // Mobile (<md) renders as an overlay drawer instead of squeezing
     // the chat column; desktop keeps the collapsible rail.

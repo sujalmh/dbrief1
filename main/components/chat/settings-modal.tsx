@@ -20,7 +20,11 @@ import { Loader2, Server, KeyRound } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export function SettingsModal() {
-    const { isSettingsOpen, setSettingsOpen, settings, updateSettings, clearMessages } = useChatStore()
+    const isSettingsOpen = useChatStore((s) => s.isSettingsOpen)
+    const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
+    const settings = useChatStore((s) => s.settings)
+    const updateSettings = useChatStore((s) => s.updateSettings)
+    const clearMessages = useChatStore((s) => s.clearMessages)
     const [apiKeyInput, setApiKeyInput] = useState("")
     const [isSaving, setIsSaving] = useState(false)
     const [isTesting, setIsTesting] = useState(false)

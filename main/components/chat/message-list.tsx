@@ -13,7 +13,10 @@ import { MessageBubble } from "@/components/chat/message-bubble"
  * @returns The rendered message list element
  */
 export function MessageList() {
-    const { messages, isLoading } = useChatStore()
+    // Slice subscriptions: typing in the input (or settings/session
+    // changes) must not re-render the whole message list.
+    const messages = useChatStore((s) => s.messages)
+    const isLoading = useChatStore((s) => s.isLoading)
     const bottomRef = useRef<HTMLDivElement>(null)
 
     // Auto-scroll to bottom on new message

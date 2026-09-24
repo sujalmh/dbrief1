@@ -22,24 +22,34 @@ import { useMemo } from "react"
 import { exportConversation } from "@/lib/utils/export-conversation"
 
 export function Header() {
-    const { setSettingsOpen, activeMessageId, messages, sessions, currentSessionId, setSidebarOpen, isSidebarOpen } = useChatStore()
+    // Slice subscriptions: `messages` changes on every streamed token, so
+    // this component selects only the active message's visualization ref
+    // (stable across token frames) plus a message count for the export
+    // button. Export handlers read the full array via getState() on click.
+    const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
+    const activeMessageId = useChatStore((s) => s.activeMessageId)
+    const activeVisualizationData = useChatStore((s) =>
+        s.activeMessageId
+            ? (s.messages.find((m) => m.id === s.activeMessageId)?.visualizationData ?? null)
+            : null
+    )
+    const hasMessages = useChatStore((s) => s.messages.length > 0)
+    const sessions = useChatStore((s) => s.sessions)
+    const currentSessionId = useChatStore((s) => s.currentSessionId)
+    const setSidebarOpen = useChatStore((s) => s.setSidebarOpen)
+    const isSidebarOpen = useChatStore((s) => s.isSidebarOpen)
     const { setTheme, theme } = useTheme()
 
     const toggleTheme = () => {
         setTheme(theme === "light" ? "dark" : "light")
     }
 
-    // Find the active message
-    const activeMessage = useMemo(() => {
-        return messages.find(m => m.id === activeMessageId)
-    }, [messages, activeMessageId])
-
     // Derive context from the active message
     const context = useMemo(() => {
         // visualizationData is untyped at the store boundary (tool-result
         // array in standard mode, ChartSpec[] in deep-research mode).
         // Only the tool-result shape carries success/tool for mode detection.
-        const rawData: unknown = activeMessage?.visualizationData
+        const rawData: unknown = activeVisualizationData
         const results = Array.isArray(rawData) ? rawData : []
         const currentSession = sessions.find(s => s.id === currentSessionId)
 
@@ -78,7 +88,7 @@ export function Header() {
         }
 
         return { sessionString, mode }
-    }, [activeMessage, sessions, currentSessionId])
+    }, [activeVisualizationData, sessions, currentSessionId])
 
 
     return (
@@ -145,7 +155,7 @@ export function Header() {
                                 variant="ghost"
                                 size="icon"
                                 className="btn-wheel btn-wheel-green h-9 w-9 md:h-10 md:w-10"
-                                disabled={messages.length === 0}
+                                disabled={!hasMessages}
                                 title="Export Conversation"
                             >
                                 <Download className="h-5 w-5" />
@@ -156,22 +166,24 @@ export function Header() {
                             <DropdownMenuLabel>Download as</DropdownMenuLabel>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
-                                onClick={() =>
-                                    exportConversation(messages, "markdown", {
-                                        title: sessions.find((s) => s.id === currentSessionId)?.title,
+                                onClick={() => {
+                                    const st = useChatStore.getState()
+                                    exportConversation(st.messages, "markdown", {
+                                        title: st.sessions.find((s) => s.id === st.currentSessionId)?.title,
                                     })
-                                }
+                                }}
                                 className="cursor-pointer"
                             >
                                 <FileText className="mr-2 h-4 w-4" />
                                 <span>Markdown (.md)</span>
                             </DropdownMenuItem>
                             <DropdownMenuItem
-                                onClick={() =>
-                                    exportConversation(messages, "json", {
-                                        title: sessions.find((s) => s.id === currentSessionId)?.title,
+                                onClick={() => {
+                                    const st = useChatStore.getState()
+                                    exportConversation(st.messages, "json", {
+                                        title: st.sessions.find((s) => s.id === st.currentSessionId)?.title,
                                     })
-                                }
+                                }}
                                 className="cursor-pointer"
                             >
                                 <FileJson className="mr-2 h-4 w-4" />

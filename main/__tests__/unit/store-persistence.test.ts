@@ -88,4 +88,22 @@ describe("store persistence", () => {
         expect(useChatStore.getState().visualizationData).toBeNull();
         expect(useChatStore.getState().graphHistory).toEqual([]);
     });
+
+    it("dedupes identical degraded warnings (one outage = one badge)", () => {
+        useChatStore.getState().setMessages([
+            { id: "m_deg", role: "assistant", content: "hi", timestamp: 1 },
+        ]);
+        const warning = { stage: "intent_analysis", kind: "network", message: "unreachable" };
+        // Backend emits one event per stage: the unavailable event AND the
+        // post-answer degraded event for the same outage.
+        useChatStore.getState().addMessageDegradedWarning("m_deg", warning);
+        useChatStore.getState().addMessageDegradedWarning("m_deg", { ...warning });
+        const stored = useChatStore.getState().messages.find((m) => m.id === "m_deg");
+        expect(stored?.degradedWarnings).toHaveLength(1);
+
+        // A genuinely different warning still appends.
+        useChatStore.getState().addMessageDegradedWarning("m_deg", { ...warning, kind: "rate_limit" });
+        expect(useChatStore.getState().messages.find((m) => m.id === "m_deg")?.degradedWarnings).toHaveLength(2);
+        useChatStore.getState().clearMessages();
+    });
 });

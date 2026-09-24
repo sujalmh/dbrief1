@@ -468,10 +468,21 @@ export const useChatStore = create<ChatStore>()(
                         msg.id === id
                             ? {
                                   ...msg,
-                                  degradedWarnings: [
-                                      ...(msg.degradedWarnings ?? []),
-                                      warning,
-                                  ],
+                                  // Dedupe identical warnings: the backend
+                                  // emits one event per stage (e.g. the
+                                  // intent_analysis_unavailable event AND the
+                                  // post-answer degraded event for the same
+                                  // outage). Without this the bubble counts
+                                  // one skipped step twice ("2 LLM steps
+                                  // were skipped" for a single failure).
+                                  degradedWarnings: (msg.degradedWarnings ?? []).some(
+                                      (w) => w.stage === warning.stage && w.kind === warning.kind && w.message === warning.message
+                                  )
+                                      ? msg.degradedWarnings
+                                      : [
+                                          ...(msg.degradedWarnings ?? []),
+                                          warning,
+                                      ],
                               }
                             : msg
                     )

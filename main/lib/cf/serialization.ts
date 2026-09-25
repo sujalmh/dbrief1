@@ -14,18 +14,13 @@ export interface StoredMessageRow {
     role: "user" | "assistant";
     content: string;
     timestamp: unknown;
-    queryType?: "telemetry" | "COMPARISON" | "STRATEGY" | "INSIGHTS";
     citations?: Array<{ source: string; type: string; title?: string | null; url?: string | null; source_url?: string | null }> | null;
 }
 
-/** D1/R2-backed doc budget (mirrors the old Firestore 1MB cap). */
-export const FIRESTORE_DOC_LIMIT = 1_000_000;
 /** Inline budget with headroom for serverTimestamp + field names. */
 export const INLINE_BUDGET = 800_000;
 /** A single field larger than this is offloaded to Storage when possible. */
 export const OVERFLOW_FIELD_THRESHOLD = 200_000;
-/** Max bytes fetched from a single Storage blob. */
-export const MAX_BLOB_BYTES = 10_000_000;
 /** Max rows kept per list payload when truncating (matches executor). */
 const MAX_ROWS_TRUNCATED = 12;
 /** Max telemetry points kept when truncating without Storage. */
@@ -51,6 +46,8 @@ export interface FullMessageDoc extends StoredMessageRow {
     visualizationRef?: string | null;
     visualizationTruncated?: boolean;
     degradedWarnings?: NonNullable<Message["degradedWarnings"]>;
+    /** Wall-clock response time in ms (see Message.durationMs). */
+    durationMs?: number;
     usage?: NonNullable<Message["usage"]>;
     researchType?: string;
     iterations?: NonNullable<Message["iterations"]>;
@@ -66,7 +63,6 @@ export interface FullMessageDoc extends StoredMessageRow {
 export interface SessionUIState {
     visualizationData?: unknown;
     visualizationRef?: string | null;
-    graphHistory?: Array<{ id: string; name: string; type: "lap_times" | "telemetry" | "comparison"; data?: unknown; dataRef?: string | null; timestamp: number }>;
     activeMessageId?: string | null;
 }
 
@@ -145,7 +141,7 @@ function sanitizeStep(s: NonNullable<NonNullable<Message["steps"]>[number]>): No
         tool: String(s.tool ?? "").slice(0, 128),
         status: s.status === "pending" || s.status === "running" || s.status === "success" || s.status === "failed" ? s.status : "success",
         ...(typeof s.result === "string" && s.result ? { result: s.result.slice(0, 4000) } : {}),
-        ...(s.args && isRecord(s.args) ? { args: JSON.parse(JSON.stringify(s.args)) } : {}),
+        ...(s.args && isRecord(s.args) ? { args: structuredClone(s.args) } : {}),
         ...(typeof s.error === "string" && s.error ? { error: s.error.slice(0, 2000) } : {}),
         ...(typeof s.durationMs === "number" && Number.isFinite(s.durationMs) ? { durationMs: Math.min(Math.max(0, Math.round(s.durationMs)), 3_600_000) } : {}),
     };
@@ -184,6 +180,9 @@ export function buildFullMessageDoc(userId: string, message: Message): FullMessa
             message: String(w.message ?? "").slice(0, 2000),
         }));
     }
+    if (typeof message.durationMs === "number" && Number.isFinite(message.durationMs)) {
+        docBase.durationMs = Math.min(Math.max(0, Math.round(message.durationMs)), 3_600_000);
+    }
     if (message.usage) {
         const u = message.usage;
         docBase.usage = {
@@ -209,7 +208,7 @@ export function buildFullMessageDoc(userId: string, message: Message): FullMessa
                 tool: String(t.tool ?? "").slice(0, 128),
                 status: t.status,
                 ...(t.evidenceId ? { evidenceId: String(t.evidenceId).slice(0, 64) } : {}),
-                ...(t.args && isRecord(t.args) ? { args: JSON.parse(JSON.stringify(t.args)) } : {}),
+                ...(t.args && isRecord(t.args) ? { args: structuredClone(t.args) } : {}),
             })),
             ...(it.reasoning ? { reasoning: String(it.reasoning).slice(0, 4000) } : {}),
         }));
@@ -221,7 +220,7 @@ export function buildFullMessageDoc(userId: string, message: Message): FullMessa
             source: {
                 tool: String(e.source?.tool ?? "").slice(0, 128),
                 taskId: String(e.source?.taskId ?? "").slice(0, 128),
-                args: isRecord(e.source?.args) ? (JSON.parse(JSON.stringify(e.source.args)) as Record<string, unknown>) : {},
+                args: isRecord(e.source?.args) ? (structuredClone(e.source.args) as Record<string, unknown>) : {},
             },
             ...(e.race ? { race: String(e.race).slice(0, 128) } : {}),
             ...(typeof e.season === "number" ? { season: e.season } : {}),
@@ -326,6 +325,9 @@ export function docToMessage(id: string, data: Record<string, unknown>): Message
     if (data.visualizationTruncated === true) msg.visualizationTruncated = true;
     if (citations.length > 0) msg.citations = citations;
     if (Array.isArray(data.degradedWarnings)) msg.degradedWarnings = data.degradedWarnings as Message["degradedWarnings"];
+    if (typeof data.durationMs === "number" && Number.isFinite(data.durationMs)) {
+        msg.durationMs = Math.min(Math.max(0, Math.round(data.durationMs)), 3_600_000);
+    }
     if (typeof data.usage === "object" && data.usage !== null && !Array.isArray(data.usage)) msg.usage = data.usage as Message["usage"];
     if (typeof data.researchType === "string") msg.researchType = data.researchType;
     if (Array.isArray(data.iterations)) msg.iterations = data.iterations as Message["iterations"];

@@ -109,6 +109,19 @@ describe("session-io buildFullMessageDoc", () => {
         expect(msg.planTrace?.plannerError).toContain("Failed to parse");
     });
 
+    it("persists the client-measured response time for reopened sessions", () => {
+        const doc = buildFullMessageDoc(
+            "u1",
+            assistantMessage({ usage: undefined, durationMs: 12400 })
+        );
+        expect(doc.durationMs).toBe(12400);
+        const msg = docToMessage("m_1", doc as unknown as Record<string, unknown>);
+        expect(msg.durationMs).toBe(12400);
+        // Absent duration stays absent (legacy docs predate the field).
+        const legacy = docToMessage("m_1", { role: "assistant", content: "hi", timestamp: 1 });
+        expect(legacy.durationMs).toBeUndefined();
+    });
+
     it("persists the refusal trace with failed steps", () => {
         const doc = buildFullMessageDoc(
             "u1",

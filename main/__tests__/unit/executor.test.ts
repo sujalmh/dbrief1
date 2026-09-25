@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { executeSteps, aggregateContext, simplifyContext, ExecutionContext } from '@/lib/executor'
+import { executeSteps, aggregateContext, ExecutionContext } from '@/lib/executor'
 import { Step } from '@/lib/planner'
 import { StructuredTool } from '@langchain/core/tools'
 import { z } from 'zod'
@@ -154,25 +154,6 @@ describe('Step Executor', () => {
             expect(aggregated).toContain('1/2 steps succeeded')
             expect(aggregated).toContain('FAILED')
             expect(aggregated).toContain('API error')
-        })
-
-        it('should simplify context correctly', () => {
-            const context: ExecutionContext = {
-                results: [
-                    { step: 1, tool: 'get_laps', args: {}, success: true, data: { driver: 'VER' }, durationMs: 100 },
-                    { step: 2, tool: 'get_laps', args: {}, success: true, data: { driver: 'HAM' }, durationMs: 50 }
-                ],
-                successCount: 2,
-                failureCount: 0,
-                totalDurationMs: 150
-            }
-
-            const simplified = simplifyContext(context)
-
-            // Should have different keys for duplicate tools
-            expect(Object.keys(simplified).length).toBe(2)
-            expect(simplified['get_laps']).toEqual({ driver: 'VER' })
-            expect(simplified['get_laps_2']).toEqual({ driver: 'HAM' })
         })
 
         it('should return empty message for no results', () => {

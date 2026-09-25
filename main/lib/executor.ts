@@ -571,6 +571,29 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
         };
     }
 
+    // Simulation output carries up to 10k raw Monte-Carlo values plus
+    // full chart series destined for the FRONTEND (sent unreduced via the
+    // visualization SSE event from the raw execution results). The LLM
+    // only needs the narrative summary + aggregates — strip the numerics
+    // explicitly instead of relying on first-array-key truncation order
+    // (fragile), and to keep the generic stub below from nuking the
+    // summary along with them.
+    if (result.tool === "run_simulation" && typeof result.data === "object" && result.data !== null) {
+        const rec = result.data as Record<string, unknown>;
+        if (Array.isArray(rec.raw_values) || (typeof rec.visualization === "object" && rec.visualization !== null)) {
+            const rest: Record<string, unknown> = { ...rec };
+            delete rest.raw_values;
+            delete rest.visualization;
+            return {
+                ...result,
+                data: {
+                    ...rest,
+                    note: "raw_values (up to 10k samples) and full chart series omitted for LLM context efficiency — see summary/key_metrics/statistics; charts render client-side from the visualization event",
+                },
+            };
+        }
+    }
+
     // Check for other large row-list payloads (results, standings, events,
     // weather, tyres, stints, race control, ...): keep the first rows and
     // note how many were omitted, instead of nuking the whole payload.
@@ -681,24 +704,4 @@ export function aggregateContext(context: ExecutionContext): string {
     }
 
     return aggregated;
-}
-
-/**
- * Create a simplified context object for the LLM (less verbose)
- *
- * @param context - Execution context with results
- * @returns Simplified data object
- */
-export function simplifyContext(context: ExecutionContext): Record<string, unknown> {
-    const simplified: Record<string, unknown> = {};
-
-    for (const result of context.results) {
-        if (result.success && result.data) {
-            // Use tool name as key, add index if duplicate
-            const key = simplified[result.tool] ? `${result.tool}_${result.step}` : result.tool;
-            simplified[key] = result.data;
-        }
-    }
-
-    return simplified;
 }

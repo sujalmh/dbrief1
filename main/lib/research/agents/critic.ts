@@ -21,6 +21,7 @@ import type { EvidenceStore } from "../evidence-store";
 import type { CriticResult } from "../types";
 import { CriticResultSchema } from "../types";
 import { extractJson, extractContent } from "../llm-parse";
+import { LLM_TIMEOUT_MS } from "@/lib/llm";
 
 // =============================================================================
 // Critic
@@ -94,7 +95,7 @@ Analyze the answer against the evidence. Report specific issues with the claim a
             const result = await structuredModel.invoke([
                 new SystemMessage(systemPrompt),
                 new HumanMessage("Verify the answer against the evidence."),
-            ]);
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) });
             return result as CriticResult;
         } catch (structuredError) {
             console.log(
@@ -111,7 +112,7 @@ Analyze the answer against the evidence. Report specific issues with the claim a
                     '\n\nRespond as JSON:\n{"grounded": true/false, "issues": ["..."], "severity": "ok"|"minor"|"major"}'
                 ),
                 new HumanMessage("Verify the answer against the evidence. Respond with ONLY the JSON object."),
-            ]);
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) });
 
             const content = extractContent(response.content);
             const parsed = extractJson(content);

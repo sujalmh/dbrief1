@@ -24,6 +24,7 @@ import type { ResearchMemory } from "../memory";
 import type { Reflection, ResearchType, ResearchBudget } from "../types";
 import { RESEARCH_TYPES, RESEARCH_TYPE_EXPECTATIONS } from "../types";
 import { extractJson, extractContent } from "../llm-parse";
+import { LLM_TIMEOUT_MS } from "@/lib/llm";
 
 // =============================================================================
 // Schemas
@@ -76,7 +77,7 @@ Then produce an initial strategy describing what data to look for first and what
             const result = await structuredModel.invoke([
                 new SystemMessage(systemPrompt),
                 new HumanMessage(humanPrompt),
-            ]);
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) });
             return {
                 researchType: result.researchType as ResearchType,
                 strategy: result.strategy,
@@ -92,7 +93,7 @@ Then produce an initial strategy describing what data to look for first and what
             const response = await this.model.invoke([
                 new SystemMessage(systemPrompt + '\n\nRespond as JSON:\n{"researchType": "...", "strategy": "...", "reasoning": "..."}'),
                 new HumanMessage(humanPrompt),
-            ]);
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) });
 
             const content = extractContent(response.content);
             const parsed = extractJson(content);
@@ -166,7 +167,7 @@ ${memory.toContextString()}`;
             const result = await structuredModel.invoke([
                 new SystemMessage(systemPrompt),
                 new HumanMessage("Reflect on the progress and decide what to do next."),
-            ]);
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) });
             return result as Reflection;
         } catch (structuredError) {
             console.log("[Reasoner] Structured output failed for reflect, falling back:", structuredError instanceof Error ? structuredError.message : structuredError);
@@ -177,7 +178,7 @@ ${memory.toContextString()}`;
             const response = await this.model.invoke([
                 new SystemMessage(systemPrompt + '\n\nRespond as JSON:\n{"useful": boolean, "answeredPart": "...", "stillMissing": ["..."], "nextAction": "call_tool|stop", "nextStrategy": "...", "reasoning": "..."}'),
                 new HumanMessage("Reflect on the progress and decide what to do next. Respond with ONLY the JSON object, no other text."),
-            ]);
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) });
 
             const content = extractContent(response.content);
             const parsed = extractJson(content);

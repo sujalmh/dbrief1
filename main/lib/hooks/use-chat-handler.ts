@@ -75,7 +75,6 @@ export function useChatHandler() {
                     title,
                     createdAt: Date.now(),
                     lastMessageAt: Date.now(),
-                    context: {}
                 }, ...state.sessions])
             } catch (err) {
                 console.error("Failed to create session:", err)
@@ -87,7 +86,6 @@ export function useChatHandler() {
                     title,
                     createdAt: Date.now(),
                     lastMessageAt: Date.now(),
-                    context: {}
                 }, ...state.sessions])
             }
         }
@@ -125,6 +123,10 @@ export function useChatHandler() {
         // pending animation frame. Without this, the variable would be
         // block-scoped to the try and the catch reference would not compile.
         let updateFrameId: number | null = null
+        // Wall-clock start for the response-time footer. Hoisted for the
+        // same reason — set just before fetch, read on completion and
+        // in the finally safety net below.
+        let requestStartedAt = 0
         state.addMessage({
             id: assistantMsgId,
             role: "assistant",
@@ -151,6 +153,7 @@ export function useChatHandler() {
                     content: m.content.slice(0, 2000),
                 }));
 
+            requestStartedAt = Date.now()
             const response = await fetch("/api/chat", {
                 method: "POST",
                 headers: {
@@ -210,6 +213,12 @@ export function useChatHandler() {
             // resumes exactly where the user left off. Large payloads are
             // offloaded to Storage by session-io; reload hydrates them.
             const saveAssistantMessage = () => {
+                // Wall-clock response time — recorded for every completed
+                // turn in both modes, ahead of the cloud save so the
+                // persisted message carries it for reopened sessions.
+                if (requestStartedAt > 0) {
+                    useChatStore.getState().setMessageDurationMs(assistantMsgId, Date.now() - requestStartedAt);
+                }
                 if (effectiveSessionId && !effectiveSessionId.startsWith("local_") && assistantContent) {
                     const storeMsg = useChatStore.getState().messages.find((m) => m.id === assistantMsgId);
                     const fullMsg: Message = {
@@ -217,6 +226,7 @@ export function useChatHandler() {
                         role: "assistant",
                         content: assistantContent,
                         timestamp: storeMsg?.timestamp ?? Date.now(),
+                        ...(storeMsg?.durationMs != null ? { durationMs: storeMsg.durationMs } : {}),
                         ...(storeMsg?.reasoning ? { reasoning: storeMsg.reasoning } : {}),
                         ...(storeMsg?.isError !== undefined ? { isError: storeMsg.isError } : {}),
                         ...(storeMsg?.steps ? { steps: storeMsg.steps } : {}),
@@ -240,7 +250,6 @@ export function useChatHandler() {
                     saveMessage(sid, fullMsg).then(() =>
                         saveContext(sid, {
                             visualizationData: s.visualizationData ?? undefined,
-                            graphHistory: s.graphHistory,
                             activeMessageId: s.activeMessageId,
                         })
                     );
@@ -606,6 +615,13 @@ export function useChatHandler() {
             useChatStore.getState().setError(message)
             useChatStore.getState().updateMessage(assistantMsgId, "", true)
         } finally {
+            // Safety net: stamp the response time on every exit path
+            // (server-error events, aborts, exceptions) so the footer
+            // still shows how long the attempt took. No-op when the
+            // completion path above already recorded it.
+            if (requestStartedAt > 0) {
+                useChatStore.getState().setMessageDurationMs(assistantMsgId, Date.now() - requestStartedAt)
+            }
             useChatStore.getState().setLoading(false)
         }
     }, [user])

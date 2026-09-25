@@ -88,10 +88,9 @@ async function untrackBlob(key: string): Promise<void> {
     await d1Exec(`DELETE FROM blobs WHERE key = ?`, [key]);
 }
 
-async function deleteBlob(sessionId: string, key: string): Promise<void> {
+async function deleteBlob(key: string): Promise<void> {
     await r2Delete(key).catch(() => undefined);
     await untrackBlob(key).catch(() => undefined);
-    void sessionId;
 }
 
 // ---------------------------------------------------------------------------
@@ -289,15 +288,6 @@ export async function setSessionContext(userId: string, sessionId: string, conte
         await r2PutJson(key, context);
         await trackBlob(sessionId, key);
         contextJson = JSON.stringify({ __blob: key });
-    } else if (estimateJsonBytes(context) > INLINE_BUDGET && (context as SessionUIState).graphHistory) {
-        const trimmed: SessionUIState = {
-            ...context,
-            graphHistory: context.graphHistory!.map((g) => ({
-                ...g,
-                data: estimateJsonBytes(g.data) > OVERFLOW_FIELD_THRESHOLD ? null : g.data,
-            })),
-        };
-        contextJson = JSON.stringify(trimmed);
     }
     await d1Exec(`UPDATE sessions SET context_json = ?, last_message_at = ? WHERE id = ?`, [
         contextJson,
@@ -306,7 +296,7 @@ export async function setSessionContext(userId: string, sessionId: string, conte
     ]);
     for (const p of prev) {
         if (contextJson.includes(p.key)) continue;
-        await deleteBlob(sessionId, p.key);
+        await deleteBlob(p.key);
     }
 }
 
@@ -411,45 +401,6 @@ export async function upsertMessage(userId: string, sessionId: string, message: 
     return message.id;
 }
 
-/** Partial message edit (content and/or data fields). */
-export async function patchMessage(
-    userId: string,
-    sessionId: string,
-    messageId: string,
-    patch: { content?: string; data?: Record<string, unknown> }
-): Promise<void> {
-    await requireSession(userId, sessionId);
-    const rows = await d1Query<MessageDbRow>(`SELECT * FROM messages WHERE id = ? AND session_id = ?`, [
-        messageId,
-        sessionId,
-    ]);
-    const row = rows[0];
-    if (!row) throw Object.assign(new Error("Message not found"), { status: 404 });
-    let data: FullMessageDoc;
-    try {
-        data = JSON.parse(row.data_json || "{}");
-    } catch {
-        data = buildFullMessageDoc(userId, {
-            id: row.id,
-            role: row.role as "user" | "assistant",
-            content: row.content,
-            timestamp: row.timestamp,
-        });
-    }
-    const content = patch.content !== undefined ? patch.content.slice(0, 200_000) : row.content;
-    let merged = data;
-    if (patch.data && typeof patch.data === "object") {
-        merged = { ...data, ...patch.data };
-    }
-    merged = await offloadDoc(sessionId, messageId, merged);
-    await d1Exec(`UPDATE messages SET content = ?, data_json = ? WHERE id = ?`, [
-        content,
-        JSON.stringify(merged),
-        messageId,
-    ]);
-    await d1Exec(`UPDATE sessions SET last_message_at = ? WHERE id = ?`, [Date.now(), sessionId]);
-}
-
 /** Delete one message and its blobs. */
 export async function deleteMessage(userId: string, sessionId: string, messageId: string): Promise<void> {
     await requireSession(userId, sessionId);
@@ -458,7 +409,7 @@ export async function deleteMessage(userId: string, sessionId: string, messageId
         [sessionId, `sessions/${escapeLike(sessionId)}/messages/${escapeLike(messageId)}/%`]
     );
     await d1Exec(`DELETE FROM messages WHERE id = ? AND session_id = ?`, [messageId, sessionId]);
-    await Promise.all(blobs.map((b) => deleteBlob(sessionId, b.key)));
+    await Promise.all(blobs.map((b) => deleteBlob(b.key)));
     await d1Exec(`UPDATE sessions SET last_message_at = ? WHERE id = ?`, [Date.now(), sessionId]);
 }
 

@@ -40,7 +40,6 @@ import { getSearchTools } from "@/lib/tools/search";
 import { getRegulationTools } from "@/lib/tools/regulation";
 import { getSimulationTools } from "@/lib/tools/simulation";
 import { ResearchManager } from "@/lib/research/manager";
-import { IntentAnalyzer, IntentAnalyzerUnavailableError } from "@/lib/research/agents/intent-analyzer";
 import { classifyLlmError, isNonRecoverable, type ClassifiedLlmError } from "@/lib/utils/llm-errors";
 import {
     extractRegulationDocs,
@@ -661,15 +660,16 @@ export async function POST(request: NextRequest) {
                         }
                     }
 
-                    // 2. Intent + decide/plan run IN PARALLEL (independent LLM
-                    // calls on the same cheap planner model — neither input
-                    // depends on the other's output). Wall time drops from
-                    // sum(intent, planner) to max(intent, planner). Session
-                    // metadata (title + type) is already in flight too (see
-                    // above), so all three pre-execution LLM calls overlap.
+                    // 2. Decide/plan (single LLM call on the cheap planner
+                    // model). Session metadata (title + type) is already in
+                    // flight too (see above), so both pre-execution LLM
+                    // calls overlap. NOTE: no separate intent pass here —
+                    // nothing downstream consumes it (decidePlan, the
+                    // executor, and the responder take no intent input),
+                    // so it would be a paid no-op. Deep-research mode
+                    // runs its own intent analysis inside ResearchManager.
                     let plan: Plan;
                     let directReply: string | undefined;
-                    let intentUnavailableError: IntentAnalyzerUnavailableError | null = null;
                     // When the planner LLM fails and we serve a heuristic
                     // fallback plan, the failure reason travels with the
                     // plan event so the persisted trace shows WHY.
@@ -678,98 +678,36 @@ export async function POST(request: NextRequest) {
                         // In Deep Research Mode, force web search to be enabled
                         const effectiveWebSearch = deepResearchMode ? true : web_search;
 
-                        const intentPromise = (async () => {
-                            const intentAnalyzer = new IntentAnalyzer(plannerModel);
-                            return intentAnalyzer.analyze(message, history);
-                        })();
-                        const planPromise = (async () => {
-                            try {
-                                return await decidePlan(
-                                    plannerModel,
-                                    message,
-                                    effectiveWebSearch,
-                                    deepResearchMode,
-                                    history
-                                );
-                            } catch (firstError) {
-                                // Retry once on ANY first failure (timeout,
-                                // abort, or unparsable prose — the upstream
-                                // model occasionally returns non-JSON even
-                                // for the strict planner prompt, and most
-                                // such stalls clear within seconds). The plan
-                                // call is side-effect-free.
-                                console.warn(
-                                    "[Planner] Attempt failed, retrying once:",
-                                    firstError instanceof Error ? firstError.message.slice(0, 300) : firstError
-                                );
-                                return decidePlan(
-                                    plannerModel,
-                                    message,
-                                    effectiveWebSearch,
-                                    deepResearchMode,
-                                    history
-                                );
-                            }
-                        })();
-
-                        // allSettled so one failure never cancels the other:
-                        // an unavailable intent pass still yields a plan (with
-                        // a degraded-mode signal), and a bad plan still yields
-                        // the intent event.
-                        const [intentSettled, planSettled] = await Promise.allSettled([
-                            intentPromise,
-                            planPromise,
-                        ]);
-
-                        // --- Intent result (classification) ---
-                        // NOTE: We deliberately don't try to capture
-                        // usage from the IntentAnalyzer. It calls
-                        // `.withStructuredOutput().invoke()` which
-                        // uses tool calls under the hood, and LangChain
-                        // does not reliably preserve OpenRouter's
-                        // `usage` block on the resulting AIMessage.
-                        // The intent pass is small (typically 1-2k
-                        // tokens on free models) and the responder
-                        // stream is the dominant cost driver, so this
-                        // omission is acceptable.
-                        if (intentSettled.status === "fulfilled") {
-                            sendEvent("intent_analysis", { intentAnalysis: intentSettled.value });
-                        } else {
-                            const intentError = intentSettled.reason;
-                            if (intentError instanceof IntentAnalyzerUnavailableError) {
-                                console.warn(
-                                    "[API] Intent analysis unavailable:",
-                                    intentError.kind,
-                                    intentError.cause instanceof Error ? intentError.cause.message : intentError.cause
-                                );
-                                intentUnavailableError = intentError;
-                                // Inform the frontend that the structured
-                                // intent pass was skipped so it can show a
-                                // degraded-mode indicator on the message.
-                                sendEvent("intent_analysis_unavailable", {
-                                    kind: intentError.kind,
-                                    message: intentError.userMessage,
-                                });
-                            } else {
-                                console.warn(
-                                    "[API] Intent analysis failed (recoverable):",
-                                    intentError instanceof Error ? intentError.message : intentError
-                                );
-                            }
+                        const runDecide = () =>
+                            decidePlan(
+                                plannerModel,
+                                message,
+                                effectiveWebSearch,
+                                deepResearchMode,
+                                history
+                            );
+                        let decision: Awaited<ReturnType<typeof runDecide>>;
+                        try {
+                            decision = await runDecide();
+                        } catch (firstError) {
+                            // Retry once on ANY first failure (timeout,
+                            // abort, or unparsable prose — the upstream
+                            // model occasionally returns non-JSON even
+                            // for the strict planner prompt, and most
+                            // such stalls clear within seconds). The plan
+                            // call is side-effect-free.
+                            console.warn(
+                                "[Planner] Attempt failed, retrying once:",
+                                firstError instanceof Error ? firstError.message.slice(0, 300) : firstError
+                            );
+                            decision = await runDecide();
                         }
-
-                        // --- Planner result (decide + plan, single call) ---
-                        // needs_plan=false carries a direct reply (greetings,
-                        // thanks, capability questions) — streamed back with no
-                        // tool calls and no second LLM call. needs_plan=true
-                        // carries steps.
-                        if (planSettled.status === "fulfilled") {
-                            const decision = planSettled.value;
-                            plan = decision.plan;
-                            directReply = decision.needsPlan ? undefined : decision.reply;
-                        } else {
-                            throw planSettled.reason;
-                        }
+                        // needs_plan=false carries a direct reply
+                        // (greetings, thanks, capability questions) —
+                        // streamed back with no tool calls and no second
+                        // LLM call. needs_plan=true carries steps.
+                        plan = decision.plan;
+                        directReply = decision.needsPlan ? undefined : decision.reply;
                     } catch (error) {
                         // Distinguish "LLM is unavailable" (rate limit, auth,
                         // network) from "LLM returned bad JSON". The former
@@ -793,7 +731,7 @@ export async function POST(request: NextRequest) {
                                 stage: "planner",
                                 kind: cls.kind,
                             });
-                            // Planner/intent LLM calls may already have spent.
+                            // The planner LLM call may already have spent.
                             recordTurn({});
                             safeClose();
                             return;
@@ -875,10 +813,29 @@ export async function POST(request: NextRequest) {
                         };
                     }
 
+                    // Responder init (dynamic import + client setup) is
+                    // independent of tool execution — kick it off first so
+                    // init overlaps the tool calls instead of running
+                    // back-to-back with them. Started before executeSteps
+                    // (not earlier) so fast-path direct replies never pay
+                    // for a responder they don't use.
+                    const responderPromise = getResponderModel(mode, byok, deepResearchMode, gatewaySessionId);
+                    // Guard: if executeSteps throws first, the pending
+                    // init rejection must not surface as unhandled.
+                    responderPromise.catch(() => undefined);
+
+                    const executionContext = await executeSteps(
+                        plan.steps,
+                        tools,
+                        (step, status, additional) => {
+                            sendEvent("step_update", { step, status, additional });
+                        }
+                    );
+
                     // Responder is only needed for tool-backed questions.
                     let responderModel;
                     try {
-                        responderModel = await getResponderModel(mode, byok, deepResearchMode, gatewaySessionId);
+                        responderModel = await responderPromise;
                     } catch (error) {
                         const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
                         console.error("[API] Model initialization error:", errorMessage);
@@ -892,14 +849,6 @@ export async function POST(request: NextRequest) {
                         mode,
                         getModelId(responderModel),
                         getModelId(plannerModel)
-                    );
-
-                    const executionContext = await executeSteps(
-                        plan.steps,
-                        tools,
-                        (step, status, additional) => {
-                            sendEvent("step_update", { step, status, additional });
-                        }
                     );
 
                     // Reranked FIA docs collected here; the responder LLM picks
@@ -1093,25 +1042,6 @@ Please answer the user's question based on the F1 data provided above. Do not fo
                                 streamError instanceof Error ? streamError.message : streamError
                             );
                         }
-                    }
-
-                    // --- Degraded-mode note ---
-                    // If the IntentAnalyzer was unavailable (rate limit /
-                    // auth), the planner still produced a plan, the executor
-                    // ran, and the responder may have answered — but the
-                    // answer was produced without structured entity context.
-                    // Append a brief, friendly note to the answer so the
-                    // user knows the response is best-effort, then emit a
-                    // dedicated SSE event the UI can use to render a badge.
-                    if (intentUnavailableError) {
-                        const note = `\n\n_Note: ${intentUnavailableError.userMessage} Some details may be off because the request was routed with limited information._`;
-                        assistantContent += note;
-                        sendEvent("token", { content: note });
-                        sendEvent("degraded", {
-                            stage: "intent_analysis",
-                            kind: intentUnavailableError.kind,
-                            message: intentUnavailableError.userMessage,
-                        });
                     }
 
                     // If the responder itself failed non-recoverably and we

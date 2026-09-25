@@ -9,12 +9,11 @@ import { UsageIndicator } from "@/components/layout/usage-indicator";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
 import {
     listSessions,
-    createSession,
     deleteSession,
     loadMessages,
     loadContext,
 } from "@/lib/cf/client";
-import { cn, sanitizeCitations } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 export function Sidebar() {
     // Slice subscriptions: streaming tokens update `messages`, which this
@@ -58,42 +57,16 @@ export function Sidebar() {
         }
     }, [user, setSessions]);
 
-    const handleNewChat = async () => {
-        // Check if an empty session already exists
-        const emptySession = sessions.find(s => s.title === "New Chat");
-        if (emptySession) {
-            handleSelectSession(emptySession.id);
-            return;
-        }
-
-        try {
-            const sessionId = await createSession("New Chat");
-            const now = Date.now();
-            const newSession = {
-                id: sessionId,
-                title: "New Chat",
-                createdAt: now,
-                lastMessageAt: now,
-                context: {}
-            };
-            setSessions([newSession, ...sessions]);
-            setCurrentSessionId(sessionId);
-        } catch {
-            // Cloud sync unavailable — fall back to a local-only session.
-            const sessionId = `local_${Date.now()}`;
-            const now = Date.now();
-            setSessions([{
-                id: sessionId,
-                title: "New Chat",
-                createdAt: now,
-                lastMessageAt: now,
-                context: {}
-            }, ...sessions]);
-            setCurrentSessionId(sessionId);
-        }
+    const handleNewChat = () => {
+        // Fresh composer WITHOUT creating a session: no "New Chat" row
+        // appears in the sidebar until the first message is sent (the
+        // send handler lazily creates the session then, titled from the
+        // message text). This keeps repeated New Chat clicks from piling
+        // up empty sessions.
+        setCurrentSessionId(null);
         setMessages([]); // Clear messages for new chat
         // Reset panel state so the previous session's charts don't linger.
-        useChatStore.setState({ visualizationData: null, graphHistory: [], activeMessageId: null });
+        useChatStore.setState({ visualizationData: null, activeMessageId: null });
         // On phones the sidebar is a drawer — get out of the way.
         if (!isDesktop) setSidebarOpen(false);
     };
@@ -109,10 +82,9 @@ export function Sidebar() {
                 loadMessages(sessionId),
                 loadContext(sessionId),
             ]);
-            setMessages(messages.map(m => {
-                const citations = sanitizeCitations(m.citations);
-                return { ...m, ...(citations.length > 0 ? { citations } : m.citations ? { citations: [] } : {}) };
-            }));
+            // Citations arrive pre-sanitized from loadMessages — no
+            // second pass needed here.
+            setMessages(messages);
             // Re-learn driver colors from restored payloads so highlights
             // are season-correct even before any new query runs.
             try {
@@ -123,14 +95,11 @@ export function Sidebar() {
             } catch {
                 // Best-effort: static grid fallback still applies.
             }
-            // Restore panel + pinned graphs + active message. Fall back to
-            // the latest message's visualization when no UI state was ever
-            // saved (pre-existing sessions).
+            // Restore panel + active message. Fall back to the latest
+            // message's visualization when no UI state was ever saved
+            // (pre-existing sessions).
             type StoreState = ReturnType<typeof useChatStore.getState>;
-            const patch: { graphHistory?: StoreState["graphHistory"]; visualizationData?: StoreState["visualizationData"]; activeMessageId?: string | null } = {};
-            if (ui.graphHistory) {
-                patch.graphHistory = ui.graphHistory as StoreState["graphHistory"];
-            }
+            const patch: { visualizationData?: StoreState["visualizationData"]; activeMessageId?: string | null } = {};
             const activeId = ui.activeMessageId ?? messages.filter(m => m.role === "assistant").slice(-1)[0]?.id ?? null;
             const activeMsg = messages.find(m => m.id === activeId);
             const panelData = ui.visualizationData ?? activeMsg?.chartSpecs ?? activeMsg?.visualizationData ?? null;
@@ -154,7 +123,9 @@ export function Sidebar() {
 
         if (currentSessionId === sessionId) {
             setCurrentSessionId(null);
-            setMessages([]);
+            // Full reset (not just messages) so the deleted session's
+            // charts/panel state can't linger behind.
+            useChatStore.getState().clearMessages();
         }
 
         try {

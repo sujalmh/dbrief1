@@ -531,17 +531,16 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
                     </div>
                 )}
 
-                {/* Per-message usage footer (model + tokens + cost).
-                    The backend populates `usage` via the `usage` SSE
-                    event (per the OpenRouter Usage Accounting docs).
-                    We render it on every assistant message that has
-                    a usage payload — including streaming messages
-                    that errored mid-stream, so users can still see
-                    what they were charged for. The footer sits below
-                    the citations/actions to stay out of the way of
-                    the answer itself. */}
-                {message.usage && !isUser && (
-                    <UsageFooter usage={message.usage} />
+                {/* Per-message stats footer. Response time renders for
+                    both modes (client-measured, so it exists even when
+                    the backend sent no `usage` event); model + token
+                    stats render BYOK-only. Shown on every assistant
+                    message with stats — including ones that errored
+                    mid-stream, so users still see what was spent. The
+                    footer sits below the citations/actions to stay out
+                    of the way of the answer itself. */}
+                {(message.usage || message.durationMs != null) && !isUser && (
+                    <UsageFooter usage={message.usage} durationMs={message.durationMs} />
                 )}
 
                 {/* Message Actions Toolbar - Inside for Assistant */}
@@ -573,8 +572,10 @@ export const MessageBubble = memo(MessageBubbleComponent, (prevProps, nextProps)
         // setMessageUsage. Reference equality is sufficient; if
         // someone ever starts mutating it in place we'd need a
         // deeper check, but the store always replaces the whole
-        // message object.
+        // message object. durationMs is a scalar stamped on
+        // completion, so a plain equality check suffices.
         prev.usage === next.usage &&
+        prev.durationMs === next.durationMs &&
         prevProps.isLastAssistant === nextProps.isLastAssistant &&
         JSON.stringify(prev.steps) === JSON.stringify(next.steps) &&
         JSON.stringify(prev.iterations) === JSON.stringify(next.iterations) &&

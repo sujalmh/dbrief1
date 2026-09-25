@@ -12,7 +12,6 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
 import { validateByokConfig } from "@/lib/providers"
 import { saveByokKeyAction, hasByokKeyAction, clearByokKeyAction } from "@/app/actions/settings"
 import { useState, useEffect } from "react"
@@ -362,18 +361,6 @@ export function SettingsModal() {
                         </div>
                     )}
 
-                    {/* Developer Mode */}
-                    <div className="flex items-center justify-between rounded-lg border border-muted/40 p-3 bg-muted/5 mt-1">
-                        <div className="space-y-0.5">
-                            <Label className="text-sm font-medium">Developer Mode</Label>
-                            <p className="text-xs text-muted-foreground">Show detailed debug information</p>
-                        </div>
-                        <Switch
-                            checked={settings.developerMode}
-                            onCheckedChange={(checked) => updateSettings({ developerMode: checked })}
-                            className="data-[state=checked]:bg-[var(--f1-red)]"
-                        />
-                    </div>
                 </div>
 
                 <DialogFooter className="sm:justify-between items-center mt-4">

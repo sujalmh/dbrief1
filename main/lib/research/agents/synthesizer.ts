@@ -18,6 +18,7 @@ import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import type { EvidenceStore } from "../evidence-store";
 import type { ResearchMemory } from "../memory";
 import type { ConfidenceScore, ChartSpec, ResearchType } from "../types";
+import { LLM_TIMEOUT_MS } from "@/lib/llm";
 
 // =============================================================================
 // Synthesizer
@@ -128,7 +129,7 @@ Produce a comprehensive, evidence-backed answer. Use markdown formatting.`;
             const stream = await this.model.stream([
                 new SystemMessage(systemPrompt),
                 humanMessage,
-            ]);
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.responder) });
 
             for await (const chunk of stream) {
                 try { onChunk?.(chunk) } catch { /* best-effort */ }
@@ -154,7 +155,7 @@ Produce a comprehensive, evidence-backed answer. Use markdown formatting.`;
                         new SystemMessage(systemPrompt),
                         humanMessage,
                         correctionPrompt,
-                    ]);
+                    ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.responder) });
                     for await (const chunk of retryStream) {
                         try { onChunk?.(chunk) } catch { /* best-effort */ }
                         const content = typeof chunk.content === "string"

@@ -20,6 +20,7 @@
 
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
+import { LLM_TIMEOUT_MS } from "@/lib/llm";
 import { z } from "zod";
 import { type ChartSpec, type Evidence, type ResearchType } from "../types";
 import type { EvidenceStore } from "../evidence-store";
@@ -149,7 +150,10 @@ export class VisualizationPlanner {
             });
             const prompt = ChatPromptTemplate.fromTemplate(VIZ_PROMPT);
             const chain = prompt.pipe(modelWithStructure);
-            const result = await chain.invoke({ objective, researchType, evidenceContext });
+            const result = await chain.invoke(
+                { objective, researchType, evidenceContext },
+                { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) }
+            );
             intents = result.charts
                 .map((c): IntentProposal | null => {
                     const intent = sanitizeIntent(c.intent);

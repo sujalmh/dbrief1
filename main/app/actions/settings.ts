@@ -48,16 +48,3 @@ export async function clearByokKeyAction() {
     cookieStore.delete(LEGACY_COOKIE);
     return { success: true };
 }
-
-// --- Deprecated aliases (pre two-mode simplification) ---
-// Kept so any lingering imports don't break during the transition.
-
-/** @deprecated Use saveByokKeyAction instead. */
-export async function saveApiKeyAction(key: string) {
-    return saveByokKeyAction(key);
-}
-
-/** @deprecated Use hasByokKeyAction instead. */
-export async function hasApiKeyAction() {
-    return hasByokKeyAction();
-}

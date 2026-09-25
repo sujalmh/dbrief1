@@ -25,9 +25,6 @@ export interface ByokConfig {
     modelName: string;
 }
 
-/** Backwards-compatible alias: old code imported `Provider`. */
-export type Provider = AiMode;
-
 export const MANAGED_DEFAULT_MODEL = "mimo-v2.5";
 export const MANAGED_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1";
 

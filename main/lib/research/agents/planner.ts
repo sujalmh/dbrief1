@@ -22,6 +22,7 @@ import type { EvidenceStore } from "../evidence-store";
 import type { ResearchMemory } from "../memory";
 import type { Task, ResearchType, ResearchBudget, IntentAnalysis } from "../types";
 import { extractJson, extractContent } from "../llm-parse";
+import { LLM_TIMEOUT_MS } from "@/lib/llm";
 
 // =============================================================================
 // Schemas
@@ -154,7 +155,7 @@ ${memory.toContextString()}`;
             const validated = await structuredModel.invoke([
                 new SystemMessage(systemPrompt),
                 new HumanMessage(humanMsg),
-            ]);
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) });
 
             const tasks: Task[] = validated.tasks.map((t, index) => ({
                 id: `task_${iteration}_${index + 1}`,
@@ -178,7 +179,7 @@ ${memory.toContextString()}`;
             response = await this.model.invoke([
                 new SystemMessage(systemPrompt + '\n\nRespond as JSON:\n{"tasks": [{"description": "...", "tool": "...", "args": {...}, "dependsOn": ["..."], "rationale": "..."}], "reasoning": "..."}'),
                 new HumanMessage(humanMsg + " Respond with ONLY the JSON object, no other text."),
-            ]);
+            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) });
         } catch (invokeError) {
             console.error("[Planner] LLM invoke failed:", invokeError instanceof Error ? invokeError.message : invokeError);
             const fallbackTasks = this.createFallbackTasks(strategy, objective, iteration);
@@ -217,7 +218,7 @@ ${memory.toContextString()}`;
                 const retryResponse = await this.model.invoke([
                     new SystemMessage(`You are a task planner. Output ONLY valid JSON, no markdown, no explanation. The JSON must have this exact shape:\n{"tasks":[{"description":"...","tool":"...","args":{}}],"reasoning":"..."}\n\nAvailable tools: ${this.registry.toPromptString(deepResearch)}`),
                     new HumanMessage(`Create 1-3 tasks for: ${strategy}\n\nJSON:`),
-                ]);
+                ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) });
                 const retryContent = extractContent(retryResponse.content);
                 const retryParsed = extractJson(retryContent);
                 const retryValidated = PlanOutputSchema.parse(retryParsed);

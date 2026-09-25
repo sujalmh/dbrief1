@@ -441,10 +441,3 @@ export const f1Tools: Record<string, StructuredTool> = {
     get_tyres: getTyresTool,
     get_driver_standings: getDriverStandingsTool,
 };
-
-/**
- * Get all F1 tools as an array
- */
-export function getF1Tools(): StructuredTool[] {
-    return Object.values(f1Tools);
-}

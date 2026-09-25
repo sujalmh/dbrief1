@@ -7,7 +7,6 @@
 
 import { describe, it, expect, vi } from "vitest";
 import {
-    citationLink,
     citationsFromDocs,
     extractEvidenceIds,
     extractRegulationDocs,
@@ -139,24 +138,6 @@ describe("matchCitations", () => {
             DOCS
         );
         expect(result.length).toBe(1);
-    });
-});
-
-describe("citationLink", () => {
-    it("prefers source_url over url", () => {
-        expect(
-            citationLink({ source_url: "https://cdn/a.pdf", url: "https://old/b.pdf" })
-        ).toBe("https://cdn/a.pdf");
-    });
-
-    it("falls back to url", () => {
-        expect(citationLink({ source_url: null, url: "https://old/b.pdf" })).toBe(
-            "https://old/b.pdf"
-        );
-    });
-
-    it("returns null when neither exists", () => {
-        expect(citationLink({ source_url: null, url: null })).toBeNull();
     });
 });
 

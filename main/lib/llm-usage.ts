@@ -214,22 +214,6 @@ export class UsageAccumulator {
 }
 
 /**
- * Walk a LangChain stream and accumulate usage. The caller is expected
- * to forward each chunk downstream (e.g. to write tokens to the SSE
- * response) and we take care of the bookkeeping. The model is yielded
- * as a small marker we attach to the last emitted usage object.
- */
-export async function* trackUsage<T extends AIMessageChunk>(
-    source: AsyncIterable<T>,
-    accumulator: UsageAccumulator
-): AsyncIterable<T> {
-    for await (const chunk of source) {
-        accumulator.addChunk(chunk)
-        yield chunk
-    }
-}
-
-/**
  * Convenience: returns the model name from a LangChain chat model, or
  * the literal 'unknown' if LangChain can't tell us. We use this so the
  * per-message footer reflects the model that was actually used, not

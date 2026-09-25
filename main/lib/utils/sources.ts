@@ -55,17 +55,6 @@ export interface RetrievedDocLike {
     [key: string]: unknown;
 }
 
-/** Resolve the clickable link for a citation: collection field first. */
-export function citationLink(citation: Pick<SourceCitation, "url" | "source_url">): string | null {
-    if (typeof citation.source_url === "string" && citation.source_url) {
-        return citation.source_url;
-    }
-    if (typeof citation.url === "string" && citation.url) {
-        return citation.url;
-    }
-    return null;
-}
-
 // =============================================================================
 // Retrieval output → citations
 // =============================================================================

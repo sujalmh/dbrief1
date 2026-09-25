@@ -126,22 +126,6 @@ export function saveMessage(sessionId: string, message: Message): Promise<null> 
     );
 }
 
-/** Edit a message in place (content and/or trace fields). */
-export function editMessage(
-    sessionId: string,
-    messageId: string,
-    patch: { content?: string; data?: Record<string, unknown> }
-): Promise<null> {
-    return swallow(
-        cfFetch(`/api/cf/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(patch),
-        }),
-        "[cf] editMessage failed:"
-    );
-}
-
 /** Delete one message and its blobs. */
 export function deleteCloudMessage(sessionId: string, messageId: string): Promise<null> {
     return swallow(
@@ -178,7 +162,7 @@ export async function loadContext(sessionId: string): Promise<SessionUIState> {
 
 export function saveContext(
     sessionId: string,
-    context: { visualizationData?: unknown; graphHistory?: SessionUIState["graphHistory"]; activeMessageId?: string | null }
+    context: { visualizationData?: unknown; activeMessageId?: string | null }
 ): Promise<null> {
     return swallow(
         cfFetch(`/api/cf/sessions/${encodeURIComponent(sessionId)}/context`, {

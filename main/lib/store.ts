@@ -2,14 +2,24 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { get, set, del } from 'idb-keyval'
 
+// Last serialized value written per key. zustand-persist calls
+// setItem on EVERY set() — including ~60fps streamed-token updates
+// that never touch persisted prefs — so skip no-op writes.
+const lastWritten: Record<string, string> = {}
+
 const idbStorage = {
     getItem: async (name: string): Promise<string | null> => {
         return (await get(name)) || null
     },
     setItem: async (name: string, value: string): Promise<void> => {
+        // Same bytes as the last write from this tab: identical
+        // content, so skipping loses nothing (durability unchanged).
+        if (value === lastWritten[name]) return
+        lastWritten[name] = value
         await set(name, value)
     },
     removeItem: async (name: string): Promise<void> => {
+        delete lastWritten[name]
         await del(name)
     },
 }
@@ -157,6 +167,14 @@ export interface Message {
      * `model` is captured here (not just from settings) because it
      * records the model that actually produced this response.
      */
+    /**
+     * Wall-clock response time in ms, measured client-side from
+     * request send to the final streamed token. Recorded for every
+     * completed turn in BOTH modes — including fast-path replies
+     * that never produce a `usage` event — so the footer can always
+     * show how long the response took.
+     */
+    durationMs?: number | null
     usage?: {
         provider: string
         model: string
@@ -229,27 +247,6 @@ interface Settings {
     deepResearchMode: boolean
     webSearchEnabled: boolean
     visualizeEnabled: boolean
-    developerMode: boolean
-}
-
-export interface GraphHistoryItem {
-    id: string
-    name: string
-    type: 'lap_times' | 'telemetry' | 'comparison'
-    data: unknown
-    timestamp: number
-}
-
-/**
- * A single tool result forwarded to the visualization layer.
- * (Mirrors the `visualization` SSE payload items sent by /api/chat.)
- */
-export interface VisualizationResultItem {
-    tool: string
-    args?: Record<string, unknown>
-    success: boolean
-    data?: unknown
-    error?: string | null
 }
 
 /**
@@ -265,7 +262,6 @@ export interface StoredSession {
     userId?: string
     createdAt?: unknown
     lastMessageAt?: unknown
-    context?: Record<string, unknown>
 }
 
 interface ChatStore {
@@ -274,7 +270,6 @@ interface ChatStore {
     input: string
     settings: Settings
     visualizationData: unknown
-    graphHistory: GraphHistoryItem[]
 
     activeMessageId: string | null
     setActiveMessageId: (id: string | null) => void
@@ -323,6 +318,13 @@ interface ChatStore {
         usage: NonNullable<Message['usage']>
     ) => void
     /**
+     * Record the wall-clock response time for a message. Merges into
+     * the message without touching any other field (including an
+     * existing `usage` payload). Called by the chat handler when the
+     * stream finishes, errors, or is aborted.
+     */
+    setMessageDurationMs: (id: string, ms: number) => void
+    /**
      * Attach the backend's plan-decision trace to a message. Sent with
      * every `plan` SSE event (including needsPlan=false direct replies).
      */
@@ -339,8 +341,6 @@ interface ChatStore {
         refusal: NonNullable<Message['refusal']>
     ) => void
     setVisualizationData: (data: unknown) => void
-    addGraphToHistory: (name: string, type: GraphHistoryItem['type'], data: unknown) => void
-    removeGraphFromHistory: (id: string) => void
     clearMessages: () => void
     deleteMessage: (id: string) => void
 
@@ -372,14 +372,7 @@ const defaultSettings: Settings = {
     deepResearchMode: false,
     webSearchEnabled: false,
     visualizeEnabled: false,
-    developerMode: false,
 }
-
-// Monotonic counter for graphHistory IDs. Lives outside the store
-// factory so it survives both `clearMessages` and zustand's persist
-// rehydration (Date.now() can collide when two graphs are added in
-// the same millisecond).
-let graphCounter = 0;
 
 export const useChatStore = create<ChatStore>()(
     persist(
@@ -392,7 +385,6 @@ export const useChatStore = create<ChatStore>()(
             visualizationData: null,
             visualizationWidth: 500,
             isVisualizationCollapsed: false,
-            graphHistory: [],
             activeMessageId: null,
             error: null,
             currentSessionId: null,
@@ -435,7 +427,10 @@ export const useChatStore = create<ChatStore>()(
             updateMessage: (id, content, isError) =>
                 set((state) => ({
                     messages: state.messages.map(msg =>
-                        msg.id === id ? { ...msg, content, isError } : msg
+                        // Only touch isError when the caller passes it —
+                        // streaming token updates omit it and must not
+                        // wipe a previously set error flag.
+                        msg.id === id ? { ...msg, content, ...(isError !== undefined ? { isError } : {}) } : msg
                     )
                 })),
             updateMessageSteps: (id, steps) =>
@@ -495,6 +490,14 @@ export const useChatStore = create<ChatStore>()(
                             : msg
                     )
                 })),
+            setMessageDurationMs: (id, ms) =>
+                set((state) => ({
+                    messages: state.messages.map(msg =>
+                        msg.id === id
+                            ? { ...msg, durationMs: ms }
+                            : msg
+                    )
+                })),
             setMessagePlanTrace: (id, trace) =>
                 set((state) => ({
                     messages: state.messages.map(msg =>
@@ -512,19 +515,7 @@ export const useChatStore = create<ChatStore>()(
                     )
                 })),
             setVisualizationData: (data) => set({ visualizationData: data }),
-            addGraphToHistory: (name, type, data) => set((state) => ({
-                graphHistory: [
-                    // Use a monotonically increasing counter instead of
-                    // Date.now() so two graphs added in the same
-                    // millisecond don't collide on the same ID.
-                    { id: `g_${++graphCounter}`, name, type, data, timestamp: Date.now() },
-                    ...state.graphHistory
-                ]
-            })),
-            removeGraphFromHistory: (id) => set((state) => ({
-                graphHistory: state.graphHistory.filter(item => item.id !== id)
-            })),
-            clearMessages: () => set({ messages: [], visualizationData: null, graphHistory: [], activeMessageId: null }),
+            clearMessages: () => set({ messages: [], visualizationData: null, activeMessageId: null }),
             deleteMessage: (id) => set((state) => ({
                 messages: state.messages.filter(msg => msg.id !== id)
             })),
@@ -595,9 +586,9 @@ export const useChatStore = create<ChatStore>()(
             name: 'dbrief1-storage',
             storage: createJSONStorage(() => idbStorage),
             // Persist ONLY lightweight UI prefs. Chat data (messages,
-            // visualizationData, graphHistory, activeMessageId) lives in
-            // the cloud store (D1 + R2) and is loaded per-session on
-            // demand — persisting it here caused two problems:
+            // visualizationData, activeMessageId) lives in the cloud
+            // store (D1 + R2) and is loaded per-session on demand —
+            // persisting it here caused two problems:
             //   1. Stale chat on reopen: messages were rehydrated from
             //      IndexedDB while currentSessionId/sessions were not,
             //      so the previous session's messages rendered under a
@@ -628,7 +619,9 @@ export const useChatStore = create<ChatStore>()(
             // v6 -> v7: chat data is no longer persisted (cloud store is
             //   the source of truth). Drop any previously stored
             //   messages/visualizationData/graphHistory/activeMessageId
-            //   so reopening starts with a fresh chat.
+            //   so reopening starts with a fresh chat. (graphHistory
+            //   itself was removed entirely — the delete below only
+            //   cleans up legacy snapshots that still contain it.)
             migrate: (persistedState) => {
                 const state = (persistedState ?? {}) as Partial<{
                     settings: Partial<Settings> & Record<string, unknown>
@@ -646,7 +639,6 @@ export const useChatStore = create<ChatStore>()(
                         deepResearchMode: s.deepResearchMode === true,
                         webSearchEnabled: s.webSearchEnabled === true,
                         visualizeEnabled: s.visualizeEnabled === true,
-                        developerMode: s.developerMode === true,
                     };
                 }
                 // Strip legacy persisted chat data (see v6 -> v7 above).

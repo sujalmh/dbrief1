@@ -404,24 +404,6 @@ export async function planQuery(
 }
 
 /**
- * Stream planning with reasoning trace.
- * Buffers the single decide-and-plan call, then resolves like planQuery.
- * (The onReasoningToken hook is kept for API compatibility but no longer
- * receives per-token planning output, since the new format is pure JSON.)
- */
-export async function streamPlanQuery(
-    model: BaseChatModel,
-    message: string,
-    webSearchEnabled: boolean = false,
-    deepResearchMode: boolean = false,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    onReasoningToken?: (token: string) => void,
-    history: ChatHistoryItem[] = []
-): Promise<Plan> {
-    return (await decidePlan(model, message, webSearchEnabled, deepResearchMode, history)).plan;
-}
-
-/**
  * Parse JSON from LLM response, handling markdown code blocks, the legacy
  * "reasoning text\n\nPLAN: {json}" prefix, and JSON objects embedded in
  * prose (via balanced-brace extraction). Returns the raw parsed value plus

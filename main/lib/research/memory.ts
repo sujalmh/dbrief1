@@ -15,44 +15,6 @@ import type { Discovery, ToolCallRecord } from "./types";
 import type { ExecutionResult } from "./evidence-store";
 
 // =============================================================================
-// Stop-words for memory search
-// =============================================================================
-//
-// Generic English stop-words only. F1-specific nouns (race, lap, qualifying,
-// driver, team, etc.) are intentionally KEPT because they are the primary
-// query terms users use to find prior discoveries. Filtering them out would
-// make "fastest lap in qualifying" tokenize to almost nothing, breaking
-// relevance matching.
-
-const STOP_WORDS = new Set<string>([
-    // common English
-    "the", "and", "for", "are", "but", "not", "you", "all", "any", "can",
-    "her", "was", "one", "our", "out", "day", "had", "has", "his", "how",
-    "its", "let", "may", "new", "now", "old", "see", "way", "who", "did",
-    "get", "got", "him", "own", "put", "say", "she", "too",
-    "use", "with", "this", "that", "from",
-    "they", "them", "then", "than", "have", "what", "when",
-    "where", "which", "their", "there", "would", "could", "should", "about",
-    "into", "over", "after", "before", "again", "still", "being", "these",
-    "those", "very", "just", "only", "some", "such",
-]);
-
-/**
- * Tokenize a string into meaningful keywords for matching.
- *   - lowercases
- *   - strips punctuation
- *   - removes stop-words
- *   - removes tokens shorter than 3 characters
- */
-function tokenize(text: string): string[] {
-    return text
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, " ")
-        .split(/\s+/)
-        .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
-}
-
-// =============================================================================
 // Research Memory
 // =============================================================================
 
@@ -73,13 +35,6 @@ export class ResearchMemory {
                 timestamp: Date.now(),
             });
         }
-    }
-
-    /**
-     * Check if a discovery already exists.
-     */
-    hasDiscovery(claim: string): boolean {
-        return this.discoveries.has(this.normalizeClaim(claim));
     }
 
     /**
@@ -120,48 +75,6 @@ export class ResearchMemory {
      */
     getCachedEvidenceId(tool: string, args: Record<string, unknown>): string | undefined {
         return this.toolCallCache.get(this.toolCallKey(tool, args))?.evidenceId;
-    }
-
-    /**
-     * Get discoveries relevant to a query.
-     *
-     * Relevance is scored by the number of distinct query tokens that appear
-     * in the claim, weighted by token length (longer matches are stronger
-     * signals). Stop-words are filtered out before matching. This is still
-     * keyword-based — a future enhancement could use embedding similarity.
-     */
-    getRelevantMemory(query: string, limit: number = 20): string[] {
-        const queryTokens = tokenize(query);
-        if (queryTokens.length === 0) return [];
-
-        const scored: Array<{ claim: string; score: number }> = [];
-        for (const d of this.getDiscoveries()) {
-            const claimTokens = new Set(tokenize(d.claim));
-            if (claimTokens.size === 0) continue;
-
-            let matches = 0;
-            let weightedScore = 0;
-            for (const qt of queryTokens) {
-                if (claimTokens.has(qt)) {
-                    matches++;
-                    // Longer tokens are stronger signals.
-                    weightedScore += qt.length;
-                }
-            }
-            if (matches > 0) {
-                // Combine match count and token-length signal. Require at
-                // least 2 character overlap in the matched token set to
-                // avoid "VER" matching "very".
-                if (weightedScore / matches >= 3) {
-                    scored.push({ claim: d.claim, score: matches * 10 + weightedScore });
-                }
-            }
-        }
-
-        return scored
-            .sort((a, b) => b.score - a.score)
-            .slice(0, limit)
-            .map((s) => s.claim);
     }
 
     /**

@@ -15,15 +15,12 @@
  */
 
 import { StructuredTool } from "@langchain/core/tools";
-import {
-    f1Tools,
-    getF1Tools,
-} from "@/lib/tools/fastf1";
-import { regulationRetrieveTool, getRegulationTools } from "@/lib/tools/regulation";
-import { webSearchTool, fetchWebPagesTool, getSearchTools } from "@/lib/tools/search";
-import { runSimulationTool, getSimulationTools } from "@/lib/tools/simulation";
-import { createVisualizationTool, getVisualizationTools } from "@/lib/tools/visualization";
-import type { Evidence, EvidenceType, ToolMetadata } from "./types";
+import { f1Tools } from "@/lib/tools/fastf1";
+import { regulationRetrieveTool } from "@/lib/tools/regulation";
+import { webSearchTool, fetchWebPagesTool } from "@/lib/tools/search";
+import { runSimulationTool } from "@/lib/tools/simulation";
+import { createVisualizationTool } from "@/lib/tools/visualization";
+import type { ToolMetadata } from "./types";
 
 // =============================================================================
 // Tool Metadata Definitions
@@ -229,6 +226,11 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
 export class ToolRegistry {
     private tools: Map<string, StructuredTool> = new Map();
     private metadata: Map<string, ToolMetadata> = new Map();
+    // Memoized prompt strings keyed by the deepResearch flag.
+    // toPromptString() is rebuilt from the same registry contents on
+    // every research iteration (up to 20×/request) — cache it and only
+    // invalidate when the registry itself changes.
+    private promptCache: Map<boolean, string> = new Map();
 
     /**
      * Register a tool with its metadata.
@@ -243,6 +245,7 @@ export class ToolRegistry {
         }
         this.tools.set(metadata.name, tool);
         this.metadata.set(metadata.name, metadata);
+        this.promptCache.clear();
     }
 
     /**
@@ -278,31 +281,6 @@ export class ToolRegistry {
     }
 
     /**
-     * Get tools by category.
-     */
-    getToolsByCategory(category: ToolMetadata["category"]): ToolMetadata[] {
-        return this.getAllMetadata().filter((m) => m.category === category);
-    }
-
-    /**
-     * Get tools by output evidence type.
-     */
-    getToolsByOutputType(evidenceType: EvidenceType): ToolMetadata[] {
-        return this.getAllMetadata().filter((m) => m.outputType === evidenceType);
-    }
-
-    /**
-     * Get tools whose `requires` are all satisfied by the prior evidence.
-     * Tools with no requirements are always available.
-     */
-    getAvailableTools(priorEvidence: Evidence[]): ToolMetadata[] {
-        const satisfiedTypes = new Set(priorEvidence.map((e) => e.type));
-        return this.getAllMetadata().filter((m) =>
-            m.requires.every((req) => satisfiedTypes.has(req))
-        );
-    }
-
-    /**
      * Filter tools available for the current research mode.
      */
     getToolsForMode(deepResearch: boolean): ToolMetadata[] {
@@ -312,15 +290,21 @@ export class ToolRegistry {
     /**
      * Serialize all tool metadata to a compact string for inclusion in
      * Planner and Reasoner prompts. This replaces hardcoded tool knowledge.
+     * Result is memoized per flag (see promptCache) — registry contents
+     * are fixed after createToolRegistry(), but register() invalidates.
      */
     toPromptString(deepResearch: boolean = true): string {
+        const cached = this.promptCache.get(deepResearch);
+        if (cached !== undefined) return cached;
         const tools = this.getToolsForMode(deepResearch);
-        return tools
+        const str = tools
             .map((m) => {
                 const reqStr = m.requires.length > 0 ? ` (requires: ${m.requires.join(", ")})` : "";
                 return `### ${m.name}${reqStr}\n${m.description}\nOutput: ${m.outputShape}`;
             })
             .join("\n\n");
+        this.promptCache.set(deepResearch, str);
+        return str;
     }
 }
 
@@ -358,12 +342,3 @@ export function createToolRegistry(deepResearch: boolean = true): ToolRegistry {
 
     return registry;
 }
-
-// Re-export individual tools for backward compatibility
-export {
-    getF1Tools,
-    getRegulationTools,
-    getSearchTools,
-    getSimulationTools,
-    getVisualizationTools,
-};

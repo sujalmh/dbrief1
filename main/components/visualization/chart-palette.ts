@@ -8,14 +8,12 @@
  *
  * Palette:
  *   - `F1_PALETTE` is the curated high-contrast comparison palette
- *   - `TEAM_COLORS` is the team color lookup (re-export)
+ *     (team colors live in `lib/f1-colors.ts`, imported directly)
  *   - `DRIVER_COLOR` is the convenience "color for a driver code" helper
  *   - `CHART_TOKENS` is the bag of color tokens used by chart wrappers
  */
 
-import { TEAM_COLORS, getDriverColor } from "@/lib/f1-colors";
-
-export { TEAM_COLORS };
+import { getDriverColor } from "@/lib/f1-colors";
 
 export const F1_PALETTE = [
     "#F2059F", // Pink (high contrast)

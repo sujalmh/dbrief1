@@ -9,7 +9,6 @@ import {
     getChatModel,
     getPlannerModel,
     getResponderModel,
-    isProviderConfigured,
     isManagedConfigured,
     buildOpenCodeHeaders,
     OPENCODE_USER_AGENT,
@@ -195,7 +194,6 @@ describe("isManagedConfigured", () => {
     it("reflects the managed env key", () => {
         withEnv({ MANAGED_LLM_API_KEY: "x", LLM_API_KEY: undefined, OPENCODE_GO_API_KEY: undefined, OPENCODE_ZEN_API_KEY: undefined }, () => {
             expect(isManagedConfigured()).toBe(true);
-            expect(isProviderConfigured()).toBe(true);
         });
         withEnv({ MANAGED_LLM_API_KEY: undefined, LLM_API_KEY: undefined, OPENCODE_GO_API_KEY: undefined, OPENCODE_ZEN_API_KEY: undefined }, () => {
             expect(isManagedConfigured()).toBe(false);

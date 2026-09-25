@@ -26,8 +26,6 @@ import {
 } from "./providers";
 
 export type { AiMode } from "./providers";
-/** Backwards-compatible alias for old imports (`Provider`). */
-export type Provider = AiMode;
 
 export interface ModelConfig {
     mode: AiMode;
@@ -47,7 +45,6 @@ export interface ModelConfig {
     sessionId?: string;
 }
 
-export const MANAGED_BASE_URL = "https://opencode.ai/zen/go/v1";
 // Re-exported gateway URLs (managed default + legacy fallback).
 export { GO_BASE_URL, ZEN_BASE_URL } from "./providers";
 
@@ -82,6 +79,10 @@ export const LLM_TIMEOUT_MS = {
     planner: 60_000,
     /** Full responder stream (long answers need headroom). */
     responder: 180_000,
+    /** Session title/type generation (tiny 512-token call, bounded by
+     * the 10s metadata rendezvous in the chat route — keep per-attempt
+     * well under it so a hang fails fast into retry/fallback). */
+    metadata: 8_000,
 } as const;
 
 /**
@@ -286,9 +287,4 @@ export async function getResponderModel(
  */
 export function isManagedConfigured(): boolean {
     return !!getManagedApiKey();
-}
-
-/** @deprecated Use isManagedConfigured instead. */
-export function isProviderConfigured(): boolean {
-    return isManagedConfigured();
 }

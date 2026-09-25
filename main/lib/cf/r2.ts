@@ -6,7 +6,7 @@
  * Keys look like `sessions/{sid}/messages/{mid}/visualization.json`.
  */
 
-import { CF_API_TOKEN, CF_R2_BUCKET, cfApiBase, cfConfigured } from "./env";
+import { CF_API_TOKEN, CF_R2_BUCKET, cfApiBase } from "./env";
 import { requireCf, CfStoreError } from "./d1";
 
 function objectUrl(key: string): string {
@@ -20,7 +20,6 @@ function authHeaders(): Record<string, string> {
 
 /** Upload a JSON value to R2 (overwrites). */
 export async function r2PutJson(key: string, value: unknown): Promise<void> {
-    void cfConfigured;
     const res = await fetch(objectUrl(key), {
         method: "PUT",
         headers: { ...authHeaders(), "Content-Type": "application/json" },

@@ -80,10 +80,3 @@ export function getRegulationTools(): Record<string, StructuredTool> {
         retrieve_regulations: regulationRetrieveTool,
     };
 }
-
-/**
- * Get regulation tools as an array (for LangChain)
- */
-export function getRegulationToolsArray(): StructuredTool[] {
-    return [regulationRetrieveTool];
-}

@@ -273,6 +273,48 @@ describe("setMessageUsage with plannerModel", () => {
     })
 })
 
+describe("setMessageDurationMs", () => {
+    beforeEach(() => {
+        useChatStore.setState({ messages: [] })
+    })
+
+    it("stamps duration without touching usage or other messages", () => {
+        useChatStore.setState({
+            messages: [
+                { id: "m1", role: "assistant", content: "hi", timestamp: 1 },
+                { id: "m2", role: "assistant", content: "hello", timestamp: 2 },
+            ],
+        })
+        useChatStore.getState().setMessageDurationMs("m2", 4213)
+        const messages = useChatStore.getState().messages
+        expect(messages[0].durationMs).toBeUndefined()
+        expect(messages[1].durationMs).toBe(4213)
+        expect(messages[1].usage).toBeUndefined()
+    })
+
+    it("merges with an existing usage payload instead of replacing it", () => {
+        useChatStore.setState({
+            messages: [
+                { id: "m1", role: "assistant", content: "hi", timestamp: 1 },
+            ],
+        })
+        useChatStore.getState().setMessageUsage("m1", {
+            provider: "byok",
+            model: "gpt-4o-mini",
+            promptTokens: 10,
+            completionTokens: 20,
+            totalTokens: 30,
+            cost: null,
+            reasoningTokens: 0,
+            cachedTokens: 0,
+        })
+        useChatStore.getState().setMessageDurationMs("m1", 1500)
+        const msg = useChatStore.getState().messages[0]
+        expect(msg.durationMs).toBe(1500)
+        expect(msg.usage?.totalTokens).toBe(30)
+    })
+})
+
 describe("setMessageUsage", () => {
     beforeEach(() => {
         useChatStore.setState({ messages: [] })

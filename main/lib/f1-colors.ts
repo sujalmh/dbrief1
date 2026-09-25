@@ -91,9 +91,6 @@ function buildDriverRegex(extraTokens: Iterable<string> = []): RegExp {
     return new RegExp(`\\b(${sorted.join("|")})\\b`, "gi");
 }
 
-// Global Regex (static grid only — see getDriverPattern for the learned-aware version)
-export const DRIVER_REGEX = buildDriverRegex();
-
 // ---------------------------------------------------------------------------
 // Learned registry (live API data wins over the static grid)
 // ---------------------------------------------------------------------------
@@ -111,13 +108,6 @@ const learnedDrivers = new Map<string, LearnedEntry>();
 const learnedTeams = new Map<string, { color: string; season?: number }>();
 /** Extra highlight tokens contributed by learned data (codes + surnames). */
 const learnedTokens = new Set<string>();
-/** Bumped on every successful learn; UI memoizes the regex on this. */
-let learnedVersion = 0;
-
-export function learnedColorsVersion(): number {
-    return learnedVersion;
-}
-
 /** Rebuild the highlight pattern including learned driver codes/names. */
 export function getDriverPattern(): RegExp {
     return buildDriverRegex(learnedTokens);
@@ -199,7 +189,6 @@ export function learnColorsFromPayload(payload: unknown, defaultSeason?: number)
         }
     };
     walk(payload, 0, defaultSeason);
-    if (learned > 0) learnedVersion++;
     return learned;
 }
 

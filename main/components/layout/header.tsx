@@ -1,10 +1,11 @@
 "use client"
 
-import { Flag, Settings, Sun, Moon, Info, Download, FileText, FileJson, Menu } from "lucide-react"
+import { Flag, Settings, Sun, Moon, Info, Download, FileText, FileJson, PanelLeft } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { useChatStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
+import { InfoModal } from "@/components/layout/info-modal"
 import {
     Tooltip,
     TooltipContent,
@@ -18,7 +19,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { exportConversation } from "@/lib/utils/export-conversation"
 
 export function Header() {
@@ -38,6 +39,7 @@ export function Header() {
     const currentSessionId = useChatStore((s) => s.currentSessionId)
     const setSidebarOpen = useChatStore((s) => s.setSidebarOpen)
     const isSidebarOpen = useChatStore((s) => s.isSidebarOpen)
+    const [isInfoOpen, setInfoOpen] = useState(false)
     const { setTheme, theme } = useTheme()
 
     const toggleTheme = () => {
@@ -97,16 +99,18 @@ export function Header() {
 
                 {/* Left: Identity + Session Context */}
                 <div className="flex items-center gap-2 md:gap-6 min-w-0">
-                    {/* Mobile hamburger — opens the session drawer */}
+                    {/* Single sidebar toggle — the only collapse control.
+                        Visible on all breakpoints: on mobile it opens the
+                        session drawer, on desktop it collapses the rail. */}
                     <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => setSidebarOpen(!isSidebarOpen)}
-                        className="btn-wheel h-9 w-9 shrink-0 md:hidden"
-                        title="Open sessions"
+                        className="btn-wheel h-9 w-9 shrink-0"
+                        title={isSidebarOpen ? "Collapse sidebar" : "Open sessions"}
                     >
-                        <Menu className="h-5 w-5" />
-                        <span className="sr-only">Open sessions</span>
+                        <PanelLeft className="h-5 w-5" />
+                        <span className="sr-only">Toggle sidebar</span>
                     </Button>
                     {/* Logo Area - Icon Only */}
                     <div className="flex items-center gap-3 opacity-90 hover:opacity-100 transition-opacity shrink-0">
@@ -192,13 +196,14 @@ export function Header() {
                         </DropdownMenuContent>
                     </DropdownMenu>
 
-                    {/* Info Button — desktop only (no room on phones) */}
+                    {/* Info Button — opens About / Privacy / Terms */}
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                className="btn-wheel btn-wheel-blue h-9 w-9 md:h-10 md:w-10 hidden sm:inline-flex"
+                                onClick={() => setInfoOpen(true)}
+                                className="btn-wheel btn-wheel-blue h-9 w-9 md:h-10 md:w-10"
                             >
                                 <Info className="h-5 w-5" />
                                 <span className="sr-only">Information</span>
@@ -247,6 +252,7 @@ export function Header() {
                     </Tooltip>
                 </div>
             </div>
+            <InfoModal open={isInfoOpen} onOpenChange={setInfoOpen} />
         </header>
     )
 }

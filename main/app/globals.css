@@ -219,8 +219,18 @@
   /* Subtle lift on hover */
 }
 
-.btn-wheel:active {
-  /* Momentary Pressed State (pointer is physically down) */
+/* Latching toggle ON state (deep research / visualization).
+   A toggle is a latching switch: pressing it drives it DOWN and it
+   STAYS down until pressed again. So the latched style shares the
+   exact depressed look of the momentary :active press above — one
+   press reads as one motion that sticks, never a press that pops
+   back up. (The matching toggle handlers in control-panel fire on
+   pointer-down so the latch engages before :active releases; without
+   that, the button would flash up for a frame between release and
+   the React state commit — the old "double click" effect.) */
+.btn-wheel:active,
+.btn-wheel[data-active="true"] {
+  /* Pressed / latched-down State */
   transform: translateY(2px) scale(0.98);
   /* Physical depression */
   box-shadow:
@@ -230,27 +240,15 @@
     /* Deep Inset Shadow */
     0 2px 4px rgba(0, 0, 0, 0.2) inset;
   /* Soft Inset Shadow */
-  filter: saturate(1.2) brightness(0.9);
-  /* Saturation & Pressure darkening */
+  filter: saturate(1.35) brightness(0.95);
+  /* Latched color pop + pressure darkening */
 }
 
-/* Latched ON State (toggle is enabled — pointer is up).
-   Deliberately DISTINCT from the momentary :active press above. Sharing
-   one depressed style made every activation read as a double-press that
-   sticks down (down for the click, stuck down for the latch). Now a
-   single click reads as one press that settles into a lit indicator.
-   The :not(:active) guard lets a fresh press on an already-ON button
-   still show the physical depression above. */
-.btn-wheel[data-active="true"]:not(:active) {
-  transform: translateY(0) scale(1);
-  /* Released position + lit glow ring (variant-agnostic white so it
-     works on the purple/green/yellow toggle variants alike) */
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.15) inset,
-    0 4px 8px rgba(0, 0, 0, 0.5),
-    0 0 14px rgba(255, 255, 255, 0.25),
-    0 0 0 1.5px rgba(255, 255, 255, 0.45);
-  filter: saturate(1.35) brightness(1.12);
+/* A latched toggle must NOT lift on hover — rising on hover reads as
+   unlatching. It stays seated, with a touch more brightness. */
+.btn-wheel[data-active="true"]:hover {
+  transform: translateY(2px) scale(0.98);
+  filter: saturate(1.35) brightness(1.05);
 }
 
 /* Color Variants - Colored BY DEFAULT */

@@ -34,6 +34,15 @@ export function SignInPage() {
                     <p className="text-muted-foreground text-sm font-medium tracking-wide">
                         RACE ENGINEERING &amp; STRATEGY ANALYSIS
                     </p>
+                    {/* Crawlable landing copy: descriptive for search indexers,
+                        visually hidden so the sign-in card design is unchanged. */}
+                    <p className="sr-only">
+                        Dbrief1 turns Formula 1 live timing, telemetry, tyre
+                        stints and FIA regulations into clear race strategy,
+                        pace and setup answers with interactive charts. Ask
+                        about Grand Prix strategy, qualifying pace, tyre
+                        degradation and technical regulations.
+                    </p>
                 </div>
 
                 <div className="w-full space-y-4">

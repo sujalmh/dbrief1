@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Plus, MessageSquare, LogOut, User as UserIcon, PanelLeft, Trash2 } from "lucide-react";
+import { Plus, MessageSquare, LogOut, User as UserIcon, Trash2 } from "lucide-react";
 import { useChatStore } from "@/lib/store"
 import type { StoredSession } from "@/lib/store"
 import { useSession } from "@/lib/cf/session-context";
@@ -198,7 +198,6 @@ export function Sidebar() {
             )}
         <div
             // Off-canvas drawer content must not be focusable/tappable.
-            // (Desktop rail stays interactive — its toggle lives inside.)
             {...(!isDesktop && !isSidebarOpen ? { inert: true } : {})}
             className={cn(
                 "flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 ease-in-out shadow-2xl",
@@ -211,29 +210,21 @@ export function Sidebar() {
                 isDesktop && (isSidebarOpen ? "w-64" : "w-[60px]")
             )}
         >
-            {/* Header / Toggle */}
+            {/* Header — title only. The single sidebar toggle lives in
+                the app header, so there is exactly one collapse control. */}
             <div className={cn(
                 "flex items-center p-3 h-16 bg-carbon-header shrink-0 transition-all duration-300",
-                isSidebarOpen ? "justify-between" : "justify-center"
+                isSidebarOpen ? "justify-start" : "justify-center"
             )}>
-                <div className={cn(
-                    "flex items-center overflow-hidden transition-all duration-300",
-                    isSidebarOpen ? "w-full opacity-100" : "w-0 opacity-0"
-                )}>
+                {isSidebarOpen ? (
                     <div className="font-orbitron font-bold text-sm tracking-wider text-f1-red whitespace-nowrap flex-1">
                         DBRIEF1
                     </div>
-                </div>
-
-                <button
-                    onClick={() => setSidebarOpen(!isSidebarOpen)}
-                    className={cn(
-                        "p-2 hover:bg-white/10 rounded-md text-sidebar-foreground transition-colors shrink-0",
-                        !isSidebarOpen && "mx-auto"
-                    )}
-                >
-                    <PanelLeft className="h-5 w-5" />
-                </button>
+                ) : (
+                    <div className="flex items-center justify-center rounded-sm bg-[var(--f1-red)] p-1.5">
+                        <span className="font-orbitron font-bold text-[10px] text-white">D1</span>
+                    </div>
+                )}
             </div>
 
             {/* New Chat Button */}

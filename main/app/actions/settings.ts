@@ -31,6 +31,11 @@ export async function saveByokKeyAction(key: string) {
     if (key.length < 10) {
         return { success: false, error: "API key is too short" };
     }
+    // Bound cookie/header size: keys are opaque bearer tokens, never
+    // legitimately kilobytes long. Matches the settings-modal cap.
+    if (key.length > 512 || /[\s\r\n]/.test(key)) {
+        return { success: false, error: "API key format is invalid" };
+    }
 
     cookieStore.set(BYOK_COOKIE, key, cookieOptions());
 

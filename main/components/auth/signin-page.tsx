@@ -67,8 +67,13 @@ export function SignInPage() {
                     </div>
                 </div>
 
-                <div className="text-[10px] text-zinc-500 font-mono">
-                    SECURE ACCESS • END-TO-END ENCRYPTED • PRO TIER
+                <div className="text-[10px] text-zinc-500 font-mono space-y-1.5">
+                    <div>SECURE ACCESS • END-TO-END ENCRYPTED • PRO TIER</div>
+                    <div className="flex items-center justify-center gap-3">
+                        <a href="/privacy" className="hover:text-zinc-300 transition-colors">PRIVACY</a>
+                        <span className="text-zinc-700">•</span>
+                        <a href="/terms" className="hover:text-zinc-300 transition-colors">TERMS</a>
+                    </div>
                 </div>
             </div>
         </div>

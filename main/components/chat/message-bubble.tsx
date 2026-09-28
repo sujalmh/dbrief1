@@ -78,7 +78,10 @@ const HighlightedText = memo(function HighlightedText({ children, season }: { ch
 
 // Memoized markdown components - defined outside component to avoid recreation
 const createMarkdownComponents = (season?: number): Components => ({
-    table: ({ ...props }) => <div className="my-4 w-full max-w-full overflow-x-auto"><table className="w-full min-w-[520px] text-sm border-collapse" {...props} /></div>,
+    // Long URLs never push the 360px layout wider — break anywhere.
+    a: ({ ...props }) => <a className="break-all underline underline-offset-2" {...props} />,
+    img: ({ ...props }) => <img className="h-auto max-w-full rounded-lg" {...props} />,
+    table: ({ ...props }) => <div className="my-4 w-full max-w-full overflow-x-auto"><table className="w-full min-w-[420px] sm:min-w-[520px] text-sm border-collapse" {...props} /></div>,
     thead: ({ ...props }) => <thead className="bg-muted/50 text-left font-medium" {...props} />,
     th: ({ ...props }) => <th className="px-4 py-3 font-bold border-b border-border/70 text-left whitespace-nowrap" {...props} />,
     // Long code/JSON dumps scroll internally instead of pushing the
@@ -150,10 +153,10 @@ const MessageContent = memo(function MessageContent({
 
     if (!isUser && !isError) {
         return (
-            <div className="flex items-center gap-3 py-2">
+            <div className="flex min-w-0 max-w-full items-center gap-3 py-2">
                 <span
                     title={statusLine ?? undefined}
-                    className="text-xs font-mono text-muted-foreground animate-pulse truncate max-w-[300px]"
+                    className="text-xs font-mono text-muted-foreground animate-pulse truncate min-w-0 max-w-[55vw] sm:max-w-[300px]"
                 >
                     {statusLine ?? "AWAITING DATA..."}
                 </span>
@@ -345,8 +348,8 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
     );
 
     return (
-        <div ref={containerRef} className={cn("group flex w-full gap-2 md:gap-3 p-3 md:p-4", isUser ? "flex-row-reverse" : "flex-row")}>
-            <Avatar className={cn("h-8 w-8 border", isUser ? "bg-muted/50 border-[var(--f1-red)]" : "bg-background")}>
+        <div ref={containerRef} className={cn("group flex w-full min-w-0 max-w-full gap-2 md:gap-3 p-3 md:p-4 overflow-hidden", isUser ? "flex-row-reverse" : "flex-row")}>
+            <Avatar className={cn("h-8 w-8 shrink-0 border", isUser ? "bg-muted/50 border-[var(--f1-red)]" : "bg-background")}>
                 <AvatarFallback className={cn("text-xs font-bold", isUser ? "text-[var(--f1-red)] bg-transparent" : "bg-background text-foreground")}>
                     {isUser ? "DRV" : "PIT"}
                 </AvatarFallback>
@@ -354,10 +357,10 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
             </Avatar>
 
             <div className={cn(
-                "relative flex flex-col gap-2 rounded-xl text-sm shadow-sm",
+                "relative flex min-w-0 max-w-full flex-col gap-2 overflow-hidden rounded-xl text-sm shadow-sm",
                 isUser
                     ? "max-w-[85%] md:max-w-[75%] px-4 py-3 border border-[var(--f1-red)] bg-[var(--f1-red)]/5 text-foreground"
-                    : "w-full max-w-none px-0 py-2 bg-transparent shadow-none"
+                    : "min-w-0 flex-1 px-0 py-2 bg-transparent shadow-none"
             )}>
                 {!isUser && (
                     <span className="text-[10px] uppercase font-mono tracking-wider text-muted-foreground mb-1">
@@ -420,7 +423,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
                     </Tooltip>
                 )}
 
-                <div className={cn("prose prose-sm break-words dark:prose-invert max-w-none leading-relaxed", isUser ? "text-foreground" : "text-foreground")}>
+                <div className={cn("prose prose-sm break-words dark:prose-invert min-w-0 max-w-full overflow-hidden leading-relaxed [overflow-wrap:anywhere]", isUser ? "text-foreground" : "text-foreground")}>
                     <MessageContent
                         content={message.content}
                         isUser={isUser}

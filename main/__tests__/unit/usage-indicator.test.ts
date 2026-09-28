@@ -4,8 +4,8 @@
  * Follows repo convention (source-contract tests, no DOM renderer).
  * Quota data flows one way: useQuota() (fetch + refresh) ->
  * QuotaCard (shared presentation) -> UsageIndicator (sidebar avatar
- * dot + desktop hover card) and QuotaStrip (always-visible composer
- * row + tap-to-expand, the usage surface on phones).
+ * dot + desktop hover card) and QuotaStrip (inline composer trigger
+ * left of the Managed pill, hover for the shared card).
  */
 
 import { describe, it, expect } from "vitest";
@@ -18,6 +18,7 @@ const card = readFileSync(join(process.cwd(), "components/layout/quota-card.tsx"
 const hook = readFileSync(join(process.cwd(), "lib/cf/use-quota.ts"), "utf8");
 const strip = readFileSync(join(process.cwd(), "components/chat/quota-strip.tsx"), "utf8");
 const chatInput = readFileSync(join(process.cwd(), "components/chat/chat-input.tsx"), "utf8");
+const controlPanel = readFileSync(join(process.cwd(), "components/chat/control-panel.tsx"), "utf8");
 
 describe("usage indicator placement (subtle, near profile)", () => {
     it("renders inside the profile avatar block", () => {
@@ -78,9 +79,11 @@ describe("shared quota card (identical numbers everywhere)", () => {
     });
 });
 
-describe("composer quota strip (phones + persistent desktop)", () => {
-    it("renders inside the chat input section", () => {
-        expect(chatInput).toMatch(/<QuotaStrip \/>/);
+describe("composer quota strip (inline, hover for details)", () => {
+    it("renders inline in the control row, left of the Managed pill", () => {
+        expect(controlPanel).toMatch(/<QuotaStrip \/>/);
+        expect(chatInput).toMatch(/<ControlPanel \/>/);
+        expect(chatInput).not.toMatch(/<QuotaStrip \/>/);
     });
 
     it("is invisible until quota data loads", () => {
@@ -92,9 +95,13 @@ describe("composer quota strip (phones + persistent desktop)", () => {
         expect(strip).toMatch(/resetLabel\(quota\.resetsAt\)/);
     });
 
-    it("expands the shared card on tap (no hover needed)", () => {
-        expect(strip).toMatch(/aria-expanded/);
+    it("reveals the shared card on hover, never expanding inline", () => {
+        expect(strip).toMatch(/<Tooltip>/);
+        expect(strip).toMatch(/<TooltipTrigger/);
+        expect(strip).toMatch(/<TooltipContent/);
         expect(strip).toMatch(/<QuotaCard quota=\{quota\} \/>/);
+        expect(strip).not.toMatch(/aria-expanded/);
+        expect(strip).not.toMatch(/useState/);
     });
 
     it("shares the hook so the strip never adds a second fetch", () => {

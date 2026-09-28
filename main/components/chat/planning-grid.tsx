@@ -104,9 +104,9 @@ function PlanningGridComponent({ steps, reasoning, iterations, researchType }: P
                                             ))}
                                         </div>
                                         {/* Task list */}
-                                        <div className="space-y-1">
+                                        <div className="space-y-1 min-w-0">
                                             {iter.tasks.map((task) => (
-                                                <div key={task.id} className="flex items-center gap-2 text-xs">
+                                                <div key={task.id} className="flex min-w-0 items-center gap-2 text-xs">
                                                     <div className="shrink-0">
                                                         {task.status === 'pending' && <span className="text-[10px] text-muted-foreground/50">○</span>}
                                                         {task.status === 'running' && <Loader2 className="h-3 w-3 animate-spin text-[var(--f1-yellow)]" />}
@@ -115,7 +115,7 @@ function PlanningGridComponent({ steps, reasoning, iterations, researchType }: P
                                                         {task.status === 'skipped' && <span className="text-[10px] text-muted-foreground/50">⊘</span>}
                                                     </div>
                                                     <span className={cn(
-                                                        "font-mono",
+                                                        "font-mono min-w-0 flex-1 break-words",
                                                         task.status === 'pending' && "text-muted-foreground",
                                                         task.status === 'success' && "text-foreground/80",
                                                         task.status === 'failed' && "text-[var(--f1-red)]",
@@ -123,7 +123,7 @@ function PlanningGridComponent({ steps, reasoning, iterations, researchType }: P
                                                     )}>
                                                         {task.description}
                                                     </span>
-                                                    <span className="text-[10px] text-muted-foreground/40 ml-auto">
+                                                    <span className="text-[10px] text-muted-foreground/40 ml-auto shrink-0">
                                                         {task.tool}
                                                     </span>
                                                 </div>
@@ -233,7 +233,7 @@ function PlanningGridComponent({ steps, reasoning, iterations, researchType }: P
                                         step.status === 'failed' && "bg-[var(--f1-red)]/10 text-[var(--f1-red)]"
                                     )}
                                 >
-                                    <div className="flex items-start gap-2 flex-1">
+                                    <div className="flex min-w-0 items-start gap-2 flex-1">
                                         <div className={cn(
                                             "flex h-4 w-4 shrink-0 items-center justify-center rounded-xs text-[9px] font-bold mt-0.5",
                                             step.status === 'pending' && "bg-muted text-muted-foreground",
@@ -244,7 +244,7 @@ function PlanningGridComponent({ steps, reasoning, iterations, researchType }: P
                                             {index + 1}
                                         </div>
                                         <span className={cn(
-                                            "flex-1 break-words pb-0.5",
+                                            "flex-1 min-w-0 break-words pb-0.5",
                                             step.status === 'pending' && "text-muted-foreground",
                                             step.status === 'success' && "text-[var(--f1-green)] brightness-75",
                                             step.status === 'failed' && "text-[var(--f1-red)]"

@@ -45,8 +45,8 @@ export function MessageList() {
         .pop()?.id;
 
     return (
-        <div className="h-full p-4">
-            <div className="flex flex-col gap-6 pb-32 max-w-3xl mx-auto">
+        <div className="h-full w-full min-w-0 max-w-full p-3 sm:p-4">
+            <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-6 pb-32">
                 {messages.map((msg) => (
                     <MessageBubble 
                         key={msg.id} 

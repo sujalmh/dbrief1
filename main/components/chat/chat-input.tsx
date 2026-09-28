@@ -7,7 +7,6 @@ import { useChatHandler } from "@/lib/hooks/use-chat-handler"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { ControlPanel } from "@/components/chat/control-panel"
-import { QuotaStrip } from "@/components/chat/quota-strip"
 import { cn } from "@/lib/utils"
 import {
     Tooltip,
@@ -32,11 +31,14 @@ export function ChatInput() {
         }
     }
 
-    const onSend = async () => {
-        await handleSend()
+    const onSend = () => {
+        // Collapse the composer immediately — don't wait for the async
+        // send (session creation + first fetch) or the box stays tall
+        // while the optimistic bubble is already in the list.
         if (textareaRef.current) {
             textareaRef.current.style.height = "auto"
         }
+        void handleSend()
     }
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -49,11 +51,16 @@ export function ChatInput() {
     }
 
 
+    // Gradient outline: 1px gradient ring wrapping the glass body. The
+    // outer div IS the border (padding 1px, gradient bg); the inner div
+    // is the frosted glass — a light-catching edge, not a flat border.
     return (
-        <div className="relative rounded-[2rem] border transition-all duration-300 backdrop-blur-xl 
-            bg-white/80 border-black/5 shadow-[0_8px_32px_rgba(0,0,0,0.1)] hover:bg-white/90 
-            dark:bg-black/40 dark:border-white/10 dark:shadow-[0_8px_32px_rgba(0,0,0,0.5)] dark:hover:bg-black/50 
-            focus-within:ring-1 focus-within:ring-black/5 dark:focus-within:ring-white/10">
+        <div className="rounded-[2rem] bg-gradient-to-br from-white/30 via-white/10 to-white/5 p-px shadow-[0_8px_32px_rgba(0,0,0,0.25)] dark:from-white/20 dark:via-white/10 dark:to-transparent dark:shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
+        <div className="relative rounded-[calc(2rem-1px)] transition-all duration-300 backdrop-blur-xl
+            bg-white/70 hover:bg-white/80
+            dark:bg-black/40 dark:hover:bg-black/50
+            focus-within:bg-white/80 dark:focus-within:bg-black/50
+            shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
 
             {/* Top Section: Input Area */}
             <div className="flex gap-2 p-3 pb-0">
@@ -107,13 +114,13 @@ export function ChatInput() {
                 </Tooltip>
             </div>
 
-            {/* Bottom Section: Integrated Control Panel + usage strip.
-                The strip is the always-visible usage surface on every
-                viewport (phones have no hover for the avatar tooltip). */}
+            {/* Bottom Section: single control row. Usage sits inline left of
+                the Managed/BYOK pill (inside ControlPanel) with details on
+                hover — nothing expands below. */}
             <div className="px-3 pb-2">
                 <ControlPanel />
-                <QuotaStrip />
             </div>
+        </div>
         </div>
     )
 }

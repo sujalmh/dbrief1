@@ -200,7 +200,11 @@ export function Sidebar() {
             // Off-canvas drawer content must not be focusable/tappable.
             {...(!isDesktop && !isSidebarOpen ? { inert: true } : {})}
             className={cn(
-                "flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 ease-in-out shadow-2xl",
+                "flex flex-col border-r transition-all duration-300 ease-in-out shadow-2xl backdrop-blur-xl",
+                // Glassmorphism: frosted sidebar over the carbon backdrop.
+                // bg-sidebar at reduced opacity + blur + inner top highlight
+                // so session rows feel layered under glass.
+                "bg-sidebar/70 supports-[backdrop-filter]:bg-sidebar/60 border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]",
                 // Mobile: fixed overlay drawer (never squeezes chat).
                 !isDesktop && "fixed inset-y-0 left-0 z-50 h-dvh w-72",
                 !isDesktop && !isSidebarOpen && "-translate-x-full",
@@ -213,7 +217,7 @@ export function Sidebar() {
             {/* Header — title only. The single sidebar toggle lives in
                 the app header, so there is exactly one collapse control. */}
             <div className={cn(
-                "flex items-center p-3 h-16 bg-carbon-header shrink-0 transition-all duration-300",
+                "flex items-center p-3 h-16 shrink-0 transition-all duration-300 border-b border-white/10 bg-white/5 dark:bg-white/5 backdrop-blur-xl",
                 isSidebarOpen ? "justify-start" : "justify-center"
             )}>
                 {isSidebarOpen ? (

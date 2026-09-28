@@ -47,22 +47,53 @@ export function useChatHandler() {
         const messageText = (overrideInput ?? state.input).trim()
         if (!messageText || state.isLoading) return
 
-        // Clear input and reset height (if it's from the input field)
+        // Clear input immediately so the composer feels instant.
         if (!overrideInput) {
             state.setInput("")
         }
 
-        // 1. Add User Message immediately (skip if retrying and we just want to replace assistant response)
-        // For a true "Retry", usually we delete the last assistant message and reuse the last user message.
-        // My implementation plan said: "regenerate the last assistant response by using the previous user message".
-
+        // Optimistic UI: paint the user bubble + loading state BEFORE any
+        // network work. Session creation (D1) can take hundreds of ms —
+        // awaiting it first made the query appear to "lag" after submit.
         // Use the monotonic message counter so IDs are stable even if the
         // system clock jumps backwards during a long session.
         const userMsgId = state.nextMessageId()
+        state.setLoading(true)
+        state.setError(null)
+
+        if (!overrideInput) {
+            state.addMessage({
+                id: userMsgId,
+                role: "user",
+                content: messageText,
+                timestamp: Date.now()
+            })
+        }
+
+        // Placeholder assistant message up-front so the "thinking"
+        // indicator renders in the same frame as the user bubble.
+        const assistantMsgId = state.nextMessageId()
+        // Hoist updateFrameId so the catch (abort) block can cancel any
+        // pending animation frame. Without this, the variable would be
+        // block-scoped to the try and the catch reference would not compile.
+        let updateFrameId: number | null = null
+        // Wall-clock start for the response-time footer. Hoisted for the
+        // same reason — set just before fetch, read on completion and
+        // in the finally safety net below.
+        let requestStartedAt = 0
+        state.addMessage({
+            id: assistantMsgId,
+            role: "assistant",
+            content: "",
+            timestamp: Date.now()
+        })
+
         let effectiveSessionId = useChatStore.getState().currentSessionId
 
-        // 1. Create session if it doesn't exist (Cloudflare D1; falls
+        // Create session if it doesn't exist (Cloudflare D1; falls
         // back to a local-only session when cloud sync is unavailable).
+        // The messages above are already painted — this await only gates
+        // the fetch, not the first paint.
         if (!effectiveSessionId) {
             const title = messageText.slice(0, 30) + "...";
             try {
@@ -91,15 +122,9 @@ export function useChatHandler() {
         }
 
         if (!overrideInput) {
-            state.addMessage({
-                id: userMsgId,
-                role: "user",
-                content: messageText,
-                timestamp: Date.now()
-            })
-
             // Persist User Message to Cloudflare (D1 + R2 overflow).
             // Local-only sessions (local_*) skip cloud saves quietly.
+            // Fire-and-forget to keep the fetch path snappy.
             if (effectiveSessionId && !effectiveSessionId.startsWith("local_")) {
                 // Don't await this to keep UI snappy
                 const userMsg: Message = {
@@ -112,27 +137,6 @@ export function useChatHandler() {
                 saveMessage(sid, userMsg);
             }
         }
-
-        // 2. Set Loading
-        state.setLoading(true)
-        state.setError(null)
-
-        // 3. Create Placeholder Assistant Message
-        const assistantMsgId = state.nextMessageId()
-        // Hoist updateFrameId so the catch (abort) block can cancel any
-        // pending animation frame. Without this, the variable would be
-        // block-scoped to the try and the catch reference would not compile.
-        let updateFrameId: number | null = null
-        // Wall-clock start for the response-time footer. Hoisted for the
-        // same reason — set just before fetch, read on completion and
-        // in the finally safety net below.
-        let requestStartedAt = 0
-        state.addMessage({
-            id: assistantMsgId,
-            role: "assistant",
-            content: "",
-            timestamp: Date.now()
-        })
 
         try {
             // Check if this is the first message in the session (it was just added, so length is 1)

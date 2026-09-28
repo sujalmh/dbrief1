@@ -426,9 +426,12 @@ export async function POST(request: NextRequest) {
                             );
                         }
                     } catch (error) {
-                        const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
-                        console.error("[API] Model initialization error:", errorMessage);
-                        sendEvent("error", { message: errorMessage });
+                        // Classify before echoing: raw provider errors can
+                        // carry endpoint URLs / status text that must not
+                        // reach the client verbatim.
+                        const cls = classifyLlmError(error, "ModelInit");
+                        console.error("[API] Model initialization error:", cls.kind, error instanceof Error ? error.message : error);
+                        sendEvent("error", { message: cls.userMessage, stage: "model_init", kind: cls.kind });
                         safeClose();
                         return;
                     }
@@ -837,9 +840,9 @@ export async function POST(request: NextRequest) {
                     try {
                         responderModel = await responderPromise;
                     } catch (error) {
-                        const errorMessage = error instanceof Error ? error.message : "Failed to initialize models";
-                        console.error("[API] Model initialization error:", errorMessage);
-                        sendEvent("error", { message: errorMessage });
+                        const cls = classifyLlmError(error, "ModelInit");
+                        console.error("[API] Model initialization error:", cls.kind, error instanceof Error ? error.message : error);
+                        sendEvent("error", { message: cls.userMessage, stage: "model_init", kind: cls.kind });
                         recordTurn({});
                         safeClose();
                         return;

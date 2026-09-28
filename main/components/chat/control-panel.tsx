@@ -9,6 +9,7 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
+import { QuotaStrip } from "@/components/chat/quota-strip"
 
 export function ControlPanel() {
     const settings = useChatStore((s) => s.settings)
@@ -91,12 +92,15 @@ export function ControlPanel() {
                 </Tooltip>
             </div>
 
-            {/* AI mode badge — opens Settings. No provider/model dropdowns. */}
-            <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setSettingsOpen(true)}
-                className="btn-wheel btn-wheel-orange h-8 gap-2 text-xs px-3"
+            {/* Right side: inline usage (hover for details) + AI mode badge. */}
+            <div className="flex min-w-0 items-center gap-1">
+                <QuotaStrip />
+                {/* AI mode badge — opens Settings. No provider/model dropdowns. */}
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSettingsOpen(true)}
+                    className="btn-wheel btn-wheel-orange h-8 shrink-0 gap-2 text-xs px-3"
                 title={isByok ? "BYOK — open AI Setup" : "Managed — open AI Setup"}
             >
                 <ModeIcon className="h-3.5 w-3.5" />
@@ -104,6 +108,7 @@ export function ControlPanel() {
                     {modeLabel}
                 </span>
             </Button>
+            </div>
         </div>
     )
 }

@@ -11,7 +11,11 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { useChatStore } from "@/lib/store";
+
+const storeSource = readFileSync(join(process.cwd(), "lib/store.ts"), "utf8");
 
 describe("store persistence", () => {
     beforeEach(() => {
@@ -70,5 +74,15 @@ describe("store persistence", () => {
         useChatStore.getState().addMessageDegradedWarning("m_deg", { ...warning, kind: "rate_limit" });
         expect(useChatStore.getState().messages.find((m) => m.id === "m_deg")?.degradedWarnings).toHaveLength(2);
         useChatStore.getState().clearMessages();
+    });
+});
+
+describe("visualization off by default", () => {
+    it("defaults visualizeEnabled to false for fresh state", () => {
+        expect(storeSource).toMatch(/visualizeEnabled: false,/);
+    });
+
+    it("migrates a missing flag to false (never on unless explicitly enabled)", () => {
+        expect(storeSource).toMatch(/visualizeEnabled: s\.visualizeEnabled === true/);
     });
 });

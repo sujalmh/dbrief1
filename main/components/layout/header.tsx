@@ -1,7 +1,6 @@
 "use client"
 
-import { Flag, Settings, Sun, Moon, Info, Download, FileText, FileJson, PanelLeft } from "lucide-react"
-import { useTheme } from "next-themes"
+import { Flag, Settings, Info, Download, FileText, FileJson, PanelLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useChatStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -40,11 +39,6 @@ export function Header() {
     const setSidebarOpen = useChatStore((s) => s.setSidebarOpen)
     const isSidebarOpen = useChatStore((s) => s.isSidebarOpen)
     const [isInfoOpen, setInfoOpen] = useState(false)
-    const { setTheme, theme } = useTheme()
-
-    const toggleTheme = () => {
-        setTheme(theme === "light" ? "dark" : "light")
-    }
 
     // Derive context from the active message
     const context = useMemo(() => {
@@ -211,25 +205,6 @@ export function Header() {
                         </TooltipTrigger>
                         <TooltipContent side="bottom">
                             <p>Information</p>
-                        </TooltipContent>
-                    </Tooltip>
-
-                    {/* Rotary Theme Toggle */}
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={toggleTheme}
-                                className="btn-wheel btn-wheel-amber h-9 w-9 md:h-10 md:w-10"
-                            >
-                                <Sun className="h-5 w-5 rotate-0 scale-100  dark:-rotate-90 dark:scale-0" />
-                                <Moon className="absolute h-5 w-5 rotate-90 scale-0  dark:rotate-0 dark:scale-100" />
-                                <span className="sr-only">Toggle theme</span>
-                            </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom">
-                            <p>Toggle Theme</p>
                         </TooltipContent>
                     </Tooltip>
 

@@ -15,7 +15,8 @@ import { Label } from "@/components/ui/label"
 import { validateByokConfig } from "@/lib/providers"
 import { saveByokKeyAction, hasByokKeyAction, clearByokKeyAction } from "@/app/actions/settings"
 import { useState, useEffect } from "react"
-import { Loader2, Server, KeyRound } from "lucide-react"
+import { useTheme } from "next-themes"
+import { Loader2, Server, KeyRound, Sun, Moon, Monitor } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export function SettingsModal() {
@@ -30,13 +31,32 @@ export function SettingsModal() {
     const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null)
     const [errorMsg, setErrorMsg] = useState("")
     const [hasKey, setHasKey] = useState(false)
+    const { theme, setTheme } = useTheme()
+    const activeTheme = theme ?? "system"
+
+    // Draft state: the modal edits a local copy and only writes back to
+    // the store on CONFIRM. Closing via X / overlay / Escape discards the
+    // draft, so peeking at BYOK never flips the app's live aiMode.
+    const [draftAiMode, setDraftAiMode] = useState(settings.aiMode)
+    const [draftBaseUrl, setDraftBaseUrl] = useState(settings.byokBaseUrl)
+    const [draftModelId, setDraftModelId] = useState(settings.byokModelId)
+    const [draftModelName, setDraftModelName] = useState(settings.byokModelName)
 
     useEffect(() => {
         if (isSettingsOpen) {
             hasByokKeyAction().then(setHasKey)
             setTestResult(null)
             setErrorMsg("")
+            setApiKeyInput("")
+            // Snapshot the live settings into the draft on every open.
+            setDraftAiMode(settings.aiMode)
+            setDraftBaseUrl(settings.byokBaseUrl)
+            setDraftModelId(settings.byokModelId)
+            setDraftModelName(settings.byokModelName)
         }
+        // Snapshot intentially runs on open only — draft edits must not
+        // be overwritten by store changes while the modal is open.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isSettingsOpen])
 
     function validateApiKeyFormat(key: string): string | null {
@@ -49,27 +69,27 @@ export function SettingsModal() {
     }
 
     function byokFieldError(): string | null {
-        if (settings.aiMode !== "byok") return null
+        if (draftAiMode !== "byok") return null
         return validateByokConfig({
-            baseUrl: settings.byokBaseUrl,
-            modelId: settings.byokModelId,
-            modelName: settings.byokModelName,
+            baseUrl: draftBaseUrl,
+            modelId: draftModelId,
+            modelName: draftModelName,
         })
     }
 
     /**
      * Verify the BYOK endpoint by hitting {baseUrl}/models with the key.
-     * Uses the live input values (not the httpOnly cookie) so the user
+     * Uses the live draft values (not the httpOnly cookie) so the user
      * can verify before saving.
      */
     async function handleTestKey() {
         setTestResult(null)
         const key = apiKeyInput.trim()
-        if (settings.aiMode !== "byok") return
+        if (draftAiMode !== "byok") return
         const configError = validateByokConfig({
-            baseUrl: settings.byokBaseUrl,
-            modelId: settings.byokModelId,
-            modelName: settings.byokModelName,
+            baseUrl: draftBaseUrl,
+            modelId: draftModelId,
+            modelName: draftModelName,
         })
         if (configError) {
             setErrorMsg(configError)
@@ -83,7 +103,7 @@ export function SettingsModal() {
         setIsTesting(true)
         setErrorMsg("")
         try {
-            const baseUrl = settings.byokBaseUrl.trim().replace(/\/+$/, "")
+            const baseUrl = draftBaseUrl.trim().replace(/\/+$/, "")
             const headers: Record<string, string> = {}
             if (key) {
                 const formatError = validateApiKeyFormat(key)
@@ -128,7 +148,7 @@ export function SettingsModal() {
         setIsSaving(true)
         setErrorMsg("")
         try {
-            if (settings.aiMode === "byok") {
+            if (draftAiMode === "byok") {
                 const configError = byokFieldError()
                 if (configError) {
                     setErrorMsg(configError)
@@ -164,6 +184,14 @@ export function SettingsModal() {
                     setApiKeyInput("")
                 }
             }
+            // Single commit point: draft → live store. Nothing above
+            // touched the store, so cancelling earlier changed nothing.
+            updateSettings({
+                aiMode: draftAiMode,
+                byokBaseUrl: draftBaseUrl,
+                byokModelId: draftModelId,
+                byokModelName: draftModelName,
+            })
             setSettingsOpen(false)
         } catch {
             setErrorMsg("An unexpected error occurred")
@@ -178,29 +206,31 @@ export function SettingsModal() {
         setTestResult(null)
     }
 
-    const isByok = settings.aiMode === "byok"
+    const isByok = draftAiMode === "byok"
 
     return (
         <Dialog open={isSettingsOpen} onOpenChange={setSettingsOpen}>
-            <DialogContent className="sm:max-w-[500px] max-h-[90dvh] overflow-y-auto border-none bg-background/95 backdrop-blur-xl shadow-2xl">
+            {/* Gradient outline + frosted glass body, matching the composer. */}
+            <DialogContent className="sm:max-w-[520px] max-h-[90dvh] overflow-y-auto border-none bg-gradient-to-br from-white/25 via-white/10 to-transparent p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
+                <div className="rounded-[calc(0.5rem-1px)] bg-background/85 backdrop-blur-2xl p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
                 <DialogHeader className="mb-4 text-center">
-                    <DialogTitle className="text-xl font-bold tracking-tight">AI Setup</DialogTitle>
+                    <div className="mx-auto mb-2 h-1 w-12 rounded-full bg-gradient-to-r from-[var(--f1-red)] to-[var(--f1-red)]/40" />
+                    <DialogTitle className="text-xl font-black uppercase italic tracking-widest">AI Setup</DialogTitle>
                     <DialogDescription className="text-muted-foreground/80">
                         Pick who provides the model. Two options, nothing else.
                     </DialogDescription>
                 </DialogHeader>
 
                 <div className="grid gap-5 px-2 min-w-0 [&>*]:min-w-0">
-                    {/* Mode selector — the only "model selection" left */}
+                    {/* Mode selector — physical cards, latched when active */}
                     <div className="grid grid-cols-2 gap-3">
                         <button
                             type="button"
-                            onClick={() => updateSettings({ aiMode: "managed" })}
+                            onClick={() => setDraftAiMode("managed")}
+                            data-active={!isByok}
                             className={cn(
-                                "rounded-lg border p-3 text-left transition-all",
-                                !isByok
-                                    ? "border-[var(--f1-green)]/60 bg-[var(--f1-green)]/10"
-                                    : "border-muted/40 bg-muted/5 hover:border-muted"
+                                "btn-physical p-3 text-left",
+                                !isByok && "ring-1 ring-[var(--f1-green)]/60"
                             )}
                         >
                             <div className="flex items-center gap-2 mb-1">
@@ -213,12 +243,11 @@ export function SettingsModal() {
                         </button>
                         <button
                             type="button"
-                            onClick={() => updateSettings({ aiMode: "byok" })}
+                            onClick={() => setDraftAiMode("byok")}
+                            data-active={isByok}
                             className={cn(
-                                "rounded-lg border p-3 text-left transition-all",
-                                isByok
-                                    ? "border-[var(--f1-yellow)]/60 bg-[var(--f1-yellow)]/10"
-                                    : "border-muted/40 bg-muted/5 hover:border-muted"
+                                "btn-physical p-3 text-left",
+                                isByok && "ring-1 ring-[var(--f1-yellow)]/60"
                             )}
                         >
                             <div className="flex items-center gap-2 mb-1">
@@ -231,8 +260,35 @@ export function SettingsModal() {
                         </button>
                     </div>
 
+                    {/* Appearance — theme lives here now (removed from navbar) */}
+                    <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3 backdrop-blur">
+                        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">
+                            Appearance
+                        </Label>
+                        <div className="grid grid-cols-3 gap-2">
+                            {(
+                                [
+                                    { value: "light", label: "Light", Icon: Sun },
+                                    { value: "dark", label: "Dark", Icon: Moon },
+                                    { value: "system", label: "System", Icon: Monitor },
+                                ] as const
+                            ).map(({ value, label, Icon }) => (
+                                <button
+                                    key={value}
+                                    type="button"
+                                    onClick={() => setTheme(value)}
+                                    data-active={activeTheme === value}
+                                    className="btn-physical flex items-center justify-center gap-1.5 px-2 py-2 text-xs"
+                                >
+                                    <Icon className="h-3.5 w-3.5" />
+                                    <span>{label}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
                     {isByok ? (
-                        <div className="space-y-4 rounded-lg border border-muted/40 p-3 bg-muted/5">
+                        <div className="space-y-4 rounded-xl border border-white/10 p-3 bg-white/5 backdrop-blur">
                             <div className="space-y-2">
                                 <Label htmlFor="byokBaseUrl" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">
                                     Model URL
@@ -241,13 +297,13 @@ export function SettingsModal() {
                                     id="byokBaseUrl"
                                     type="url"
                                     inputMode="url"
-                                    value={settings.byokBaseUrl}
+                                    value={draftBaseUrl}
                                     onChange={(e) => {
-                                        updateSettings({ byokBaseUrl: e.target.value })
+                                        setDraftBaseUrl(e.target.value)
                                         if (errorMsg) setErrorMsg("")
                                     }}
                                     placeholder="https://api.openai.com/v1"
-                                    className="font-mono text-sm"
+                                    className="font-mono text-sm bg-background/60 border-white/10 focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40"
                                 />
                                 <p className="text-[10px] text-muted-foreground/70">
                                     Base URL of any OpenAI-compatible API (no trailing path needed).
@@ -261,13 +317,13 @@ export function SettingsModal() {
                                     </Label>
                                     <Input
                                         id="byokModelId"
-                                        value={settings.byokModelId}
+                                        value={draftModelId}
                                         onChange={(e) => {
-                                            updateSettings({ byokModelId: e.target.value })
+                                            setDraftModelId(e.target.value)
                                             if (errorMsg) setErrorMsg("")
                                         }}
                                         placeholder="gpt-4o-mini"
-                                        className="font-mono text-sm"
+                                        className="font-mono text-sm bg-background/60 border-white/10 focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40"
                                     />
                                 </div>
                                 <div className="space-y-2">
@@ -276,13 +332,13 @@ export function SettingsModal() {
                                     </Label>
                                     <Input
                                         id="byokModelName"
-                                        value={settings.byokModelName}
+                                        value={draftModelName}
                                         onChange={(e) => {
-                                            updateSettings({ byokModelName: e.target.value })
+                                            setDraftModelName(e.target.value)
                                             if (errorMsg) setErrorMsg("")
                                         }}
                                         placeholder="My GPT"
-                                        className="text-sm"
+                                        className="text-sm bg-background/60 border-white/10 focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40"
                                     />
                                 </div>
                             </div>
@@ -294,20 +350,17 @@ export function SettingsModal() {
                                 <Label htmlFor="byokApiKey" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">
                                     API Key
                                 </Label>
-                                <div className="relative group">
-                                    <div className="absolute -inset-0.5 rounded-lg bg-gradient-to-r from-[var(--f1-purple)] to-[var(--f1-purple)] opacity-20 group-hover:opacity-40 transition duration-500 blur-sm"></div>
-                                    <Input
-                                        id="byokApiKey"
-                                        type="password"
-                                        value={apiKeyInput}
-                                        onChange={(e) => {
-                                            setApiKeyInput(e.target.value)
-                                            if (errorMsg) setErrorMsg("")
-                                        }}
-                                        className="relative bg-background border-muted/40 focus-visible:ring-1 focus-visible:ring-[var(--f1-purple)] focus-visible:border-[var(--f1-purple)]/50 transition-all font-mono text-sm"
-                                        placeholder={hasKey ? "Key is saved (hidden for security)" : "sk-..."}
-                                    />
-                                </div>
+                                <Input
+                                    id="byokApiKey"
+                                    type="password"
+                                    value={apiKeyInput}
+                                    onChange={(e) => {
+                                        setApiKeyInput(e.target.value)
+                                        if (errorMsg) setErrorMsg("")
+                                    }}
+                                    className="bg-background/60 border-white/10 focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40 font-mono text-sm"
+                                    placeholder={hasKey ? "Key is saved (hidden for security)" : "sk-..."}
+                                />
                                 {hasKey && !apiKeyInput && (
                                     <button
                                         type="button"
@@ -323,11 +376,11 @@ export function SettingsModal() {
                             <div className="flex items-center gap-2">
                                 <Button
                                     type="button"
-                                    variant="outline"
+                                    variant="ghost"
                                     size="sm"
                                     onClick={handleTestKey}
                                     disabled={isTesting || isSaving}
-                                    className="text-xs"
+                                    className="btn-wheel h-8 px-3 text-xs"
                                 >
                                     {isTesting ? (
                                         <>
@@ -351,7 +404,7 @@ export function SettingsModal() {
                             </div>
                         </div>
                     ) : (
-                        <div className="rounded-lg border border-muted/40 p-3 bg-muted/5">
+                        <div className="rounded-xl border border-white/10 p-3 bg-white/5 backdrop-blur">
                             <p className="text-xs text-muted-foreground leading-relaxed">
                                 Managed mode uses the model configured by the app owner
                                 (MiMo V2.5, same model for planning and answering).
@@ -378,7 +431,7 @@ export function SettingsModal() {
                             }
                         }}
                         type="button"
-                        className="text-muted-foreground hover:text-[var(--f1-red)] hover:bg-[var(--f1-red)]/10 text-xs uppercase tracking-wide"
+                        className="btn-wheel h-9 px-4 text-muted-foreground hover:text-[var(--f1-red)] text-xs uppercase tracking-wide"
                     >
                         Clear Telemetry
                     </Button>
@@ -386,12 +439,13 @@ export function SettingsModal() {
                         type="button"
                         onClick={handleSave}
                         disabled={isSaving}
-                        className="bg-foreground text-background hover:bg-foreground/90 font-bold tracking-wide"
+                        className="btn-wheel btn-wheel-green h-9 px-5 font-bold tracking-wide"
                     >
                         {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                         CONFIRM SETUP
                     </Button>
                 </DialogFooter>
+                </div>
             </DialogContent>
         </Dialog>
     )

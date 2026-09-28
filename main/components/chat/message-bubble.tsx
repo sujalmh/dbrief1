@@ -27,6 +27,8 @@ import rehypeSanitize from "rehype-sanitize"
 interface MessageBubbleProps {
     message: Message
     isLastAssistant?: boolean
+    /** Public shared view: hide action toolbars and skip store writes. */
+    readOnly?: boolean
 }
 
 // --- HELPER: Highlights driver names in text ---
@@ -179,7 +181,7 @@ const MessageContent = memo(function MessageContent({
  * @param message - The message to render, including role, content, optional steps, reasoning, citations, visualizationData, and error flag.
  * @returns A JSX element representing the message bubble ready for rendering in the chat UI.
  */
-function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBubbleProps) {
+function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = false }: MessageBubbleProps) {
     const isUser = message.role === "user"
     const isError = message.isError
     const containerRef = useRef<HTMLDivElement>(null)
@@ -236,7 +238,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
     }, [message.id, setActiveMessageId])
 
     useEffect(() => {
-        if (isUser) return;
+        if (isUser || readOnly) return;
 
         const observer = new IntersectionObserver(handleIntersection, {
             rootMargin: '-40% 0px -40% 0px',
@@ -248,7 +250,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
         }
 
         return () => observer.disconnect()
-    }, [isUser, handleIntersection])
+    }, [isUser, handleIntersection, readOnly])
 
     // Memoize the visualization button click handler
     //
@@ -349,11 +351,11 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
 
     return (
         <div ref={containerRef} className={cn("group flex w-full min-w-0 max-w-full gap-2 md:gap-3 p-3 md:p-4 overflow-hidden", isUser ? "flex-row-reverse" : "flex-row")}>
-            <Avatar className={cn("h-8 w-8 shrink-0 border", isUser ? "bg-muted/50 border-[var(--f1-red)]" : "bg-background")}>
-                <AvatarFallback className={cn("text-xs font-bold", isUser ? "text-[var(--f1-red)] bg-transparent" : "bg-background text-foreground")}>
+            <Avatar className={cn("h-8 w-8 shrink-0 border overflow-hidden", isUser ? "bg-muted/50 border-[var(--f1-red)]" : "bg-white border-white/20")}>
+                <AvatarFallback className={cn("text-xs font-bold", isUser ? "text-[var(--f1-red)] bg-transparent" : "bg-white text-foreground")}>
                     {isUser ? "DRV" : "PIT"}
                 </AvatarFallback>
-                {!isUser && <AvatarImage src="/f1-logo-small.png" alt="AI" />}
+                {!isUser && <AvatarImage src="/logo.svg" alt="AI" className="object-contain bg-white p-0.5" />}
             </Avatar>
 
             <div className={cn(
@@ -547,11 +549,11 @@ function MessageBubbleComponent({ message, isLastAssistant = false }: MessageBub
                 )}
 
                 {/* Message Actions Toolbar - Inside for Assistant */}
-                {!isUser && ActionsToolbar}
+                {!isUser && !readOnly && ActionsToolbar}
             </div>
 
             {/* Message Actions Toolbar - Outside for User */}
-            {isUser && ActionsToolbar}
+            {isUser && !readOnly && ActionsToolbar}
         </div>
     )
 }
@@ -580,6 +582,7 @@ export const MessageBubble = memo(MessageBubbleComponent, (prevProps, nextProps)
         prev.usage === next.usage &&
         prev.durationMs === next.durationMs &&
         prevProps.isLastAssistant === nextProps.isLastAssistant &&
+        prevProps.readOnly === nextProps.readOnly &&
         JSON.stringify(prev.steps) === JSON.stringify(next.steps) &&
         JSON.stringify(prev.iterations) === JSON.stringify(next.iterations) &&
         JSON.stringify(prev.evidence) === JSON.stringify(next.evidence) &&

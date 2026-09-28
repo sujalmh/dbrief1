@@ -95,13 +95,15 @@ describe("composer quota strip (inline, hover for details)", () => {
         expect(strip).toMatch(/resetLabel\(quota\.resetsAt\)/);
     });
 
-    it("reveals the shared card on hover, never expanding inline", () => {
-        expect(strip).toMatch(/<Tooltip>/);
-        expect(strip).toMatch(/<TooltipTrigger/);
-        expect(strip).toMatch(/<TooltipContent/);
+    it("reveals the shared card in a floating hover card, never expanding inline", () => {
+        expect(strip).toMatch(/onMouseEnter/);
+        expect(strip).toMatch(/onMouseLeave/);
+        expect(strip).toMatch(/role="dialog"/);
+        expect(strip).toMatch(/aria-expanded/);
         expect(strip).toMatch(/<QuotaCard quota=\{quota\} \/>/);
-        expect(strip).not.toMatch(/aria-expanded/);
-        expect(strip).not.toMatch(/useState/);
+        // Click toggles for touch (no hover); Escape dismisses.
+        expect(strip).toMatch(/onClick/);
+        expect(strip).toMatch(/Escape/);
     });
 
     it("shares the hook so the strip never adds a second fetch", () => {

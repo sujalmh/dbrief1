@@ -1,7 +1,5 @@
 "use client";
 
-import { Flag } from "lucide-react";
-
 /**
  * Sign-in gate.
  * ============
@@ -22,8 +20,9 @@ export function SignInPage() {
             <div className="relative z-10 w-full max-w-md p-8 bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex flex-col items-center text-center space-y-8">
                 {/* Logo */}
                 <div className="flex items-center gap-4">
-                    <div className="flex items-center justify-center h-16 w-16 rounded-xl bg-f1-red text-white shadow-[0_0_30px_rgba(225,6,0,0.4)]">
-                        <Flag className="h-8 w-8 fill-current" />
+                    <div className="flex items-center justify-center h-16 rounded-xl bg-white px-3 shadow-[0_0_30px_rgba(225,6,0,0.4)]">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- local static logo */}
+                        <img src="/logo.svg" alt="Logo" className="h-12 w-auto" />
                     </div>
                 </div>
 

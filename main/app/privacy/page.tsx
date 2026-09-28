@@ -102,6 +102,13 @@ export default function PrivacyPage() {
                         <li>Delete any message, session, or your full history at any time from the app.</li>
                         <li>Signing in with Google is required to use the chat; deleting your sessions removes your stored conversations.</li>
                         <li>Bring Your Own Key is optional — your key is stored in a secure httpOnly cookie, never in readable storage.</li>
+                        <li>
+                            <strong className="text-white">Sharing:</strong> you can create a
+                            read-only link for any chat. Anyone with the link can read its
+                            messages and sources without signing in — charts, usage stats, and
+                            other internals are never shared. Revoking the link or deleting the
+                            session disables it immediately.
+                        </li>
                     </ul>
                 </Section>
 

@@ -1,6 +1,7 @@
 "use client"
 
-import { Flag, Settings, Info, Download, FileText, FileJson, PanelLeft } from "lucide-react"
+import { Settings, Share2, Info, Download, FileText, FileJson, PanelLeft } from "lucide-react"
+import dynamic from "next/dynamic"
 import { Button } from "@/components/ui/button"
 import { useChatStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -21,6 +22,11 @@ import {
 import { useMemo, useState } from "react"
 import { exportConversation } from "@/lib/utils/export-conversation"
 
+const ShareDialog = dynamic(
+    () => import("@/components/chat/share-dialog").then((m) => m.ShareDialog),
+    { ssr: false }
+)
+
 export function Header() {
     // Slice subscriptions: `messages` changes on every streamed token, so
     // this component selects only the active message's visualization ref
@@ -39,6 +45,7 @@ export function Header() {
     const setSidebarOpen = useChatStore((s) => s.setSidebarOpen)
     const isSidebarOpen = useChatStore((s) => s.isSidebarOpen)
     const [isInfoOpen, setInfoOpen] = useState(false)
+    const [isShareOpen, setShareOpen] = useState(false)
 
     // Derive context from the active message
     const context = useMemo(() => {
@@ -106,10 +113,10 @@ export function Header() {
                         <PanelLeft className="h-5 w-5" />
                         <span className="sr-only">Toggle sidebar</span>
                     </Button>
-                    {/* Logo Area - Icon Only */}
+                    {/* Logo Area - Falcon logo */}
                     <div className="flex items-center gap-3 opacity-90 hover:opacity-100 transition-opacity shrink-0">
-                        <div className="flex items-center justify-center rounded-sm bg-[var(--f1-red)] p-1.5 shadow-[0_0_10px_rgba(225,6,0,0.4)]">
-                            <Flag className="h-4 w-4 text-white fill-current" />
+                        <div className="flex items-center justify-center rounded-sm bg-white px-1.5 py-1 shadow-[0_0_10px_rgba(225,6,0,0.4)]">
+                            <img src="/logo.svg" alt="Logo" className="h-6 w-auto" />
                         </div>
                     </div>
 
@@ -190,6 +197,26 @@ export function Header() {
                         </DropdownMenuContent>
                     </DropdownMenu>
 
+                    {/* Share Session — read-only public link */}
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setShareOpen(true)}
+                                disabled={!currentSessionId}
+                                className="btn-wheel btn-wheel-purple h-9 w-9 md:h-10 md:w-10"
+                                title="Share session"
+                            >
+                                <Share2 className="h-5 w-5" />
+                                <span className="sr-only">Share session</span>
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                            <p>Share session</p>
+                        </TooltipContent>
+                    </Tooltip>
+
                     {/* Info Button — opens About / Privacy / Terms */}
                     <Tooltip>
                         <TooltipTrigger asChild>
@@ -228,6 +255,16 @@ export function Header() {
                 </div>
             </div>
             <InfoModal open={isInfoOpen} onOpenChange={setInfoOpen} />
+            {isShareOpen && currentSessionId && (
+                <ShareDialog
+                    open={isShareOpen}
+                    onOpenChange={setShareOpen}
+                    sessionId={currentSessionId}
+                    sessionTitle={
+                        sessions.find((s) => s.id === currentSessionId)?.title
+                    }
+                />
+            )}
         </header>
     )
 }

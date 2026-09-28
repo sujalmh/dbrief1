@@ -4,7 +4,7 @@ export const runtime = "edge";
 export const size = { width: 180, height: 180 };
 export const contentType = "image/png";
 
-/** Apple touch icon (180x180) — red tile with D1 monogram. */
+/** Apple touch icon (180x180) — falcon logo on white tile. */
 export default function AppleIcon() {
   return new ImageResponse(
     (
@@ -15,15 +15,37 @@ export default function AppleIcon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          backgroundColor: "#E10600",
+          backgroundColor: "#ffffff",
           borderRadius: "40px",
-          color: "#ffffff",
-          fontSize: "84px",
-          fontWeight: 900,
-          fontFamily: "Arial, Helvetica, sans-serif",
         }}
       >
-        D1
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 320 180"
+          width="160"
+          height="90"
+        >
+          <path
+            d="M 80 32 C 138 20, 208 24, 244 55 C 261 70, 271 94, 277 122.5 C 258 102, 247 81, 228 66 C 200 44, 136 31, 80 32 Z"
+            fill="#0B0B0C"
+          />
+          <path
+            d="M 6 74 C 70 72, 132 66.5, 167 67.5 C 184 68, 196 72.5, 206 82.5 C 160 80.5, 78 77, 6 74 Z"
+            fill="#E30613"
+          />
+          <path
+            d="M 48 101 C 104 99.5, 150 99, 173.5 107 C 190.5 113, 194.5 124, 207.5 134 C 218 142.5, 230 148.5, 241 153.5 C 225 150, 208 143, 196 133 C 183.5 123, 178.5 117, 159.5 111.5 C 130 104, 88 102, 48 101 Z"
+            fill="#E30613"
+          />
+          <path
+            d="M 199 109 L 263.5 112.5 C 266.5 129.5, 265.5 150, 260.5 170 L 247 170 C 249 156, 244.5 141.5, 232 131.5 C 221 122.5, 208.5 114.5, 199 109 Z"
+            fill="#0B0B0C"
+          />
+          <path
+            d="M 230 65 L 232.4 74.1 L 241.5 76.5 L 232.4 78.9 L 230 88 L 227.6 78.9 L 218.5 76.5 L 227.6 74.1 Z"
+            fill="#E30613"
+          />
+        </svg>
       </div>
     ),
     { ...size },

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { useRouter } from "next/navigation";
 import { Plus, MessageSquare, LogOut, User as UserIcon, Trash2 } from "lucide-react";
 import { useChatStore } from "@/lib/store"
 import type { StoredSession } from "@/lib/store"
@@ -10,9 +11,8 @@ import { useMediaQuery } from "@/lib/hooks/use-media-query";
 import {
     listSessions,
     deleteSession,
-    loadMessages,
-    loadContext,
 } from "@/lib/cf/client";
+import { resetToFreshChat } from "@/lib/cf/session-loader";
 import { cn } from "@/lib/utils";
 
 export function Sidebar() {
@@ -21,12 +21,11 @@ export function Sidebar() {
     // whole session list on every token frame.
     const sessions = useChatStore((s) => s.sessions);
     const currentSessionId = useChatStore((s) => s.currentSessionId);
-    const setCurrentSessionId = useChatStore((s) => s.setCurrentSessionId);
     const setSessions = useChatStore((s) => s.setSessions);
-    const setMessages = useChatStore((s) => s.setMessages);
     const isSidebarOpen = useChatStore((s) => s.isSidebarOpen);
     const setSidebarOpen = useChatStore((s) => s.setSidebarOpen);
     const { user, signOut, googleLoginAvailable } = useSession();
+    const router = useRouter();
     // Mobile (<md) renders as an overlay drawer instead of squeezing
     // the chat column; desktop keeps the collapsible rail.
     const isDesktop = useMediaQuery("(min-width: 768px)");
@@ -62,56 +61,20 @@ export function Sidebar() {
         // appears in the sidebar until the first message is sent (the
         // send handler lazily creates the session then, titled from the
         // message text). This keeps repeated New Chat clicks from piling
-        // up empty sessions.
-        setCurrentSessionId(null);
-        setMessages([]); // Clear messages for new chat
-        // Reset panel state so the previous session's charts don't linger.
-        useChatStore.setState({ visualizationData: null, activeMessageId: null });
+        // up empty sessions. Client-side navigation only — no reload.
+        resetToFreshChat();
         // On phones the sidebar is a drawer — get out of the way.
         if (!isDesktop) setSidebarOpen(false);
+        router.push("/");
     };
 
-    const handleSelectSession = async (sessionId: string) => {
-        setCurrentSessionId(sessionId);
+    const handleSelectSession = (sessionId: string) => {
+        // URL-driven: push the session URL and let the chat shell load
+        // it from the cloud. Client-side navigation only — no reload.
         // On phones the sidebar is a drawer — get out of the way.
         if (!isDesktop) setSidebarOpen(false);
-        try {
-            // Full resume: messages with steps/visualization/evidence/usage
-            // plus session-level UI (panel data, pinned graphs, active msg).
-            const [messages, ui] = await Promise.all([
-                loadMessages(sessionId),
-                loadContext(sessionId),
-            ]);
-            // Citations arrive pre-sanitized from loadMessages — no
-            // second pass needed here.
-            setMessages(messages);
-            // Re-learn driver colors from restored payloads so highlights
-            // are season-correct even before any new query runs.
-            try {
-                const { learnColorsFromPayload } = await import("@/lib/f1-colors");
-                for (const m of messages) {
-                    if (m.visualizationData) learnColorsFromPayload(m.visualizationData);
-                }
-            } catch {
-                // Best-effort: static grid fallback still applies.
-            }
-            // Restore panel + active message. Fall back to the latest
-            // message's visualization when no UI state was ever saved
-            // (pre-existing sessions).
-            type StoreState = ReturnType<typeof useChatStore.getState>;
-            const patch: { visualizationData?: StoreState["visualizationData"]; activeMessageId?: string | null } = {};
-            const activeId = ui.activeMessageId ?? messages.filter(m => m.role === "assistant").slice(-1)[0]?.id ?? null;
-            const activeMsg = messages.find(m => m.id === activeId);
-            const panelData = ui.visualizationData ?? activeMsg?.chartSpecs ?? activeMsg?.visualizationData ?? null;
-            useChatStore.setState({
-                ...patch,
-                visualizationData: (panelData ?? null) as StoreState["visualizationData"],
-                activeMessageId: activeId,
-            });
-        } catch (err) {
-            console.error("Session load failed:", err);
-            setMessages([]);
-        }
+        if (sessionId === currentSessionId) return;
+        router.push(`/c/${sessionId}`);
     };
 
     const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
@@ -122,10 +85,10 @@ export function Sidebar() {
         setSessions(sessions.filter(s => s.id !== sessionId));
 
         if (currentSessionId === sessionId) {
-            setCurrentSessionId(null);
-            // Full reset (not just messages) so the deleted session's
-            // charts/panel state can't linger behind.
-            useChatStore.getState().clearMessages();
+            // Leaving the deleted session: fresh composer at the root URL
+            // so the shell doesn't try to reload a session that's gone.
+            resetToFreshChat();
+            router.push("/");
         }
 
         try {

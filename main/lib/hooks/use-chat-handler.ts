@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
 import { useChatStore, type Message, type ResearchIteration } from "@/lib/store"
 import { useSession } from "@/lib/cf/session-context"
 import { createSession, saveMessage, saveContext, patchSessionMeta } from "@/lib/cf/client"
@@ -25,6 +26,7 @@ export function useChatHandler() {
     // streamed token. Everything else goes through getState().
     const isLoading = useChatStore((s) => s.isLoading)
     const { user } = useSession()
+    const router = useRouter()
     const abortControllerRef = React.useRef<AbortController | null>(null)
 
     React.useEffect(() => {
@@ -136,6 +138,18 @@ export function useChatHandler() {
                 const sid = effectiveSessionId;
                 saveMessage(sid, userMsg);
             }
+        }
+
+        // Reflect the session in the URL (ChatGPT-style `/c/<id>`).
+        // Client-side replace only — the page never reloads, and the
+        // route shell skips reloading when the session is already live.
+        if (
+            effectiveSessionId &&
+            !effectiveSessionId.startsWith("local_") &&
+            typeof window !== "undefined" &&
+            window.location.pathname !== `/c/${effectiveSessionId}`
+        ) {
+            router.replace(`/c/${effectiveSessionId}`);
         }
 
         try {
@@ -628,7 +642,7 @@ export function useChatHandler() {
             }
             useChatStore.getState().setLoading(false)
         }
-    }, [user])
+    }, [user, router])
 
     return { handleSend, cancelGeneration, isLoading }
 }

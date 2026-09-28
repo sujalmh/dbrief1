@@ -187,3 +187,43 @@ export async function loadQuota(byok: boolean): Promise<QuotaState | null> {
         return null;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Share links (read-only public links for a session)
+// ---------------------------------------------------------------------------
+
+export interface ShareLinkInfo {
+    token: string;
+    createdAt: number;
+}
+
+export type { SharedSnapshot, SharedMessage } from "@/lib/cf/shares";
+
+/** Absolute URL for a share token (built in the browser — needs origin). */
+export function shareUrl(token: string): string {
+    return `${window.location.origin}/share/${token}`;
+}
+
+export async function listShareLinks(sessionId: string): Promise<ShareLinkInfo[]> {
+    const data = await cfFetch<{ links: ShareLinkInfo[] }>(
+        `/api/cf/sessions/${encodeURIComponent(sessionId)}/shares`
+    );
+    return data.links ?? [];
+}
+
+export async function createShareLink(sessionId: string): Promise<ShareLinkInfo> {
+    return cfFetch<ShareLinkInfo>(`/api/cf/sessions/${encodeURIComponent(sessionId)}/shares`, {
+        method: "POST",
+    });
+}
+
+export async function revokeShareLink(sessionId: string, token: string): Promise<void> {
+    await cfFetch(`/api/cf/sessions/${encodeURIComponent(sessionId)}/shares/${encodeURIComponent(token)}`, {
+        method: "DELETE",
+    });
+}
+
+/** Public snapshot for a share token — throws when invalid/revoked. */
+export async function loadSharedSnapshot(token: string): Promise<import("@/lib/cf/shares").SharedSnapshot> {
+    return cfFetch(`/api/cf/shared/${encodeURIComponent(token)}`);
+}

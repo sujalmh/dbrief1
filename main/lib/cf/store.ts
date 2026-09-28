@@ -253,6 +253,8 @@ export async function deleteSession(userId: string, sessionId: string): Promise<
     await Promise.all(blobs.map((b) => r2Delete(b.key).catch(() => undefined)));
     await d1Exec(`DELETE FROM blobs WHERE session_id = ?`, [sessionId]);
     await d1Exec(`DELETE FROM messages WHERE session_id = ?`, [sessionId]);
+    // Retire any share links (best-effort: the table may predate them).
+    await d1Exec(`DELETE FROM shares WHERE session_id = ?`, [sessionId]).catch(() => undefined);
     await d1Exec(`DELETE FROM sessions WHERE id = ?`, [sessionId]);
 }
 

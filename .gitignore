@@ -59,3 +59,4 @@ ingestion/__pycache__/
 # Misc local tooling
 .kilo/
 main/.e2e-logs/
+.openchamber/

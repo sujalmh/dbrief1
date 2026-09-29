@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import type { ModeLabel } from "@/components/layout/header-shell";
-import { LandingFooter, LandingHeader } from "./landing-chrome";
+import { LandingHeader } from "./landing-chrome";
 import { LandingComposer } from "./landing-composer";
 import { LandingHero } from "./landing-hero";
 import { DEMO_SLIDES, LandingShowcase } from "./landing-showcase";
@@ -44,7 +44,6 @@ export function LandingPage() {
                             <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-6 pb-40">
                                 <LandingHero />
                                 <LandingShowcase index={index} onAdvance={advance} />
-                                <LandingFooter />
                             </div>
                         </div>
                     </div>

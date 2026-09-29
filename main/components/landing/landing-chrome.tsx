@@ -6,7 +6,6 @@ import {
     AppHeaderShell,
     LogoBadge,
     ModePill,
-    SessionBadge,
     type ModeLabel,
 } from "@/components/layout/header-shell";
 import { Button } from "@/components/ui/button";
@@ -52,10 +51,6 @@ export function LandingHeader({
             {/* Identity */}
             <div className="flex min-w-0 items-center gap-2 md:gap-6">
                 <LogoBadge />
-                <SessionBadge
-                    label="F1 RACE ENGINEERING"
-                    className="hidden sm:flex"
-                />
             </div>
 
             {/* The header's mode selector doubles as the demo switcher. */}
@@ -75,19 +70,5 @@ export function LandingHeader({
                 </Button>
             </div>
         </AppHeaderShell>
-    );
-}
-
-export function LandingFooter() {
-    return (
-        <footer className="mt-1 flex flex-wrap items-center justify-center gap-x-5 gap-y-1 border-t border-border/40 px-2 pt-4 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/70">
-            <span>© 2026 Dbrief1</span>
-            <a href="/privacy" className="transition-colors hover:text-foreground">
-                Privacy
-            </a>
-            <a href="/terms" className="transition-colors hover:text-foreground">
-                Terms
-            </a>
-        </footer>
     );
 }

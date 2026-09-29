@@ -9,11 +9,13 @@ import type { Message } from "@/lib/store";
 const EASE = [0.22, 1, 0.36, 1] as const;
 
 // Timeline per demo: question sits, the pipeline runs, the answer streams
-// word by word (like live tokens), the sources/footer land, hold, advance.
+// word by word (like live tokens), the sources/footer land, hold long
+// enough to read, advance. Hold dominates: ~30-word answers need ~6s at a
+// relaxed reading pace, and hovering pauses everything.
 const THINK_MS = 900;
-const WORD_MS = 55;
-const HOLD_MS = 3400;
-const REDUCED_HOLD_MS = 5200;
+const WORD_MS = 60;
+const HOLD_MS = 5200;
+const REDUCED_HOLD_MS = 6000;
 
 interface DemoSlide {
     id: string;
@@ -38,8 +40,8 @@ export const DEMO_SLIDES: DemoSlide[] = [
     {
         id: "telemetry",
         mode: "Telemetry",
-        question: "Where is VER losing time to NOR?",
-        answer: "Norris is quicker through the final sector. He carries **6 km/h** more apex speed into Turn 13 and gets on throttle **8 m** earlier — worth about two tenths a lap, every lap.",
+        question: "Where is Verstappen losing time to Norris?",
+        answer: "Mostly in the final sector. Norris carries **6 km/h** more apex speed through Turn 13 and opens the throttle **8 m** earlier — about two tenths per lap.",
         steps: [
             { description: "Load telemetry for VER and NOR", tool: "get_telemetry" },
             { description: "Compare speed traces through Turn 13", tool: "get_telemetry_summary" },
@@ -50,8 +52,8 @@ export const DEMO_SLIDES: DemoSlide[] = [
     {
         id: "comparison",
         mode: "Comparison",
-        question: "Russell vs Hamilton, last 10 laps?",
-        answer: "Russell is **0.3s** quicker on average and closing at **0.4s per lap**. On this trend he is on Hamilton's gearbox by lap 52.",
+        question: "Russell vs Hamilton over the last 10 laps?",
+        answer: "Russell averages three tenths quicker and is closing at **0.4s per lap**. On this trend, he reaches Hamilton's gearbox by lap 52.",
         steps: [
             { description: "Load the last 10 laps for RUS and HAM", tool: "get_laps" },
             { description: "Compare pace and gap evolution", tool: "get_fastest_lap" },
@@ -61,8 +63,8 @@ export const DEMO_SLIDES: DemoSlide[] = [
     {
         id: "strategy",
         mode: "Strategy",
-        question: "Best tyre strategy for Singapore?",
-        answer: "Soft to medium suits the top four. The undercut window opens on **lap 18** — pit then and you jump the cars ahead. Staying out past lap 24 costs track position.",
+        question: "What is the best tyre strategy for Singapore?",
+        answer: "Soft to medium for the top four. The undercut opens on **lap 18** — stop then for track position. Staying out past lap 24 costs places.",
         steps: [
             { description: "Load stint data for the top four", tool: "get_tyres" },
             { description: "Model the pit-window alternatives", tool: "get_race" },
@@ -73,8 +75,8 @@ export const DEMO_SLIDES: DemoSlide[] = [
     {
         id: "insights",
         mode: "Insights",
-        question: "Who is more likely to win the championship?",
-        answer: "Verstappen leads Norris by **66 points** with 8 wins from 14 rounds. At this pace the title is his to lose — Norris needs back-to-back wins to reopen it.",
+        question: "Who is leading the drivers' championship?",
+        answer: "Verstappen, on **302 points** — 66 ahead of Norris, with 8 wins from 14 rounds. Norris needs consecutive wins to reopen it.",
         table: "| Driver | Points | Gap |\n| --- | --- | --- |\n| VER | 302 | — |\n| NOR | 236 | −66 |\n| LEC | 199 | −103 |",
         steps: [
             { description: "Load the 2026 drivers' standings", tool: "get_driver_standings" },
@@ -231,19 +233,13 @@ function DemoExchange({
             onTouchEnd={() => setPausedState(false)}
         >
             {/* Auto-advance progress — same weight as the planning bars in
-                chat, labelled so the line reads as a demo timeline rather
-                than a stray rule. Hidden for reduced motion. */}
+                chat. Unlabelled: it reads as a timeline, not a badge. */}
             {!reduce && (
-                <div className="flex items-center gap-3" aria-hidden="true">
-                    <span className="font-mono text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground/70">
-                        Live demo
-                    </span>
-                    <div className="h-px flex-1 overflow-hidden bg-border/50">
-                        <div
-                            className="landing-progress h-full bg-[var(--f1-red)]"
-                            style={{ animationDuration: `${total}ms` }}
-                        />
-                    </div>
+                <div className="h-px w-full overflow-hidden bg-border/50" aria-hidden="true">
+                    <div
+                        className="landing-progress h-full bg-[var(--f1-red)]"
+                        style={{ animationDuration: `${total}ms` }}
+                    />
                 </div>
             )}
 

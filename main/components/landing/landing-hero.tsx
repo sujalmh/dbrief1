@@ -23,12 +23,6 @@ export function LandingHero() {
 
     return (
         <section className="px-1 pb-1 pt-4 text-center sm:pt-8">
-            <motion.p
-                {...fadeUp(0)}
-                className="font-mono text-[10px] font-medium uppercase tracking-[0.24em] text-muted-foreground"
-            >
-                Race engineering · live data
-            </motion.p>
             <motion.h1
                 {...fadeUp(0.06)}
                 className="mx-auto mt-2.5 max-w-xl text-balance text-[25px] font-bold leading-tight tracking-tight sm:text-[30px]"

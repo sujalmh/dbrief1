@@ -13,7 +13,11 @@ import { ClosingCta, Features } from "./landing-features";
 export function LandingPage() {
     return (
         <MotionConfig reducedMotion="user">
-            <div className="min-h-dvh bg-background font-sans text-foreground antialiased selection:bg-[#E10600]/15">
+            {/* Own scroll container: the root layout locks body scroll
+                (`h-dvh overflow-hidden`) for the chat shell, so without
+                this the page is unscrollable wherever content exceeds
+                the viewport (phones). */}
+            <div className="h-dvh overflow-y-auto overscroll-contain bg-background font-sans text-foreground antialiased selection:bg-[#E10600]/15">
                 <SiteNav />
                 <main className="pb-10">
                     <HeroShowcase />

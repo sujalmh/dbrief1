@@ -16,8 +16,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export default function PrivacyPage() {
+    // Own scroll container: the root layout locks body scroll for the
+    // chat shell (see landing-page.tsx).
     return (
-        <main className="flex min-h-dvh w-full justify-center bg-carbon px-4 py-12 text-white">
+        <main className="flex h-dvh w-full justify-center overflow-y-auto overscroll-contain bg-carbon px-4 py-12 text-white">
             <article className="w-full max-w-3xl space-y-8">
                 <header className="space-y-2">
                     <p className="text-xs font-mono uppercase tracking-widest text-f1-red">Dbrief1</p>

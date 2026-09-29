@@ -22,7 +22,7 @@ export function HeroHeader() {
                   transition: { duration: 0.75, delay, ease: EASE },
               };
     return (
-        <section className="relative px-1 pb-2 pt-6 text-center sm:pt-9">
+        <section className="relative px-1 pb-2 pt-4 text-center sm:pt-9">
             <motion.p
                 {...fadeUp(0)}
                 className="flex items-center justify-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[0.24em] text-muted-foreground"
@@ -35,7 +35,7 @@ export function HeroHeader() {
             </motion.p>
             <motion.h1
                 {...fadeUp(0.08)}
-                className="mx-auto mt-3 max-w-3xl text-balance text-[34px] font-black uppercase italic leading-[0.98] tracking-tight sm:text-5xl md:text-[56px]"
+                className="mx-auto mt-3 max-w-3xl text-balance text-[32px] font-black uppercase italic leading-[0.98] tracking-tight sm:text-5xl md:text-[56px]"
             >
                 Understand the race
                 <br />
@@ -45,16 +45,16 @@ export function HeroHeader() {
             <motion.div
                 {...fadeUp(0.14)}
                 aria-hidden="true"
-                className="mx-auto mt-3 h-1 w-24 -skew-x-12 rounded-full bg-[#E10600]"
+                className="mx-auto mt-2 h-1 w-24 -skew-x-12 rounded-full bg-[#E10600] sm:mt-3"
             />
             <motion.p
                 {...fadeUp(0.16)}
-                className="mx-auto mt-3 max-w-xl text-pretty text-[13.5px] leading-relaxed text-muted-foreground sm:text-[15px]"
+                className="mx-auto mt-2 max-w-xl text-pretty text-[13.5px] leading-relaxed text-muted-foreground sm:mt-3 sm:text-[15px]"
             >
                 Live timing, telemetry and strategy answers — with the data
                 on screen, not buried in tables.
             </motion.p>
-            <motion.div {...fadeUp(0.24)} className="mt-4 flex flex-wrap items-center justify-center gap-3">
+            <motion.div {...fadeUp(0.24)} className="mt-3 flex flex-wrap items-center justify-center gap-3 sm:mt-4">
                 <a
                     href="/api/auth/google"
                     className="group inline-flex h-11 items-center gap-2 rounded-full bg-[#E10600] px-6 text-sm font-semibold text-white shadow-[0_16px_30px_-12px_rgba(225,6,0,0.6)] transition-all hover:scale-[1.03] hover:bg-[#c90500] active:scale-[0.97]"

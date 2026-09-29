@@ -87,7 +87,7 @@ export function SiteNav() {
 
 export function SiteFooter() {
     return (
-        <footer className="mx-auto w-full max-w-6xl px-5 pb-4 pt-1">
+        <footer className="mx-auto w-full max-w-6xl px-5 pb-3 pt-1">
             <div className="flex flex-col items-center justify-between gap-2 border-t border-border/50 pt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground md:flex-row">
                 <div className="flex items-center gap-3">
                     <Logo compact />

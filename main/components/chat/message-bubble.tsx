@@ -103,8 +103,10 @@ const createMarkdownComponents = (season?: number): Components => ({
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeSanitize];
 
-// Inner component for the message content - heavily memoized
-const MessageContent = memo(function MessageContent({
+// Inner component for the message content - heavily memoized.
+// Exported for reuse by the landing capability carousel so the demo
+// answers render with the exact chat typography + driver highlighting.
+export const MessageContent = memo(function MessageContent({
     content,
     isUser,
     isError,

@@ -13,6 +13,11 @@ import {
     Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+// Real chat components — the demo exchange renders exactly what the app
+// renders: markdown + driver highlights (MessageContent) and the pipeline
+// status indicator (RadioWave).
+import { MessageContent } from "@/components/chat/message-bubble";
+import { RadioWave } from "@/components/chat/radio-wave";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
@@ -198,21 +203,6 @@ function SlideVisual({ kind }: { kind: VisualKind }) {
     );
 }
 
-function ThinkingDots() {
-    return (
-        <span className="inline-flex items-center gap-1" aria-hidden="true">
-            {[0, 1, 2].map((i) => (
-                <motion.span
-                    key={i}
-                    className="h-1 w-1 rounded-full bg-muted-foreground"
-                    animate={{ y: [0, -3, 0], opacity: [0.4, 1, 0.4] }}
-                    transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }}
-                />
-            ))}
-        </span>
-    );
-}
-
 /**
  * Auto-playing capability carousel styled as the chat itself: a user
  * question bubble, a RACE ENGINEER status line, then the answer streaming
@@ -298,7 +288,7 @@ export function ShowcaseCarousel() {
             initial={reduce ? false : { opacity: 0, y: 28 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.35, ease: EASE }}
-            className="relative mx-auto mt-6 w-full max-w-4xl flex-1 sm:mt-8"
+            className="relative mx-auto mt-5 w-full max-w-4xl flex-1 sm:mt-8"
             onMouseEnter={() => setPaused(true)}
             onMouseLeave={() => setPaused(false)}
             onTouchStart={() => setPaused(true)}
@@ -372,16 +362,25 @@ export function ShowcaseCarousel() {
                                             Race Engineer
                                         </p>
                                         {thinking ? (
-                                            <p className="mt-1 flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-                                                Analysing <ThinkingDots />
-                                            </p>
+                                            <div className="flex items-center gap-3 py-2">
+                                                <span className="max-w-[300px] truncate font-mono text-xs text-muted-foreground animate-pulse">
+                                                    ANALYSING…
+                                                </span>
+                                                <RadioWave />
+                                            </div>
                                         ) : (
-                                            <p className="mt-1 text-[13.5px] leading-relaxed">
-                                                {words.slice(0, shown).join(" ")}
+                                            <div className="prose prose-sm break-words dark:prose-invert max-w-none leading-relaxed text-foreground">
+                                                {shown > 0 && (
+                                                    <MessageContent
+                                                        content={words.slice(0, shown).join(" ")}
+                                                        isUser={false}
+                                                        season={2026}
+                                                    />
+                                                )}
                                                 {streaming && (
                                                     <span className="ml-1 inline-block h-[14px] w-[7px] translate-y-[2px] animate-pulse bg-[#E10600]" aria-hidden="true" />
                                                 )}
-                                            </p>
+                                            </div>
                                         )}
                                     </div>
                                 </div>

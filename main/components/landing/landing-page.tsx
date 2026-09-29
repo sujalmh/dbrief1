@@ -6,7 +6,9 @@ import type { ModeLabel } from "@/components/layout/header-shell";
 import { LandingHeader } from "./landing-chrome";
 import { LandingComposer } from "./landing-composer";
 import { LandingHero } from "./landing-hero";
-import { DEMO_SLIDES, LandingShowcase } from "./landing-showcase";
+import { DEMO_SLIDES } from "./landing-showcase";
+import { DevicesSection } from "./landing-devices";
+import { InfoSections, LandingFooter } from "./landing-info";
 
 /**
  * Public landing page.
@@ -41,11 +43,15 @@ export function LandingPage() {
                 <main className="relative flex h-full w-full overflow-hidden bg-carbon">
                     <div className="relative z-10 w-full flex-1 overflow-y-auto overscroll-contain">
                         <div className="w-full min-w-0 max-w-full p-3 sm:p-4">
-                            <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-6 pb-40">
+                            <div className="mx-auto w-full min-w-0 max-w-3xl">
                                 <LandingHero />
-                                <LandingShowcase index={index} onAdvance={advance} />
                             </div>
                         </div>
+                        <DevicesSection index={index} onAdvance={advance} />
+                        <InfoSections />
+                        <LandingFooter />
+                        {/* Clearance for the floating composer. */}
+                        <div className="h-40" aria-hidden="true" />
                     </div>
 
                     {/* Floating composer layer — same placement as the chat shell. */}

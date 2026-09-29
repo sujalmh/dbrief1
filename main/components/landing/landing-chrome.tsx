@@ -44,37 +44,31 @@ export function ThemeToggle() {
     );
 }
 
-const NAV_LINKS = [
-    { label: "Insights", href: "#features" },
-    { label: "Telemetry", href: "#showcase" },
-    { label: "Comparison", href: "#features" },
-    { label: "Strategy", href: "#start" },
-];
+const NAV_TAGS = ["Ask", "Telemetry", "Strategy", "Compare"];
 
 export function SiteNav() {
     return (
-        <header className="sticky top-0 z-50 border-b border-black/[0.06] bg-background/70 backdrop-blur-xl dark:border-white/[0.06]">
+        <header className="bg-carbon-header sticky top-0 z-50">
             <nav
-                className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5"
+                className="mx-auto flex h-14 max-w-6xl items-center justify-between px-5"
                 aria-label="Primary"
             >
                 <Logo />
-                <div className="hidden items-center gap-8 lg:flex">
-                    {NAV_LINKS.map((l) => (
-                        <a
-                            key={l.label}
-                            href={l.href}
-                            className="text-[13.5px] font-medium text-zinc-500 transition-colors hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+                <div className="hidden items-center gap-5 lg:flex" aria-hidden="true">
+                    {NAV_TAGS.map((t) => (
+                        <span
+                            key={t}
+                            className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground"
                         >
-                            {l.label}
-                        </a>
+                            {t}
+                        </span>
                     ))}
                 </div>
                 <div className="flex items-center gap-2.5">
                     <ThemeToggle />
                     <a
                         href="/api/auth/google"
-                        className="hidden px-2 text-[13.5px] font-medium text-zinc-500 transition-colors hover:text-zinc-900 sm:block dark:text-zinc-400 dark:hover:text-white"
+                        className="hidden px-2 text-[13.5px] font-medium text-muted-foreground transition-colors hover:text-foreground sm:block"
                     >
                         Sign in
                     </a>
@@ -93,21 +87,20 @@ export function SiteNav() {
 
 export function SiteFooter() {
     return (
-        <footer className="mx-auto w-full max-w-6xl px-5 pb-10 pt-4">
-            <div className="flex flex-col items-center justify-between gap-4 border-t border-black/[0.06] pt-8 text-xs text-zinc-500 md:flex-row dark:border-white/[0.06] dark:text-zinc-500">
+        <footer className="mx-auto w-full max-w-6xl px-5 pb-4 pt-1">
+            <div className="flex flex-col items-center justify-between gap-2 border-t border-border/50 pt-3 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground md:flex-row">
                 <div className="flex items-center gap-3">
                     <Logo compact />
                     <span>© 2026 DBRIEF1 — F1 Intelligence.</span>
                 </div>
                 <div className="flex items-center gap-5">
-                    <span className="hidden sm:inline">Light / dark ready</span>
-                    <a href="/privacy" className="transition-colors hover:text-zinc-900 dark:hover:text-white">
+                    <a href="/privacy" className="transition-colors hover:text-foreground">
                         Privacy
                     </a>
-                    <a href="/terms" className="transition-colors hover:text-zinc-900 dark:hover:text-white">
+                    <a href="/terms" className="transition-colors hover:text-foreground">
                         Terms
                     </a>
-                    <a href="/api/auth/google" className="transition-colors hover:text-zinc-900 dark:hover:text-white">
+                    <a href="/api/auth/google" className="transition-colors hover:text-foreground">
                         Sign in
                     </a>
                 </div>

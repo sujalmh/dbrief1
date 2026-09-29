@@ -2,30 +2,29 @@
 
 import { MotionConfig } from "framer-motion";
 import { SiteFooter, SiteNav } from "./landing-chrome";
-import { HeroShowcase, StatsStrip } from "./landing-hero";
-import { ClosingCta, Features } from "./landing-features";
+import { HeroHeader } from "./landing-hero";
+import { ShowcaseCarousel } from "./landing-showcase";
 
 /**
- * Public marketing page — same vibe as the DBRIEF1 concept:
- * minimal Apple-style layout, light + dark ready, calm motion.
+ * Public marketing page in the chat's own theme (carbon texture, F1 red,
+ * mono micro-labels, italic black headlines).
+ *
+ * Single-viewport design: compact hero + auto-playing capability carousel
+ * (a mock chat exchange that streams answers like live response tokens),
+ * so the whole pitch lands with no scrolling on desktop and most phones.
+ * The root still scrolls as a fallback for short viewports (the global
+ * layout locks body scroll for the chat shell).
+ *
  * Shown to signed-out visitors; signed-in users get the chat shell.
  */
 export function LandingPage() {
     return (
         <MotionConfig reducedMotion="user">
-            {/* Own scroll container: the root layout locks body scroll
-                (`h-dvh overflow-hidden`) for the chat shell, so without
-                this the page is unscrollable wherever content exceeds
-                the viewport (phones). */}
-            <div className="h-dvh overflow-y-auto overscroll-contain bg-background font-sans text-foreground antialiased selection:bg-[#E10600]/15">
+            <div className="flex h-dvh flex-col overflow-y-auto overscroll-contain bg-carbon font-sans text-foreground antialiased selection:bg-[#E10600]/15">
                 <SiteNav />
-                <main className="pb-10">
-                    <HeroShowcase />
-                    <StatsStrip />
-                    <Features />
-                    <div className="pt-12">
-                        <ClosingCta />
-                    </div>
+                <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-5 pb-3">
+                    <HeroHeader />
+                    <ShowcaseCarousel />
                     {/* crawlable summary for search indexers */}
                     <p className="sr-only">
                         Dbrief1 turns Formula 1 live timing, telemetry, tyre stints and FIA

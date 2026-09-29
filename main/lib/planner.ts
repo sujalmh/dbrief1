@@ -363,15 +363,21 @@ function responseToText(response: { content: unknown }): string {
  *   Recency queries ("who won the last race") auto-allow web tools even
  *   when `webSearchEnabled` is false — FastF1 tools must never be used
  *   to guess "latest".
+ * @param opts.jevRecency - semantic recency flag from the Jev
+ *   pre-classifier (lib/jev.ts). OR-ed with the `isRecencyQuery` regex
+ *   so either signal forces the recency-only web path. Fail-open: when
+ *   the classifier is unavailable the regex alone decides, as before.
  */
 export async function decidePlan(
     model: BaseChatModel,
     message: string,
     webSearchEnabled: boolean = false,
     deepResearchMode: boolean = false,
-    history: ChatHistoryItem[] = []
+    history: ChatHistoryItem[] = [],
+    opts: { jevRecency?: boolean } = {}
 ): Promise<PlanDecision> {
-    const webRecencyOnly = !webSearchEnabled && isRecencyQuery(message);
+    const webRecencyOnly =
+        !webSearchEnabled && (isRecencyQuery(message) || opts.jevRecency === true);
     const systemPrompt = buildPlannerPrompt(webSearchEnabled, deepResearchMode, webRecencyOnly, history);
 
     const messages = [
@@ -398,9 +404,10 @@ export async function planQuery(
     message: string,
     webSearchEnabled: boolean = false,
     deepResearchMode: boolean = false,
-    history: ChatHistoryItem[] = []
+    history: ChatHistoryItem[] = [],
+    opts: { jevRecency?: boolean } = {}
 ): Promise<Plan> {
-    return (await decidePlan(model, message, webSearchEnabled, deepResearchMode, history)).plan;
+    return (await decidePlan(model, message, webSearchEnabled, deepResearchMode, history, opts)).plan;
 }
 
 /**

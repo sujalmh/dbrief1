@@ -33,6 +33,15 @@ export const maxDuration = 300;
 
 import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type AiMode } from "@/lib/llm";
 import { decidePlan, createFallbackPlan, type Plan } from "@/lib/planner";
+import {
+    classifyPrompt,
+    isConversationalFastPath,
+    isOffTopicRefusal,
+    isRecencyRoute,
+    JEV_CONVERSATIONAL_REPLY,
+    JEV_OFF_TOPIC_REPLY,
+    type JevClassification,
+} from "@/lib/jev";
 import { executeSteps, aggregateContext } from "@/lib/executor";
 import { UsageAccumulator, getModelId, type UsageTotals } from "@/lib/llm-usage";
 import { f1Tools } from "@/lib/tools/fastf1";
@@ -405,9 +414,25 @@ export async function POST(request: NextRequest) {
                     // one model (managed env model, or the user's BYOK
                     // model). In deep-research mode both are needed, so
                     // init them in parallel (independent getChatModel calls).
+                    //
+                    // 1a. Jev pre-classifier (System One via OpenCode Zen,
+                    // `jev-1.13-free`). A decision-only model: no text
+                    // generation, just typed answers + probabilities in
+                    // ~1s. Kicked off alongside model init so its latency
+                    // overlaps (not adds). FAIL-OPEN: resolves null on any
+                    // error/timeout/misconfig and the pipeline proceeds
+                    // exactly as if it never ran. Skipped in deep-research
+                    // mode (the ResearchManager runs its own intent pass).
+                    // See lib/jev.ts for the request format + thresholds.
                     let plannerModel;
                     // Pre-initialized responder for deep-research mode (parallel init below).
                     let deepResponderModel: Awaited<ReturnType<typeof getResponderModel>> | null = null;
+                    let jevClassification: JevClassification | null = null;
+                    const jevPromise: Promise<JevClassification | null> = deepResearchMode
+                        ? Promise.resolve(null)
+                        : classifyPrompt(message, { sessionId: gatewaySessionId, history });
+                    // Guard: a rejection must never break model init.
+                    jevPromise.catch(() => null);
                     try {
                         if (deepResearchMode) {
                             [plannerModel, deepResponderModel] = await Promise.all([
@@ -419,11 +444,16 @@ export async function POST(request: NextRequest) {
                                 getResponderModel(mode, byok, true, gatewaySessionId),
                             ]);
                         } else {
-                            plannerModel = await getPlannerModel(
-                                mode,
-                                byok,
-                                gatewaySessionId
-                            );
+                            const [resolvedPlanner, resolvedJev] = await Promise.all([
+                                getPlannerModel(
+                                    mode,
+                                    byok,
+                                    gatewaySessionId
+                                ),
+                                jevPromise,
+                            ]);
+                            plannerModel = resolvedPlanner;
+                            jevClassification = resolvedJev;
                         }
                     } catch (error) {
                         // Classify before echoing: raw provider errors can
@@ -481,6 +511,66 @@ export async function POST(request: NextRequest) {
                             if (timer !== undefined) clearTimeout(timer);
                         }
                     };
+
+                    // --- Jev pre-classification result (guardrails + observability) ---
+                    // Emitted for every non-deep turn where the classifier
+                    // answered (null when it failed open). The frontend
+                    // ignores unknown SSE events, so this is trace-only.
+                    // Order below is precedence: off-topic refusal first
+                    // (even chit-chat-shaped), then the conversational
+                    // fast-path (no planner/tools/responder calls), then
+                    // the full pipeline with the recency hint.
+                    if (jevClassification) {
+                        sendEvent("classification", {
+                            intent: jevClassification.intent,
+                            confidence: jevClassification.confidence,
+                            conversationalNoul: jevClassification.conversationalNoul,
+                            recencyNoul: jevClassification.recencyNoul,
+                            meaningfulNoul: jevClassification.meaningfulNoul,
+                            inScopeNoul: jevClassification.inScopeNoul,
+                            latencyMs: jevClassification.latencyMs,
+                            model: jevClassification.model,
+                        });
+                    }
+                    // --- Off-topic guard FIRST (F1-only app) ---
+                    // Non-F1 prompts (homework, recipes, poems, other
+                    // sports, …) are refused here — same shape as the
+                    // refuse-on-empty path below (refusal trace + streamed
+                    // message, no LLM calls). Precedence over the
+                    // conversational fast-path is deliberate:
+                    // chit-chat-shaped off-topic prompts ("what's the
+                    // capital of France?") must refuse, not receive the
+                    // capability greeting. Ambiguity and classifier
+                    // outages fall through to the pipeline (see lib/jev.ts).
+                    if (isOffTopicRefusal(jevClassification)) {
+                        sendEvent("refusal", { reason: "off_topic" });
+                        sendEvent("token", { content: JEV_OFF_TOPIC_REPLY });
+                        sendEvent("done", {});
+                        await flushMetadata();
+                        recordTurn({});
+                        safeClose();
+                        return;
+                    }
+                    if (isConversationalFastPath(jevClassification)) {
+                        sendEvent("plan", {
+                            steps: [],
+                            reasoning: `Jev pre-classifier: conversational (confidence ${jevClassification!.confidence.toFixed(2)}) — no tools needed`,
+                            needsPlan: false,
+                            replyPreview: JEV_CONVERSATIONAL_REPLY.slice(0, 300),
+                        });
+                        sendEvent("token", { content: JEV_CONVERSATIONAL_REPLY });
+                        sendEvent("done", {});
+                        await flushMetadata();
+                        recordTurn({});
+                        safeClose();
+                        return;
+                    }
+                    // Semantic recency hint for the planner (OR-ed with the
+                    // `isRecencyQuery` regex inside decidePlan). Lets Jev
+                    // catch phrasings the regex misses ("who won on Sunday",
+                    // "latest results") without changing behavior when the
+                    // classifier is unavailable.
+                    const jevRecencyHint = isRecencyRoute(jevClassification);
 
                     // Track usage across every LLM call we make in this
                     // request (created once the responder model exists —
@@ -665,12 +755,12 @@ export async function POST(request: NextRequest) {
 
                     // 2. Decide/plan (single LLM call on the cheap planner
                     // model). Session metadata (title + type) is already in
-                    // flight too (see above), so both pre-execution LLM
-                    // calls overlap. NOTE: no separate intent pass here —
-                    // nothing downstream consumes it (decidePlan, the
-                    // executor, and the responder take no intent input),
-                    // so it would be a paid no-op. Deep-research mode
-                    // runs its own intent analysis inside ResearchManager.
+                    // flight too (see above), and the Jev pre-classifier ran
+                    // in parallel with model init (see 1a): conversational
+                    // turns already short-circuited above with no LLM call,
+                    // and its recency hint (`jevRecencyHint`) feeds the
+                    // planner below. Deep-research mode runs its own intent
+                    // analysis inside ResearchManager.
                     let plan: Plan;
                     let directReply: string | undefined;
                     // When the planner LLM fails and we serve a heuristic
@@ -687,7 +777,8 @@ export async function POST(request: NextRequest) {
                                 message,
                                 effectiveWebSearch,
                                 deepResearchMode,
-                                history
+                                history,
+                                { jevRecency: jevRecencyHint }
                             );
                         let decision: Awaited<ReturnType<typeof runDecide>>;
                         try {

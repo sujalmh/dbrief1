@@ -114,6 +114,12 @@ export interface Message {
     content: string
     timestamp: number
     reasoning?: string
+    /**
+     * ChatGPT-style response rating. Set by the thumbs up/down buttons
+     * in the assistant toolbar; null/undefined means "not rated".
+     * Persisted with the message (cloud store) so ratings survive reloads.
+     */
+    feedback?: MessageFeedback
     // For UI states
     isError?: boolean
     steps?: {
@@ -228,6 +234,9 @@ export interface Message {
 
 export type AiModeSetting = "managed" | "byok";
 
+/** Thumbs up/down rating on an assistant message. */
+export type MessageFeedback = 'up' | 'down';
+
 interface Settings {
     /**
      * Which model serves this client:
@@ -339,6 +348,16 @@ interface ChatStore {
     setMessageRefusal: (
         id: string,
         refusal: NonNullable<Message['refusal']>
+    ) => void
+    /**
+     * Rate an assistant message (thumbs up/down). Passing null clears
+     * the rating (toggle-off). Merges into the message without touching
+     * any other field. Callers re-save the message to the cloud store
+     * so the rating persists across sessions.
+     */
+    setMessageFeedback: (
+        id: string,
+        feedback: MessageFeedback | null
     ) => void
     setVisualizationData: (data: unknown) => void
     clearMessages: () => void
@@ -513,6 +532,20 @@ export const useChatStore = create<ChatStore>()(
                             ? { ...msg, refusal }
                             : msg
                     )
+                })),
+            setMessageFeedback: (id, feedback) =>
+                set((state) => ({
+                    messages: state.messages.map((msg) => {
+                        if (msg.id !== id) return msg;
+                        if (feedback === null) {
+                            // Toggle-off: drop the key so serialized
+                            // messages stay clean (`feedback` optional).
+                            const next = { ...msg };
+                            delete next.feedback;
+                            return next;
+                        }
+                        return { ...msg, feedback };
+                    }),
                 })),
             setVisualizationData: (data) => set({ visualizationData: data }),
             clearMessages: () => set({ messages: [], visualizationData: null, activeMessageId: null }),

@@ -2,7 +2,7 @@
 
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { BrainCircuit, AlertTriangle, Copy, Check, RotateCcw, Trash2, FileText, ShieldCheck, AlertOctagon } from "lucide-react"
+import { BrainCircuit, AlertTriangle, Copy, Check, RotateCcw, Trash2, FileText, ShieldCheck, AlertOctagon, ThumbsUp, ThumbsDown } from "lucide-react"
 import { Message, useChatStore } from "@/lib/store"
 import { cn, citationHref } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -188,6 +188,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
     const [isCopied, setIsCopied] = useState(false)
 
     const deleteMessage = useChatStore(state => state.deleteMessage)
+    const setMessageFeedback = useChatStore(state => state.setMessageFeedback)
     const { handleSend, isLoading } = useChatHandler()
 
     // Delete locally AND in the cloud store (D1 + R2 blobs) so a
@@ -213,6 +214,24 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
         setIsCopied(true)
         setTimeout(() => setIsCopied(false), 2000)
     }, [message.content])
+
+    // Thumbs up/down rating (assistant only, once content exists).
+    // Clicking the active thumb clears the rating (toggle). The rating
+    // lives on the message so it persists to the cloud store on the next
+    // save — re-save immediately so a reload keeps it.
+    const handleFeedback = useCallback((value: 'up' | 'down') => {
+        const next = message.feedback === value ? null : value
+        setMessageFeedback(message.id, next)
+        const sessionId = useChatStore.getState().currentSessionId
+        if (sessionId && !sessionId.startsWith("local_")) {
+            const updated = useChatStore.getState().messages.find((m) => m.id === message.id)
+            if (updated) {
+                import("@/lib/cf/client").then(({ saveMessage }) => {
+                    saveMessage(sessionId, updated)
+                })
+            }
+        }
+    }, [message.id, message.feedback, setMessageFeedback])
 
     const handleRetry = useCallback(async () => {
         // We get the current messages from the store to avoid subscribing to them
@@ -328,6 +347,54 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                         <p>Regenerate Response</p>
                     </TooltipContent>
                 </Tooltip>
+            )}
+
+            {!isUser && message.content && !isError && (
+                <>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="minimal"
+                                size="icon"
+                                className={cn(
+                                    "h-7 w-7 rounded-sm hover:bg-muted/50 transition-colors",
+                                    message.feedback === 'up'
+                                        ? "bg-[var(--f1-red)]/10 text-[var(--f1-red)] hover:text-[var(--f1-red)]"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                                onClick={() => handleFeedback('up')}
+                            >
+                                <ThumbsUp className="h-3.5 w-3.5" fill={message.feedback === 'up' ? "currentColor" : "none"} />
+                                <span className="sr-only">Good response</span>
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="text-[10px] px-2 py-1">
+                            <p>Good response</p>
+                        </TooltipContent>
+                    </Tooltip>
+
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="minimal"
+                                size="icon"
+                                className={cn(
+                                    "h-7 w-7 rounded-sm hover:bg-muted/50 transition-colors",
+                                    message.feedback === 'down'
+                                        ? "bg-[var(--f1-red)]/10 text-[var(--f1-red)] hover:text-[var(--f1-red)]"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                                onClick={() => handleFeedback('down')}
+                            >
+                                <ThumbsDown className="h-3.5 w-3.5" fill={message.feedback === 'down' ? "currentColor" : "none"} />
+                                <span className="sr-only">Bad response</span>
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="text-[10px] px-2 py-1">
+                            <p>Bad response</p>
+                        </TooltipContent>
+                    </Tooltip>
+                </>
             )}
 
             <Tooltip>
@@ -570,6 +637,7 @@ export const MessageBubble = memo(MessageBubbleComponent, (prevProps, nextProps)
         prev.role === next.role &&
         prev.isError === next.isError &&
         prev.reasoning === next.reasoning &&
+        prev.feedback === next.feedback &&
         prev.visualizationData === next.visualizationData &&
         prev.researchType === next.researchType &&
         prev.confidence === next.confidence &&

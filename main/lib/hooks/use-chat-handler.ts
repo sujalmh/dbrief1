@@ -262,6 +262,7 @@ export function useChatHandler() {
                         ...(storeMsg?.chartSpecs ? { chartSpecs: storeMsg.chartSpecs } : {}),
                         ...(storeMsg?.planTrace ? { planTrace: storeMsg.planTrace } : {}),
                         ...(storeMsg?.refusal ? { refusal: storeMsg.refusal } : {}),
+                        ...(storeMsg?.feedback ? { feedback: storeMsg.feedback } : {}),
                     };
                     const sid = effectiveSessionId;
                     const s = useChatStore.getState();

@@ -367,6 +367,28 @@
   }
 }
 
+/* Landing demo auto-advance: the line fills over the demo's total
+   duration in one linear pass. Hovering the demo (data-paused) freezes
+   the bar together with the demo's own timeline. */
+@keyframes landing-progress {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+.landing-progress {
+  animation-name: landing-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+[data-paused="true"] .landing-progress {
+  animation-play-state: paused;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

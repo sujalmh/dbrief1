@@ -1,71 +1,67 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
-import { ArrowRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
 /**
- * Compact hero in the chat's own voice: mono status micro-label (like the
- * pipeline status line), italic black uppercase headline (like assistant
- * markdown H1), one subline, one red CTA. Sized so the hero + carousel
- * fit a single viewport — the landing needs no scrolling.
+ * Quiet intro above the demo conversation. Deliberately restrained: the
+ * chat below is the pitch, so the hero is one headline, one subline and
+ * one sign-in action — no badges, glows or oversized display type.
  */
-export function HeroHeader() {
+export function LandingHero() {
     const reduce = useReducedMotion();
     const fadeUp = (delay: number) =>
         reduce
             ? {}
             : {
-                  initial: { opacity: 0, y: 22 },
+                  initial: { opacity: 0, y: 14 },
                   animate: { opacity: 1, y: 0 },
-                  transition: { duration: 0.75, delay, ease: EASE },
+                  transition: { duration: 0.6, delay, ease: EASE },
               };
+
     return (
-        <section className="relative px-1 pb-2 pt-4 text-center sm:pt-9">
+        <section className="px-1 pb-1 pt-4 text-center sm:pt-8">
             <motion.p
                 {...fadeUp(0)}
-                className="flex items-center justify-center gap-2 font-mono text-[10px] font-medium uppercase tracking-[0.24em] text-muted-foreground"
+                className="font-mono text-[10px] font-medium uppercase tracking-[0.24em] text-muted-foreground"
             >
-                <span className="relative flex h-1.5 w-1.5">
-                    <span className="absolute h-full w-full animate-ping rounded-full bg-[#E10600] opacity-70" />
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#E10600]" />
-                </span>
-                Race Engineer // Online
+                Race engineering · live data
             </motion.p>
             <motion.h1
-                {...fadeUp(0.08)}
-                className="mx-auto mt-3 max-w-3xl text-balance text-[32px] font-black uppercase italic leading-[0.98] tracking-tight sm:text-5xl md:text-[56px]"
+                {...fadeUp(0.06)}
+                className="mx-auto mt-2.5 max-w-xl text-balance text-[25px] font-bold leading-tight tracking-tight sm:text-[30px]"
             >
-                Understand the race
-                <br />
-                <span className="text-muted-foreground">beyond the numbers.</span>
+                Understand the race beyond the numbers.
             </motion.h1>
-            {/* skewed red underline — pit-wall accent */}
-            <motion.div
-                {...fadeUp(0.14)}
-                aria-hidden="true"
-                className="mx-auto mt-2 h-1 w-24 -skew-x-12 rounded-full bg-[#E10600] sm:mt-3"
-            />
             <motion.p
-                {...fadeUp(0.16)}
-                className="mx-auto mt-2 max-w-xl text-pretty text-[13.5px] leading-relaxed text-muted-foreground sm:mt-3 sm:text-[15px]"
+                {...fadeUp(0.12)}
+                className="mx-auto mt-2.5 max-w-md text-pretty text-[13.5px] leading-relaxed text-muted-foreground sm:text-[15px]"
             >
-                Live timing, telemetry and strategy answers — with the data
-                on screen, not buried in tables.
+                Live timing, telemetry, tyre strategy and regulations —
+                answered in chat, with the data on screen.
             </motion.p>
-            <motion.div {...fadeUp(0.24)} className="mt-3 flex flex-wrap items-center justify-center gap-3 sm:mt-4">
-                <a
-                    href="/api/auth/google"
-                    className="group inline-flex h-11 items-center gap-2 rounded-full bg-[#E10600] px-6 text-sm font-semibold text-white shadow-[0_16px_30px_-12px_rgba(225,6,0,0.6)] transition-all hover:scale-[1.03] hover:bg-[#c90500] active:scale-[0.97]"
-                >
-                    Open DBRIEF1
-                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                </a>
-                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                    Free · Sign in with Google
-                </span>
+            <motion.div {...fadeUp(0.18)} className="mt-4 flex justify-center">
+                <Button asChild className="h-10 gap-2 px-5 text-sm font-semibold">
+                    <a href="/api/auth/google">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- 20px remote favicon; next/image buys nothing here */}
+                        <img
+                            src="https://www.google.com/favicon.ico"
+                            alt=""
+                            className="h-4 w-4"
+                        />
+                        Sign in with Google
+                    </a>
+                </Button>
             </motion.div>
+            {/* crawlable summary for search indexers */}
+            <p className="sr-only">
+                Dbrief1 turns Formula 1 live timing, telemetry, tyre stints and FIA
+                regulations into clear race strategy, pace and setup answers with
+                interactive charts. Ask about Grand Prix strategy, qualifying pace,
+                tyre degradation and technical regulations.
+            </p>
         </section>
     );
 }

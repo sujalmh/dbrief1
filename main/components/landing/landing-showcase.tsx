@@ -75,7 +75,7 @@ export const DEMO_SLIDES: DemoSlide[] = [
     {
         id: "insights",
         mode: "Insights",
-        question: "Who is leading the drivers' championship?",
+        question: "Who is leading the drivers’ championship?",
         answer: "Verstappen, on **302 points** — 66 ahead of Norris, with 8 wins from 14 rounds. Norris needs consecutive wins to reopen it.",
         table: "| Driver | Points | Gap |\n| --- | --- | --- |\n| VER | 302 | — |\n| NOR | 236 | −66 |\n| LEC | 199 | −103 |",
         steps: [
@@ -232,12 +232,13 @@ function DemoExchange({
             onTouchStart={() => setPausedState(true)}
             onTouchEnd={() => setPausedState(false)}
         >
-            {/* Auto-advance progress — same weight as the planning bars in
-                chat. Unlabelled: it reads as a timeline, not a badge. */}
+            {/* Auto-advance progress — green reads as live/running (timing
+                semantics), leaving red for the brand CTA only. Unlabelled:
+                it reads as a timeline, not a badge. */}
             {!reduce && (
                 <div className="h-px w-full overflow-hidden bg-border/50" aria-hidden="true">
                     <div
-                        className="landing-progress h-full bg-[var(--f1-red)]"
+                        className="landing-progress h-full bg-[var(--f1-green)]"
                         style={{ animationDuration: `${total}ms` }}
                     />
                 </div>

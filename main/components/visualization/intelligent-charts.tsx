@@ -41,7 +41,7 @@ import {
     ZAxis,
     ComposedChart,
 } from "recharts";
-import { F1_PALETTE, CHART_TOKENS, colorForDriver } from "./chart-palette";
+import { F1_PALETTE, CHART_TOKENS, colorForDriver, colorForSeries, STEERING_COLORS } from "./chart-palette";
 
 // =============================================================================
 // Helpers
@@ -281,8 +281,8 @@ export function LineOrAreaChart({ spec }: { spec: LineSpec }) {
                                 type="monotone"
                                 dataKey={s}
                                 name={s}
-                                stroke={F1_PALETTE[i % F1_PALETTE.length]}
-                                fill={F1_PALETTE[i % F1_PALETTE.length]}
+                                stroke={colorForSeries(s, i)}
+                                fill={colorForSeries(s, i)}
                                 fillOpacity={0.25}
                                 strokeWidth={2}
                             />
@@ -312,7 +312,7 @@ export function LineOrAreaChart({ spec }: { spec: LineSpec }) {
                                 type="monotone"
                                 dataKey={s}
                                 name={s}
-                                stroke={F1_PALETTE[i % F1_PALETTE.length]}
+                                stroke={colorForSeries(s, i)}
                                 strokeWidth={2}
                                 dot={spec.data.length < 30 ? { r: 3 } : false}
                                 connectNulls
@@ -523,8 +523,8 @@ export function DumbbellChart({ spec }: { spec: DumbbellSpec }) {
                     <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: 10, fontSize: 11 }} />
                     {/* Connecting bar */}
                     <Bar dataKey="left" fill="transparent" />
-                    <Scatter dataKey="left" fill={F1_PALETTE[0]} name={spec.leftLabel} />
-                    <Scatter dataKey="right" fill={F1_PALETTE[2]} name={spec.rightLabel} />
+                    <Scatter dataKey="left" fill={STEERING_COLORS.yellow} name={spec.leftLabel} />
+                    <Scatter dataKey="right" fill={STEERING_COLORS.blue} name={spec.rightLabel} />
                 </ComposedChart>
             </ResponsiveContainer>
         </div>

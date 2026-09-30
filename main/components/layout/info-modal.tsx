@@ -8,6 +8,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
+import { F1_REQUIRED_NOTICE, F1_EXTENDED_NOTICE } from "@/components/legal/f1-disclaimer"
 import { cn } from "@/lib/utils"
 
 type InfoSection = "about" | "privacy" | "terms"
@@ -40,6 +41,9 @@ function AboutBody() {
                 model, no setup) and BYOK (your own OpenAI-compatible
                 endpoint and key, stored in a secure cookie and never in
                 local storage).
+            </p>
+            <p className="text-xs">
+                {F1_REQUIRED_NOTICE} {F1_EXTENDED_NOTICE}
             </p>
         </div>
     )

@@ -100,13 +100,16 @@ export function Sidebar() {
         }
     };
 
-    // Helper for type colors
+    // Helper for type colors — steering-wheel classifier hues (see
+    // lib/mode-colors.ts): Telemetry yellow, Comparison blue, Strategy
+    // cyan, Insights orange. Yellow text is unreadable on light
+    // backgrounds, so it uses a darker amber in light mode.
     const getTypeColor = (type?: string) => {
         switch (type) {
-            case "telemetry": return "bg-blue-500/10 text-blue-400 border-blue-500/20";
-            case "comparison": return "bg-purple-500/10 text-purple-400 border-purple-500/20";
-            case "strategy": return "bg-green-500/10 text-green-400 border-green-500/20";
-            case "insights": return "bg-orange-500/10 text-orange-400 border-orange-500/20";
+            case "telemetry": return "bg-yellow-500/10 text-yellow-700 border-yellow-500/30 dark:bg-[#FFEA00]/10 dark:text-[#FFEA00] dark:border-[#FFEA00]/30";
+            case "comparison": return "bg-[#0090FF]/10 text-[#0066CC] border-[#0090FF]/30 dark:bg-[#0090FF]/10 dark:text-[#0090FF] dark:border-[#0090FF]/30";
+            case "strategy": return "bg-[#00D2BE]/10 text-[#00796B] border-[#00D2BE]/30 dark:bg-[#00D2BE]/10 dark:text-[#00D2BE] dark:border-[#00D2BE]/30";
+            case "insights": return "bg-[#FF8700]/10 text-[#CC5500] border-[#FF8700]/30 dark:bg-[#FF8700]/10 dark:text-[#FF8700] dark:border-[#FF8700]/30";
             default: return "bg-gray-500/10 text-gray-400 border-gray-500/20";
         }
     };

@@ -1,5 +1,7 @@
 "use client";
 
+import { F1Disclaimer } from "@/components/legal/f1-disclaimer";
+
 /**
  * Sign-in gate.
  * ============
@@ -73,6 +75,7 @@ export function SignInPage() {
                         <span className="text-zinc-700">•</span>
                         <a href="/terms" className="hover:text-zinc-300 transition-colors">TERMS</a>
                     </div>
+                    <F1Disclaimer className="text-center text-zinc-600" />
                 </div>
             </div>
         </div>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import type { ModeLabel } from "@/components/layout/header-shell";
+import { MODE_COLORS } from "@/lib/mode-colors";
 import type { Message } from "@/lib/store";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -33,12 +34,7 @@ interface DemoSlide {
 }
 
 /** Classification colors — one per capability, reused by the slide badge. */
-const MODE_DOT: Record<ModeLabel, string> = {
-    Telemetry: "var(--f1-green)",
-    Comparison: "#3b82f6",
-    Strategy: "var(--f1-yellow)",
-    Insights: "var(--f1-purple)",
-};
+const MODE_DOT: Record<ModeLabel, string> = { ...MODE_COLORS };
 
 /**
  * The four capabilities, in the same order and with the same names the
@@ -243,14 +239,15 @@ function DemoExchange({
             onTouchStart={() => setPausedState(true)}
             onTouchEnd={() => setPausedState(false)}
         >
-            {/* Auto-advance progress — green reads as live/running (timing
-                semantics), leaving red for the brand CTA only. Unlabelled:
-                it reads as a timeline, not a badge. */}
+            {/* Auto-advance progress — tinted with the active capability
+                color (steering-wheel hues) so the classifier reads as one
+                surface with the badge below. Unlabelled: it reads as a
+                timeline, not a badge. */}
             {!reduce && (
                 <div className="h-px w-full overflow-hidden bg-border/50" aria-hidden="true">
                     <div
-                        className="landing-progress h-full bg-[var(--f1-green)]"
-                        style={{ animationDuration: `${total}ms` }}
+                        className="landing-progress h-full"
+                        style={{ animationDuration: `${total}ms`, background: MODE_DOT[slide.mode] }}
                     />
                 </div>
             )}
@@ -316,6 +313,7 @@ function DemoChartPreview({ title, caption }: { title: string; caption: string }
     const H = 96;
     const PAD = 10;
     const maxY = 4.5;
+    const ACCENT = MODE_COLORS.Comparison;
     const x = (i: number) => PAD + (i / (points.length - 1)) * (W - PAD * 2);
     const y = (v: number) => PAD + (1 - v / maxY) * (H - PAD * 2);
     const line = points.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
@@ -327,7 +325,10 @@ function DemoChartPreview({ title, caption }: { title: string; caption: string }
                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     {title}
                 </span>
-                <span className="rounded-full bg-[#3b82f6]/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[#3b82f6]">
+                <span
+                    className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+                    style={{ backgroundColor: `${ACCENT}26`, color: ACCENT }}
+                >
                     Visualization
                 </span>
             </div>
@@ -349,19 +350,19 @@ function DemoChartPreview({ title, caption }: { title: string; caption: string }
                         strokeDasharray="3 4"
                     />
                 ))}
-                <polygon points={area} fill="#3b82f6" fillOpacity="0.12" />
+                <polygon points={area} fill={ACCENT} fillOpacity="0.12" />
                 <polyline
                     points={line}
                     fill="none"
-                    stroke="#3b82f6"
+                    stroke={ACCENT}
                     strokeWidth="2.5"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                 />
                 {points.map(([i, v]) => (
-                    <circle key={i} cx={x(i)} cy={y(v)} r="2.5" fill="#3b82f6" />
+                    <circle key={i} cx={x(i)} cy={y(v)} r="2.5" fill={ACCENT} />
                 ))}
-                <circle cx={x(9)} cy={y(0.5)} r="4" fill="none" stroke="#3b82f6" strokeWidth="1.5" />
+                <circle cx={x(9)} cy={y(0.5)} r="4" fill="none" stroke={ACCENT} strokeWidth="1.5" />
             </svg>
             <div className="flex items-center justify-between px-3 pb-2">
                 <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground">

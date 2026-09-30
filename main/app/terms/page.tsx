@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { F1_REQUIRED_NOTICE, F1_EXTENDED_NOTICE } from "@/components/legal/f1-disclaimer";
 
 export const metadata: Metadata = {
     title: "Terms of Service — Dbrief1",
@@ -80,6 +81,11 @@ export default function TermsPage() {
                         limits may change at any time as the service evolves toward a paid
                         tier.
                     </p>
+                </Section>
+
+                <Section title="Formula 1 trademarks">
+                    <p>{F1_REQUIRED_NOTICE}</p>
+                    <p>{F1_EXTENDED_NOTICE}</p>
                 </Section>
 
                 <Section title="Changes">

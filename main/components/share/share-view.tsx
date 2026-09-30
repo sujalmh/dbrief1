@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { MessageBubble } from "@/components/chat/message-bubble";
+import { F1Disclaimer } from "@/components/legal/f1-disclaimer";
 import { loadSharedSnapshot, type SharedSnapshot } from "@/lib/cf/client";
 import type { Message } from "@/lib/store";
 
@@ -93,6 +94,7 @@ export function ShareView({ token }: { token: string }) {
                                     Shared from Dbrief1 · {snapshot.messageCount} message
                                     {snapshot.messageCount === 1 ? "" : "s"} · read-only
                                 </p>
+                                <F1Disclaimer className="text-center" />
                             </div>
                         </div>
                     )}

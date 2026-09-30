@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { MODE_COLORS, type ModeLabel as ClassifierMode } from "@/lib/mode-colors";
 
 /**
  * Shared header chrome.
@@ -15,7 +16,7 @@ import { cn } from "@/lib/utils";
 
 /** Modes shown in the header selector — also the landing demo's capabilities. */
 export const MODE_LABELS = ["Telemetry", "Comparison", "Strategy", "Insights"] as const;
-export type ModeLabel = (typeof MODE_LABELS)[number];
+export type ModeLabel = ClassifierMode;
 
 /** Sticky carbon-weave bar with the app's max-width row. */
 export function AppHeaderShell({
@@ -124,22 +125,33 @@ export function ModePill({
                 className
             )}
         >
-            {MODE_LABELS.map((m) => (
-                <button
-                    key={m}
-                    type="button"
-                    onClick={onSelect ? () => onSelect(m) : undefined}
-                    aria-pressed={onSelect ? active === m : undefined}
-                    className={cn(
-                        "px-4 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all duration-500",
-                        active === m
-                            ? "bg-[var(--f1-red)]/20 text-[var(--f1-red)] shadow-[0_0_10px_rgba(225,6,0,0.2)]"
-                            : "text-zinc-500 hover:text-zinc-300"
-                    )}
-                >
-                    {m}
-                </button>
-            ))}
+            {MODE_LABELS.map((m) => {
+                const color = MODE_COLORS[m];
+                const isActive = active === m;
+                return (
+                    <button
+                        key={m}
+                        type="button"
+                        onClick={onSelect ? () => onSelect(m) : undefined}
+                        aria-pressed={onSelect ? isActive : undefined}
+                        style={
+                            isActive
+                                ? {
+                                      backgroundColor: `${color}26`,
+                                      color,
+                                      boxShadow: `0 0 10px ${color}33`,
+                                  }
+                                : undefined
+                        }
+                        className={cn(
+                            "px-4 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all duration-500",
+                            !isActive && "text-zinc-500 hover:text-zinc-300"
+                        )}
+                    >
+                        {m}
+                    </button>
+                );
+            })}
         </div>
     );
 }

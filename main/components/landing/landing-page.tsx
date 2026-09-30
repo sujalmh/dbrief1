@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { MotionConfig } from "framer-motion";
 import type { ModeLabel } from "@/components/layout/header-shell";
+import { F1Disclaimer } from "@/components/legal/f1-disclaimer";
 import { LandingHeader } from "./landing-chrome";
 import { LandingComposer } from "./landing-composer";
 import { LandingHero } from "./landing-hero";
@@ -44,6 +45,7 @@ export function LandingPage() {
                     </div>
                     <div className="shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2">
                         <LandingComposer />
+                        <F1Disclaimer className="mt-1.5 text-center" />
                     </div>
                 </main>
             </div>

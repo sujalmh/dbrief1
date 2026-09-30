@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { ArrowRight } from "lucide-react";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import type { ModeLabel } from "@/components/layout/header-shell";
 import type { Message } from "@/lib/store";
@@ -95,12 +96,14 @@ export const DEMO_SLIDES: DemoSlide[] = [
 ];
 
 /**
- * Auto-playing demo exchange.
- * ==========================
+ * Auto-playing demo exchange in a fixed-height stage.
+ * ================================================
  * Renders exactly what the signed-in chat renders — a user bubble and the
- * race engineer's reply — then advances to the next capability. Hover or
- * touch pauses the timeline (and the progress line); the header's mode
- * selector jumps straight to a capability.
+ * race engineer's reply — then advances to the next capability. The stage
+ * height never changes between slides (tallest slide sets it; verified by
+ * screenshot), so autoplay causes zero layout shift. Hover or touch pauses
+ * the timeline (and the progress line); the header's mode selector jumps
+ * straight to a capability. Every slide ends in the same sign-in action.
  */
 export function LandingShowcase({
     index,
@@ -113,15 +116,27 @@ export function LandingShowcase({
     const slide = DEMO_SLIDES[index] ?? DEMO_SLIDES[0]!;
 
     return (
-        <motion.section
-            key={slide.id}
-            aria-label="Example Dbrief1 conversation"
-            initial={reduce ? false : { opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35, ease: EASE }}
-        >
-            <DemoExchange slide={slide} onAdvance={onAdvance} />
-        </motion.section>
+        <div className="flex h-[660px] flex-col overflow-hidden sm:h-[600px]">
+            <motion.section
+                key={slide.id}
+                aria-label="Example Dbrief1 conversation"
+                initial={reduce ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.35, ease: EASE }}
+                className="min-h-0 flex-1"
+            >
+                <DemoExchange slide={slide} onAdvance={onAdvance} />
+            </motion.section>
+            <div className="flex justify-center pb-1 pt-3">
+                <a
+                    href="/api/auth/google"
+                    className="group inline-flex h-11 items-center gap-2 rounded-full bg-[#E10600] px-6 text-sm font-semibold text-white shadow-[0_16px_30px_-12px_rgba(225,6,0,0.6)] transition-all hover:scale-[1.03] hover:bg-[#c90500] active:scale-[0.97]"
+                >
+                    Sign in to use Dbrief1
+                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                </a>
+            </div>
+        </div>
     );
 }
 
@@ -225,7 +240,7 @@ function DemoExchange({
 
     return (
         <div
-            className="relative flex min-h-[280px] w-full flex-col gap-4 sm:min-h-[320px]"
+            className="relative flex h-full w-full flex-col gap-4 overflow-hidden"
             data-paused={paused}
             onMouseEnter={() => setPausedState(true)}
             onMouseLeave={() => setPausedState(false)}

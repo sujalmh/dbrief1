@@ -6,21 +6,18 @@ import type { ModeLabel } from "@/components/layout/header-shell";
 import { LandingHeader } from "./landing-chrome";
 import { LandingComposer } from "./landing-composer";
 import { LandingHero } from "./landing-hero";
-import { DEMO_SLIDES } from "./landing-showcase";
-import { DevicesSection } from "./landing-devices";
-import { InfoSections, LandingFooter } from "./landing-info";
+import { DEMO_SLIDES, LandingShowcase } from "./landing-showcase";
 
 /**
  * Public landing page.
  * ====================
  * Shaped exactly like the signed-in chat shell: the app header on top, a
- * scrolling message column rendered with the real MessageBubble, and the
- * frosted composer floating above the bottom edge. The only difference is
- * the content — a self-playing demo conversation instead of your session —
- * and the composer, which is a link into Google sign-in.
+ * compact intro, a fixed-height self-playing demo exchange rendered with
+ * the real MessageBubble, and the frosted composer floating above the
+ * bottom edge. The composer and the per-slide sign-in button both link
+ * into Google sign-in.
  *
- * Shown to signed-out visitors; signed-in users get the chat shell. The
- * whole pitch fits one viewport on desktop and most phones.
+ * Shown to signed-out visitors; signed-in users get the chat shell.
  */
 export function LandingPage() {
     const [index, setIndex] = useState(0);
@@ -45,13 +42,13 @@ export function LandingPage() {
                         <div className="w-full min-w-0 max-w-full p-3 sm:p-4">
                             <div className="mx-auto w-full min-w-0 max-w-3xl">
                                 <LandingHero />
+                                <div className="mt-4">
+                                    <LandingShowcase index={index} onAdvance={advance} />
+                                </div>
                             </div>
+                            {/* Clearance for the floating composer. */}
+                            <div className="mx-auto h-40 max-w-3xl" aria-hidden="true" />
                         </div>
-                        <DevicesSection index={index} onAdvance={advance} />
-                        <InfoSections />
-                        <LandingFooter />
-                        {/* Clearance for the floating composer. */}
-                        <div className="h-40" aria-hidden="true" />
                     </div>
 
                     {/* Floating composer layer — same placement as the chat shell. */}

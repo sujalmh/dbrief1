@@ -11,13 +11,11 @@ import { DEMO_SLIDES, LandingShowcase } from "./landing-showcase";
 /**
  * Public landing page.
  * ====================
- * Shaped exactly like the signed-in chat shell: the app header on top, a
- * compact intro, a fixed-height self-playing demo exchange rendered with
- * the real MessageBubble, and the frosted composer floating above the
- * bottom edge. The composer and the per-slide sign-in button both link
- * into Google sign-in.
- *
- * Shown to signed-out visitors; signed-in users get the chat shell.
+ * Strictly one viewport — no page scroll, no overflow. A flex column fills
+ * h-dvh exactly: app header, compact intro, the self-playing demo exchange
+ * (fixed stage, real MessageBubble), per-slide sign-in, and the composer
+ * in normal flow at the bottom. Shown to signed-out visitors; signed-in
+ * users get the chat shell.
  */
 export function LandingPage() {
     const [index, setIndex] = useState(0);
@@ -37,25 +35,15 @@ export function LandingPage() {
             <div className="flex h-dvh w-full flex-col overflow-hidden bg-background font-sans text-foreground antialiased selection:bg-[#E10600]/15">
                 <LandingHeader activeMode={activeMode} onSelectMode={selectMode} />
 
-                <main className="relative flex h-full w-full overflow-hidden bg-carbon">
-                    <div className="relative z-10 w-full flex-1 overflow-y-auto overscroll-contain">
-                        <div className="w-full min-w-0 max-w-full p-3 sm:p-4">
-                            <div className="mx-auto w-full min-w-0 max-w-3xl">
-                                <LandingHero />
-                                <div className="mt-4">
-                                    <LandingShowcase index={index} onAdvance={advance} />
-                                </div>
-                            </div>
-                            {/* Clearance for the floating composer. */}
-                            <div className="mx-auto h-40 max-w-3xl" aria-hidden="true" />
-                        </div>
+                <main className="relative z-10 mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-hidden bg-carbon px-3 sm:px-4">
+                    <div className="shrink-0">
+                        <LandingHero />
                     </div>
-
-                    {/* Floating composer layer — same placement as the chat shell. */}
-                    <div className="pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom))] left-0 z-20 w-full">
-                        <div className="pointer-events-auto mx-auto max-w-3xl px-4">
-                            <LandingComposer />
-                        </div>
+                    <div className="min-h-0 flex-1">
+                        <LandingShowcase index={index} onAdvance={advance} />
+                    </div>
+                    <div className="shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2">
+                        <LandingComposer />
                     </div>
                 </main>
             </div>

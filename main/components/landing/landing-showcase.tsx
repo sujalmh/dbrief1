@@ -116,7 +116,7 @@ export function LandingShowcase({
     const slide = DEMO_SLIDES[index] ?? DEMO_SLIDES[0]!;
 
     return (
-        <div className="flex h-[660px] flex-col overflow-hidden sm:h-[600px]">
+        <div className="flex h-full flex-col overflow-hidden">
             <motion.section
                 key={slide.id}
                 aria-label="Example Dbrief1 conversation"
@@ -127,10 +127,10 @@ export function LandingShowcase({
             >
                 <DemoExchange slide={slide} onAdvance={onAdvance} />
             </motion.section>
-            <div className="flex justify-center pb-1 pt-3">
+            <div className="flex shrink-0 justify-center pb-1 pt-2">
                 <a
                     href="/api/auth/google"
-                    className="group inline-flex h-11 items-center gap-2 rounded-full bg-[#E10600] px-6 text-sm font-semibold text-white shadow-[0_16px_30px_-12px_rgba(225,6,0,0.6)] transition-all hover:scale-[1.03] hover:bg-[#c90500] active:scale-[0.97]"
+                    className="group inline-flex h-10 items-center gap-2 rounded-full bg-[#E10600] px-5 text-sm font-semibold text-white shadow-[0_16px_30px_-12px_rgba(225,6,0,0.6)] transition-all hover:scale-[1.03] hover:bg-[#c90500] active:scale-[0.97]"
                 >
                     Sign in to use Dbrief1
                     <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />

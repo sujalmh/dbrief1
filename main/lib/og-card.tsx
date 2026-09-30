@@ -105,8 +105,8 @@ export function OgCard() {
           maxWidth: "960px",
         }}
       >
-        Live timing, telemetry, tyre stints &amp; FIA regulations — clear F1
-        strategy answers with interactive charts.
+        Your pit-wall engineer for every Grand Prix — telemetry, tyre
+        strategy, timing &amp; regulations, answered with the data on screen.
       </div>
       <div
         style={{

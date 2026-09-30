@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3, Brain, Image as ImageIcon, Send, Server } from "lucide-react";
+import { BarChart3, Brain, Send, Server } from "lucide-react";
 
 /**
  * Sign-in gate shaped like the chat composer.
@@ -21,12 +21,8 @@ export function LandingComposer() {
                 <div className="relative rounded-[calc(2rem-1px)] bg-white/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] backdrop-blur-xl transition-all duration-300 group-hover:bg-white/80 dark:bg-black/40 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] dark:group-hover:bg-black/50">
                     {/* Input row */}
                     <div className="flex gap-2 p-3 pb-0">
-                        <span
-                            aria-hidden="true"
-                            className="btn-wheel btn-wheel-cyan mt-1 h-8 w-8 shrink-0"
-                        >
-                            <ImageIcon className="h-5 w-5" />
-                        </span>
+                        {/* Parked: image upload affordance (feature not
+                            required for now) — mirrors chat-input. */}
                         <span className="min-h-[50px] w-full p-1 pt-2.5 text-base font-medium text-muted-foreground">
                             Sign in to ask anything…
                         </span>

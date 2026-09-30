@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Send, Image as ImageIcon } from "lucide-react"
+import { Send } from "lucide-react"
 import { useChatStore } from "@/lib/store"
 import { useChatHandler } from "@/lib/hooks/use-chat-handler"
 import { Button } from "@/components/ui/button"
@@ -64,21 +64,8 @@ export function ChatInput() {
 
             {/* Top Section: Input Area */}
             <div className="flex gap-2 p-3 pb-0">
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="btn-wheel btn-wheel-cyan mt-1 h-8 w-8 shrink-0 rounded-full"
-                        >
-                            <ImageIcon className="h-5 w-5" />
-                            <span className="sr-only">Upload Image</span>
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top">
-                        <p>Upload Image</p>
-                    </TooltipContent>
-                </Tooltip>
+                {/* Parked: image upload button (feature not required for now).
+                    Restore the upload Button + handler here when needed. */}
 
                 <Textarea
                     ref={textareaRef}

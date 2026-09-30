@@ -32,7 +32,7 @@ export function LandingHero() {
             </motion.h1>
             <motion.p
                 {...fadeUp(0.12)}
-                className="mx-auto mt-1.5 max-w-md text-pretty text-[12.5px] leading-snug text-muted-foreground sm:text-[13.5px]"
+                className="mx-auto mt-1.5 hidden max-w-md text-pretty text-[12.5px] leading-snug text-muted-foreground min-[480px]:block sm:text-[13.5px]"
             >
                 Live timing, telemetry, tyre strategy and regulations —
                 answered in chat, with the data on screen.

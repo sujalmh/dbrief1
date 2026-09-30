@@ -28,7 +28,7 @@ export function LandingComposer() {
                             <ImageIcon className="h-5 w-5" />
                         </span>
                         <span className="min-h-[50px] w-full p-1 pt-2.5 text-base font-medium text-muted-foreground">
-                            Ask about race strategy…
+                            Sign in to ask anything…
                         </span>
                         <span
                             aria-hidden="true"

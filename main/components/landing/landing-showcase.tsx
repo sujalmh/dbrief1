@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { ArrowRight } from "lucide-react";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import type { ModeLabel } from "@/components/layout/header-shell";
 import type { Message } from "@/lib/store";
@@ -27,8 +26,6 @@ interface DemoSlide {
     /** Rendered after the prose lands — mirrors a late visualization event. */
     table?: string;
     steps: { description: string; tool: string }[];
-    citations?: NonNullable<Message["citations"]>;
-    durationMs: number;
 }
 
 /**
@@ -48,7 +45,6 @@ export const DEMO_SLIDES: DemoSlide[] = [
             { description: "Compare speed traces through Turn 13", tool: "get_telemetry_summary" },
             { description: "Quantify the lap-time delta", tool: "get_laps" },
         ],
-        durationMs: 2400,
     },
     {
         id: "comparison",
@@ -59,7 +55,6 @@ export const DEMO_SLIDES: DemoSlide[] = [
             { description: "Load the last 10 laps for RUS and HAM", tool: "get_laps" },
             { description: "Compare pace and gap evolution", tool: "get_fastest_lap" },
         ],
-        durationMs: 1900,
     },
     {
         id: "strategy",
@@ -71,7 +66,6 @@ export const DEMO_SLIDES: DemoSlide[] = [
             { description: "Model the pit-window alternatives", tool: "get_race" },
             { description: "Check track temperature evolution", tool: "get_weather" },
         ],
-        durationMs: 2600,
     },
     {
         id: "insights",
@@ -83,27 +77,21 @@ export const DEMO_SLIDES: DemoSlide[] = [
             { description: "Load the 2026 drivers' standings", tool: "get_driver_standings" },
             { description: "Check the latest championship coverage", tool: "web_search" },
         ],
-        citations: [
-            {
-                source: "formula1.com/driver-standings",
-                title: "2026 Driver Standings",
-                url: "https://www.formula1.com/en/results",
-                type: "web",
-            },
-        ],
-        durationMs: 2200,
     },
 ];
 
 /**
- * Auto-playing demo exchange in a fixed-height stage.
- * ================================================
+ * Auto-playing demo exchange in a flex-fill clipped stage.
+ * ======================================================
  * Renders exactly what the signed-in chat renders — a user bubble and the
- * race engineer's reply — then advances to the next capability. The stage
- * height never changes between slides (tallest slide sets it; verified by
- * screenshot), so autoplay causes zero layout shift. Hover or touch pauses
- * the timeline (and the progress line); the header's mode selector jumps
- * straight to a capability. Every slide ends in the same sign-in action.
+ * race engineer's reply — then advances to the next capability. Layout is
+ * rock-stable by construction: the stage fills the leftover viewport
+ * space, everything below it is static, and the demo carries no trailing
+ * metadata (sources/footer are live-app chrome that would pop in late and
+ * shift things). Streaming text grows downward inside the clipped area;
+ * nothing outside it ever moves. Hover or touch pauses the timeline (and
+ * the progress line); the header's mode selector jumps straight to a
+ * capability.
  */
 export function LandingShowcase({
     index,
@@ -127,15 +115,6 @@ export function LandingShowcase({
             >
                 <DemoExchange slide={slide} onAdvance={onAdvance} />
             </motion.section>
-            <div className="flex shrink-0 justify-center pb-1 pt-2">
-                <a
-                    href="/api/auth/google"
-                    className="group inline-flex h-10 items-center gap-2 rounded-full bg-[#E10600] px-5 text-sm font-semibold text-white shadow-[0_16px_30px_-12px_rgba(225,6,0,0.6)] transition-all hover:scale-[1.03] hover:bg-[#c90500] active:scale-[0.97]"
-                >
-                    Sign in to use Dbrief1
-                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                </a>
-            </div>
         </div>
     );
 }
@@ -231,16 +210,12 @@ function DemoExchange({
             content,
             timestamp: 0,
             steps,
-            // Sources and the usage footer land with the finished answer,
-            // exactly as they do in the live app.
-            ...(done ? { durationMs: slide.durationMs } : {}),
-            ...(done && slide.citations ? { citations: slide.citations } : {}),
         };
     }, [words, shown, done, slide, steps]);
 
     return (
         <div
-            className="relative flex h-full w-full flex-col gap-4 overflow-hidden"
+            className="relative flex h-full w-full flex-col gap-3 overflow-hidden sm:gap-4"
             data-paused={paused}
             onMouseEnter={() => setPausedState(true)}
             onMouseLeave={() => setPausedState(false)}
@@ -259,7 +234,7 @@ function DemoExchange({
                 </div>
             )}
 
-            <div className="flex min-w-0 flex-col gap-6">
+            <div className="flex min-w-0 flex-col gap-4 sm:gap-6">
                 <MessageBubble message={userMessage} readOnly />
                 <MessageBubble message={assistantMessage} readOnly />
             </div>

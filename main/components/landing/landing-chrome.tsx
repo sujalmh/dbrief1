@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { LogIn, Moon, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import {
     AppHeaderShell,
     LogoBadge,
@@ -48,26 +48,19 @@ export function LandingHeader({
 }) {
     return (
         <AppHeaderShell>
-            {/* Identity */}
+            {/* Identity — plate removed so the mark sits on the page
+                background (landing-only override; the app keeps its plate). */}
             <div className="flex min-w-0 items-center gap-2 md:gap-6">
-                <LogoBadge />
+                <LogoBadge className="bg-transparent shadow-none" />
             </div>
 
             {/* The header's mode selector doubles as the demo switcher. */}
             <ModePill active={activeMode} onSelect={onSelectMode} />
 
-            {/* Actions */}
+            {/* Actions — theme only. Sign-in lives solely in the
+                composer below (one conversion point per page). */}
             <div className="flex shrink-0 items-center gap-2 md:gap-3">
                 <ThemeToggle />
-                <Button
-                    asChild
-                    className="h-9 gap-1.5 px-3 text-[11px] font-bold uppercase tracking-wider md:h-10 md:px-4"
-                >
-                    <a href="/api/auth/google">
-                        <LogIn className="h-4 w-4" />
-                        Sign in
-                    </a>
-                </Button>
             </div>
         </AppHeaderShell>
     );

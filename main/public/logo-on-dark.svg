@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" role="img" aria-label="Falcon logo">
+  <title>Falcon logo</title>
+  <!-- TOP WHITE SWOOSH (on-dark variant: black -> white) -->
+  <path d="M 80 32 C 138 20, 206 24, 240 53 C 256 66, 265 86, 270 110 C 253 92, 244 78, 227 65 C 200 44, 136 31, 80 32 Z" fill="#FFFFFF"/>
+  <!-- UPPER RED BLADE -->
+  <path d="M 6 74 C 70 72, 132 66.5, 167 67.5 C 184 68, 196 72.5, 206 82.5 C 160 80.5, 78 77, 6 74 Z" fill="#E30613"/>
+  <!-- LOWER RED BLADE -->
+  <path d="M 48 101 C 104 99.5, 150 99, 173.5 107 C 190.5 113, 194.5 124, 207.5 134 C 218 142.5, 230 148.5, 241 153.5 C 225 150, 208 143, 196 133 C 183.5 123, 178.5 117, 159.5 111.5 C 130 104, 88 102, 48 101 Z" fill="#E30613"/>
+  <!-- LOWER WHITE JAW (on-dark variant: black -> white) -->
+  <path d="M 200 116 L 270 116 C 271 134, 270 152, 266 170 L 252 170 C 254 156, 249.5 141.5, 236 131.5 C 224 122.5, 209 119, 200 116 Z" fill="#FFFFFF"/>
+  <!-- RED SPARKLE -->
+  <path d="M 220 65 L 222.4 74.1 L 231.5 76.5 L 222.4 78.9 L 220 88 L 217.6 78.9 L 208.5 76.5 L 217.6 74.1 Z" fill="#E30613"/>
+</svg>

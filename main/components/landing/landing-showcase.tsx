@@ -21,60 +21,79 @@ interface DemoSlide {
     id: string;
     /** Matches the header mode selector so the same control drives the demo. */
     mode: ModeLabel;
+    /** Race context kicker shown with the classification badge. */
+    context: string;
     question: string;
     answer: string;
     /** Rendered after the prose lands — mirrors a late visualization event. */
     table?: string;
+    /** Static chart preview — mirrors the app's visualization panel. */
+    chart?: { title: string; caption: string };
     steps: { description: string; tool: string }[];
 }
+
+/** Classification colors — one per capability, reused by the slide badge. */
+const MODE_DOT: Record<ModeLabel, string> = {
+    Telemetry: "var(--f1-green)",
+    Comparison: "#3b82f6",
+    Strategy: "var(--f1-yellow)",
+    Insights: "var(--f1-purple)",
+};
 
 /**
  * The four capabilities, in the same order and with the same names the
  * signed-in header shows. Each slide is a real chat exchange rendered by
  * the real MessageBubble — markdown, driver highlights, planning grid,
  * sources and usage footer are the app's own components, not mock-ups.
+ * Questions carry race context (GP, session, lap) so visitors see the
+ * kind of specific prompts the product answers.
  */
 export const DEMO_SLIDES: DemoSlide[] = [
     {
         id: "telemetry",
         mode: "Telemetry",
-        question: "Where is Verstappen losing time to Norris?",
-        answer: "Mostly in the final sector. Norris carries **6 km/h** more apex speed through Turn 13 and opens the throttle **8 m** earlier — about two tenths per lap.",
+        context: "Singapore GP · Race · Lap 38",
+        question: "Singapore, lap 38 — where is Verstappen losing time to Norris?",
+        answer: "Mostly the final sector. Through Turns 13–16 Norris carries **6 km/h** more apex speed and gets on the throttle **8 m** earlier — about **0.2s per lap**. VER's rears run 4° hotter, so he's sliding on exit.",
         steps: [
-            { description: "Load telemetry for VER and NOR", tool: "get_telemetry" },
-            { description: "Compare speed traces through Turn 13", tool: "get_telemetry_summary" },
-            { description: "Quantify the lap-time delta", tool: "get_laps" },
+            { description: "Load VER / NOR telemetry — Singapore, laps 36–38", tool: "get_telemetry" },
+            { description: "Compare speed traces through Turns 13–16", tool: "get_telemetry_summary" },
+            { description: "Quantify the delta vs rear-tyre temps", tool: "get_laps" },
         ],
     },
     {
         id: "comparison",
         mode: "Comparison",
-        question: "Russell vs Hamilton over the last 10 laps?",
-        answer: "Russell averages three tenths quicker and is closing at **0.4s per lap**. On this trend, he reaches Hamilton's gearbox by lap 52.",
+        context: "Suzuka · Last 10 laps · RUS vs HAM",
+        question: "Russell vs Hamilton over the last 10 laps — who's got the pace?",
+        answer: "Russell, clearly. On fresher mediums he's **0.3s a lap** quicker since lap 42 and closing at **0.4s per lap** — at this rate he's on Hamilton's gearbox by lap 52.",
+        chart: { title: "Gap to HAM (s)", caption: "RUS closing 0.4s / lap · overtake ~lap 52" },
         steps: [
-            { description: "Load the last 10 laps for RUS and HAM", tool: "get_laps" },
+            { description: "Load the last 10 laps for RUS and HAM — Suzuka", tool: "get_laps" },
             { description: "Compare pace and gap evolution", tool: "get_fastest_lap" },
         ],
     },
     {
         id: "strategy",
         mode: "Strategy",
-        question: "What is the best tyre strategy for Singapore?",
-        answer: "Soft to medium for the top four. The undercut opens on **lap 18** — stop then for track position. Staying out past lap 24 costs places.",
+        context: "Singapore · P4 on softs · Pit window",
+        question: "Starting P4 on softs in Singapore — one-stop or two?",
+        answer: "Two-stop: soft → medium on **lap 18**, then medium to the flag. The undercut opens at lap 18 — staying out past lap 24 costs ~2 places. Keep a soft in hand: safety-car chance is **68%** here.",
         steps: [
-            { description: "Load stint data for the top four", tool: "get_tyres" },
-            { description: "Model the pit-window alternatives", tool: "get_race" },
-            { description: "Check track temperature evolution", tool: "get_weather" },
+            { description: "Load stint and degradation data — top four", tool: "get_tyres" },
+            { description: "Model one-stop vs two-stop windows", tool: "get_race" },
+            { description: "Factor safety-car probability and track temps", tool: "get_weather" },
         ],
     },
     {
         id: "insights",
         mode: "Insights",
-        question: "Who is leading the drivers’ championship?",
-        answer: "Verstappen, on **302 points** — 66 ahead of Norris, with 8 wins from 14 rounds. Norris needs consecutive wins to reopen it.",
+        context: "After Monza · Round 14 · Standings",
+        question: "Who leads the championship after Monza?",
+        answer: "Verstappen, on **302 points** — 66 clear of Norris with 8 wins from 14. Norris needs back-to-back wins to reopen it before Austin.",
         table: "| Driver | Points | Gap |\n| --- | --- | --- |\n| VER | 302 | — |\n| NOR | 236 | −66 |\n| LEC | 199 | −103 |",
         steps: [
-            { description: "Load the 2026 drivers' standings", tool: "get_driver_standings" },
+            { description: "Load the drivers' standings after Monza", tool: "get_driver_standings" },
             { description: "Check the latest championship coverage", tool: "web_search" },
         ],
     },
@@ -213,6 +232,8 @@ function DemoExchange({
         };
     }, [words, shown, done, slide, steps]);
 
+    const showChart = done && slide.chart;
+
     return (
         <div
             className="relative flex h-full w-full flex-col gap-3 overflow-hidden sm:gap-4"
@@ -234,9 +255,119 @@ function DemoExchange({
                 </div>
             )}
 
-            <div className="flex min-w-0 flex-col gap-4 sm:gap-6">
+            {/* Capability classification — the header pill is hidden below
+                lg, so every slide labels itself: mode + race context. */}
+            <div className="flex min-w-0 items-center gap-2 px-1">
+                <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border/60 bg-background/60 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider">
+                    <span
+                        aria-hidden="true"
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ background: MODE_DOT[slide.mode] }}
+                    />
+                    {slide.mode}
+                </span>
+                <span className="truncate font-mono text-[10px] uppercase tracking-wide text-muted-foreground sm:text-[11px]">
+                    {slide.context}
+                </span>
+            </div>
+
+            <div className="flex min-w-0 flex-col gap-4 overflow-hidden sm:gap-6">
                 <MessageBubble message={userMessage} readOnly />
                 <MessageBubble message={assistantMessage} readOnly />
+                {slide.chart && (
+                    <div
+                        className={`transition-opacity duration-500 ${showChart ? "opacity-100" : "opacity-0"}`}
+                        aria-hidden={!showChart}
+                    >
+                        {showChart && (
+                            <DemoChartPreview
+                                title={slide.chart.title}
+                                caption={slide.chart.caption}
+                            />
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Static gap-evolution preview for the Comparison slide.
+ * Mirrors the app's visualization panel (title + chart + caption) without
+ * pulling recharts into the landing bundle — a lightweight SVG with the
+ * same gap-closing story the answer narrates.
+ */
+function DemoChartPreview({ title, caption }: { title: string; caption: string }) {
+    // Gap (s) from lap 42 → 51: 4.2s closing to 0.5s.
+    const points: Array<[number, number]> = [
+        [0, 4.2],
+        [1, 3.9],
+        [2, 3.4],
+        [3, 3.0],
+        [4, 2.6],
+        [5, 2.1],
+        [6, 1.7],
+        [7, 1.3],
+        [8, 0.9],
+        [9, 0.5],
+    ];
+    const W = 320;
+    const H = 96;
+    const PAD = 10;
+    const maxY = 4.5;
+    const x = (i: number) => PAD + (i / (points.length - 1)) * (W - PAD * 2);
+    const y = (v: number) => PAD + (1 - v / maxY) * (H - PAD * 2);
+    const line = points.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+    const area = `${PAD},${H - PAD} ${line} ${W - PAD},${H - PAD}`;
+
+    return (
+        <div className="ml-11 overflow-hidden rounded-xl border border-border/60 bg-background/60 backdrop-blur-sm md:ml-12">
+            <div className="flex items-center justify-between px-3 pt-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    {title}
+                </span>
+                <span className="rounded-full bg-[#3b82f6]/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[#3b82f6]">
+                    Visualization
+                </span>
+            </div>
+            <svg
+                viewBox={`0 0 ${W} ${H}`}
+                className="h-[104px] w-full"
+                role="img"
+                aria-label="Gap closing from 4.2 seconds to 0.5 seconds"
+            >
+                {[4, 3, 2, 1].map((g) => (
+                    <line
+                        key={g}
+                        x1={PAD}
+                        x2={W - PAD}
+                        y1={y(g)}
+                        y2={y(g)}
+                        stroke="currentColor"
+                        strokeOpacity="0.12"
+                        strokeDasharray="3 4"
+                    />
+                ))}
+                <polygon points={area} fill="#3b82f6" fillOpacity="0.12" />
+                <polyline
+                    points={line}
+                    fill="none"
+                    stroke="#3b82f6"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+                {points.map(([i, v]) => (
+                    <circle key={i} cx={x(i)} cy={y(v)} r="2.5" fill="#3b82f6" />
+                ))}
+                <circle cx={x(9)} cy={y(0.5)} r="4" fill="none" stroke="#3b82f6" strokeWidth="1.5" />
+            </svg>
+            <div className="flex items-center justify-between px-3 pb-2">
+                <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground">
+                    Lap 42 → 51
+                </span>
+                <span className="text-[10px] font-medium text-muted-foreground">{caption}</span>
             </div>
         </div>
     );

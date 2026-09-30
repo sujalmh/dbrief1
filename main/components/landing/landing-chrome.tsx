@@ -48,19 +48,26 @@ export function LandingHeader({
 }) {
     return (
         <AppHeaderShell>
-            {/* Identity — plate removed so the mark sits on the page
-                background (landing-only override; the app keeps its plate). */}
+            {/* Identity — no plate on landing so the mark sits on the page
+                background; `onBackground` swaps in the white-line artwork
+                on the dark carbon header. */}
             <div className="flex min-w-0 items-center gap-2 md:gap-6">
-                <LogoBadge className="bg-transparent shadow-none" />
+                <LogoBadge onBackground className="bg-transparent shadow-none" />
             </div>
 
             {/* The header's mode selector doubles as the demo switcher. */}
             <ModePill active={activeMode} onSelect={onSelectMode} />
 
-            {/* Actions — theme only. Sign-in lives solely in the
-                composer below (one conversion point per page). */}
+            {/* Actions — theme + sign-in. The navbar carries its own
+                conversion point; the composer below is the second. */}
             <div className="flex shrink-0 items-center gap-2 md:gap-3">
                 <ThemeToggle />
+                <a
+                    href="/api/auth/google"
+                    className="btn-wheel btn-wheel-red inline-flex h-9 items-center px-3 text-[11px] font-bold uppercase tracking-wider text-white no-underline md:h-10 md:px-4 md:text-xs"
+                >
+                    Sign in
+                </a>
             </div>
         </AppHeaderShell>
     );

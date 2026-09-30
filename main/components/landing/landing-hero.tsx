@@ -7,8 +7,8 @@ const EASE = [0.22, 1, 0.36, 1] as const;
 /**
  * Quiet intro above the demo conversation. Deliberately restrained: the
  * chat below is the pitch, so the hero is one headline plus one subline —
- * no badges, buttons, glows or oversized display type. (Sign-in lives on
- * every slide and in the composer below.) Compact by design: the page is
+ * no badges, buttons, glows or oversized display type. (Sign-in lives in
+ * the navbar and in the composer below.) Compact by design: the page is
  * exactly one viewport with no scroll.
  */
 export function LandingHero() {
@@ -28,14 +28,14 @@ export function LandingHero() {
                 {...fadeUp(0.06)}
                 className="mx-auto max-w-xl text-balance text-[22px] font-bold leading-tight tracking-tight sm:text-[26px]"
             >
-                Understand the race beyond the numbers.
+                Your pit-wall engineer for every Grand Prix.
             </motion.h1>
             <motion.p
                 {...fadeUp(0.12)}
                 className="mx-auto mt-1.5 hidden max-w-md text-pretty text-[12.5px] leading-snug text-muted-foreground min-[480px]:block sm:text-[13.5px]"
             >
-                Live timing, telemetry, tyre strategy and regulations —
-                answered in chat, with the data on screen.
+                Telemetry, tyre strategy, timing and regulations —
+                asked in chat, answered with the data on screen.
             </motion.p>
             {/* crawlable summary for search indexers */}
             <p className="sr-only">

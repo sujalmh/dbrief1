@@ -39,8 +39,41 @@ export function AppHeaderShell({
     );
 }
 
-/** White plate carrying the falcon mark — the app's header identity. */
-export function LogoBadge({ className }: { className?: string }) {
+/** White plate carrying the falcon mark — the app's header identity.
+ * Pass `onBackground` when the badge sits directly on the header/page
+ * background with no plate (landing): the black strokes vanish on the
+ * dark carbon header, so it renders the white-line variant there and the
+ * black-line variant in light mode. */
+export function LogoBadge({
+    className,
+    onBackground = false,
+}: {
+    className?: string;
+    onBackground?: boolean;
+}) {
+    if (onBackground) {
+        return (
+            <div
+                className={cn(
+                    "flex items-center justify-center rounded-sm px-1.5 py-1",
+                    className
+                )}
+            >
+                {/* eslint-disable-next-line @next/next/no-img-element -- local static logo */}
+                <img
+                    src="/logo.svg"
+                    alt="Logo"
+                    className="h-6 w-auto dark:hidden"
+                />
+                {/* eslint-disable-next-line @next/next/no-img-element -- local static logo */}
+                <img
+                    src="/logo-on-dark.svg"
+                    alt="Logo"
+                    className="hidden h-6 w-auto dark:block"
+                />
+            </div>
+        );
+    }
     return (
         <div
             className={cn(

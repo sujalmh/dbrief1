@@ -2,11 +2,12 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
-import { Plus, MessageSquare, LogOut, User as UserIcon, Trash2 } from "lucide-react";
+import { Plus, MessageSquare, LogOut, User as UserIcon, Trash2, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useChatStore } from "@/lib/store"
 import type { StoredSession } from "@/lib/store"
 import { useSession } from "@/lib/cf/session-context";
 import { UsageIndicator } from "@/components/layout/usage-indicator";
+import { LogoBadge } from "@/components/layout/header-shell";
 import { useMediaQuery } from "@/lib/hooks/use-media-query";
 import {
     listSessions,
@@ -180,20 +181,45 @@ export function Sidebar() {
                 isDesktop && (isSidebarOpen ? "w-64" : "w-[60px]")
             )}
         >
-            {/* Header — title only. The single sidebar toggle lives in
-                the app header, so there is exactly one collapse control. */}
+            {/* Header — logo + collapse live here, so the sidebar owns
+                its own open/close control. Open: logo mark, wordmark,
+                and collapse button. Collapsed: logo badge that swaps to
+                an expand button on hover. */}
             <div className={cn(
                 "flex items-center p-3 h-16 shrink-0 transition-all duration-300 border-b border-white/10 bg-white/5 dark:bg-white/5 backdrop-blur-xl",
-                isSidebarOpen ? "justify-start" : "justify-center"
+                isSidebarOpen ? "justify-between gap-2" : "justify-center"
             )}>
                 {isSidebarOpen ? (
-                    <div className="font-orbitron font-bold text-sm tracking-wider text-f1-red whitespace-nowrap flex-1">
-                        DBRIEF1
-                    </div>
+                    <>
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                            <LogoBadge />
+                            <span className="font-orbitron font-bold text-sm tracking-wider text-f1-red whitespace-nowrap">
+                                DBRIEF1
+                            </span>
+                        </div>
+                        <button
+                            onClick={() => setSidebarOpen(false)}
+                            className="btn-wheel h-8 w-8 shrink-0"
+                            title="Collapse sidebar"
+                            aria-label="Collapse sidebar"
+                        >
+                            <PanelLeftClose className="h-4 w-4" />
+                        </button>
+                    </>
                 ) : (
-                    <div className="flex items-center justify-center rounded-sm bg-[var(--f1-red)] p-1.5">
-                        <span className="font-orbitron font-bold text-[10px] text-white">D1</span>
-                    </div>
+                    <button
+                        onClick={() => setSidebarOpen(true)}
+                        className="group relative flex h-9 w-9 shrink-0 items-center justify-center"
+                        title="Expand sidebar"
+                        aria-label="Expand sidebar"
+                    >
+                        <span className="transition-opacity duration-150 group-hover:opacity-0">
+                            <LogoBadge />
+                        </span>
+                        <span className="btn-wheel absolute inset-0 h-9 w-9 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                            <PanelLeftOpen className="h-4 w-4" />
+                        </span>
+                    </button>
                 )}
             </div>
 

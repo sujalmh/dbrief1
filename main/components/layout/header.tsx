@@ -1,13 +1,12 @@
 "use client"
 
-import { Settings, Share2, Info, Download, FileText, FileJson, PanelLeft } from "lucide-react"
+import { Settings, Share2, Info, PanelLeft } from "lucide-react"
 import dynamic from "next/dynamic"
 import { Button } from "@/components/ui/button"
 import { useChatStore } from "@/lib/store"
 import { InfoModal } from "@/components/layout/info-modal"
 import {
     AppHeaderShell,
-    LogoBadge,
     ModePill,
     SessionBadge,
 } from "@/components/layout/header-shell"
@@ -16,16 +15,7 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from "@/components/ui/tooltip"
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { useMemo, useState } from "react"
-import { exportConversation } from "@/lib/utils/export-conversation"
 
 const ShareDialog = dynamic(
     () => import("@/components/chat/share-dialog").then((m) => m.ShareDialog),
@@ -35,16 +25,14 @@ const ShareDialog = dynamic(
 export function Header() {
     // Slice subscriptions: `messages` changes on every streamed token, so
     // this component selects only the active message's visualization ref
-    // (stable across token frames) plus a message count for the export
-    // button. Export handlers read the full array via getState() on click.
+    // (stable across token frames). Download lives inside the share
+    // dialog, so this header never subscribes to the message list.
     const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
-    const activeMessageId = useChatStore((s) => s.activeMessageId)
     const activeVisualizationData = useChatStore((s) =>
         s.activeMessageId
             ? (s.messages.find((m) => m.id === s.activeMessageId)?.visualizationData ?? null)
             : null
     )
-    const hasMessages = useChatStore((s) => s.messages.length > 0)
     const sessions = useChatStore((s) => s.sessions)
     const currentSessionId = useChatStore((s) => s.currentSessionId)
     const setSidebarOpen = useChatStore((s) => s.setSidebarOpen)
@@ -101,25 +89,23 @@ export function Header() {
 
     return (
         <AppHeaderShell>
-            {/* Left: Identity + Session Context */}
+            {/* Left: mobile drawer opener + session context. Desktop
+                collapse lives inside the sidebar header, and the logo
+                lives in the sidebar, so the app header shows no toggle
+                or logo on md+. */}
             <div className="flex items-center gap-2 md:gap-6 min-w-0">
-                {/* Single sidebar toggle — the only collapse control.
-                    Visible on all breakpoints: on mobile it opens the
-                    session drawer, on desktop it collapses the rail. */}
+                {/* Mobile only: opens the session drawer. Hidden on
+                    desktop where the sidebar rail owns its toggle. */}
                 <Button
                     variant="ghost"
                     size="icon"
                     onClick={() => setSidebarOpen(!isSidebarOpen)}
-                    className="btn-wheel h-9 w-9 shrink-0"
-                    title={isSidebarOpen ? "Collapse sidebar" : "Open sessions"}
+                    className="btn-wheel h-9 w-9 shrink-0 md:hidden"
+                    title={isSidebarOpen ? "Close sessions" : "Open sessions"}
                 >
                     <PanelLeft className="h-5 w-5" />
                     <span className="sr-only">Toggle sidebar</span>
                 </Button>
-                {/* Logo Area - Falcon logo */}
-                <div className="flex items-center gap-3 opacity-90 hover:opacity-100 transition-opacity shrink-0">
-                    <LogoBadge />
-                </div>
 
                 {/* Dynamic Session Badge — compact + truncated on phones */}
                 <SessionBadge label={context.sessionString} />
@@ -131,56 +117,7 @@ export function Header() {
             {/* Right: Controls Cluster */}
             <div className="flex items-center gap-2 md:gap-3 shrink-0">
 
-                {/* Export Conversation Dropdown */}
-                <DropdownMenu>
-                    {/* NOTE: A Radix Tooltip wrapping a DropdownMenuTrigger
-                        silently breaks the dropdown click in some browsers
-                        because the two components compete for pointer
-                        events. The button's own `title` and the visible
-                        icon give enough affordance. */}
-                    <DropdownMenuTrigger asChild>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="btn-wheel btn-wheel-green h-9 w-9 md:h-10 md:w-10"
-                            disabled={!hasMessages}
-                            title="Export Conversation"
-                        >
-                            <Download className="h-5 w-5" />
-                            <span className="sr-only">Export Conversation</span>
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-56">
-                        <DropdownMenuLabel>Download as</DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                            onClick={() => {
-                                const st = useChatStore.getState()
-                                exportConversation(st.messages, "markdown", {
-                                    title: st.sessions.find((s) => s.id === st.currentSessionId)?.title,
-                                })
-                            }}
-                            className="cursor-pointer"
-                        >
-                            <FileText className="mr-2 h-4 w-4" />
-                            <span>Markdown (.md)</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                            onClick={() => {
-                                const st = useChatStore.getState()
-                                exportConversation(st.messages, "json", {
-                                    title: st.sessions.find((s) => s.id === st.currentSessionId)?.title,
-                                })
-                            }}
-                            className="cursor-pointer"
-                        >
-                            <FileJson className="mr-2 h-4 w-4" />
-                            <span>JSON (.json)</span>
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
-
-                {/* Share Session — read-only public link */}
+                {/* Share Session — read-only public link + download */}
                 <Tooltip>
                     <TooltipTrigger asChild>
                         <Button

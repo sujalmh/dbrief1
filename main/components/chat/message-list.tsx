@@ -5,10 +5,13 @@ import { useChatStore } from "@/lib/store"
 import { MessageBubble } from "@/components/chat/message-bubble"
 
 /**
- * Render the chat message list and ensure the view scrolls to the newest message.
+ * Render the chat message list and scroll to the newest message only
+ * when the final generation finishes.
  *
  * When there are no messages, renders a centered placeholder prompting to connect telemetry.
- * When messages exist, renders each message as a MessageBubble and keeps a bottom spacer that is scrolled into view whenever messages or loading state change.
+ * When messages exist, renders each message as a MessageBubble. Streaming
+ * tokens never auto-scroll; the view jumps to the bottom once when
+ * loading flips true -> false.
  *
  * @returns The rendered message list element
  */
@@ -18,13 +21,16 @@ export function MessageList() {
     const messages = useChatStore((s) => s.messages)
     const isLoading = useChatStore((s) => s.isLoading)
     const bottomRef = useRef<HTMLDivElement>(null)
+    const prevLoadingRef = useRef(isLoading)
 
-    // Auto-scroll to bottom on new message
+    // Only auto-scroll when the final generation finishes (loading
+    // true -> false). Streaming tokens must not yank the viewport.
     useEffect(() => {
-        if (bottomRef.current) {
-            bottomRef.current.scrollIntoView({ behavior: "smooth" })
+        if (prevLoadingRef.current && !isLoading) {
+            bottomRef.current?.scrollIntoView({ behavior: "smooth" })
         }
-    }, [messages, isLoading])
+        prevLoadingRef.current = isLoading
+    }, [isLoading])
 
     if (messages.length === 0) {
         return (

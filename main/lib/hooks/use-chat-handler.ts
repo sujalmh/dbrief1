@@ -20,6 +20,11 @@ interface SseTask {
     args?: unknown;
 }
 
+// Module-scoped so generation survives SPA remounts (e.g. `/` → `/c/<id>`
+// on the first message unmounts ChatInput mid-stream) and so the Stop
+// button in the newly mounted tree can still cancel the old stream.
+let activeAbortController: AbortController | null = null
+
 export function useChatHandler() {
     // Subscribe ONLY to isLoading — a full-store subscription here would
     // re-render every consumer (chat input, every message bubble) on each
@@ -27,19 +32,26 @@ export function useChatHandler() {
     const isLoading = useChatStore((s) => s.isLoading)
     const { user } = useSession()
     const router = useRouter()
-    const abortControllerRef = React.useRef<AbortController | null>(null)
 
+    // Abort on real page leave only (reload/tab close). SPA navigation
+    // (e.g. `/` → `/c/<id>` on the first message) remounts this hook —
+    // aborting there kills the in-flight generation, which is exactly
+    // the "stops right after submit" bug. The stream itself survives
+    // remounts: it only touches the global store + the shared controller.
     React.useEffect(() => {
-        return () => {
-            if (abortControllerRef.current) {
-                abortControllerRef.current.abort()
+        const onHide = () => {
+            if (activeAbortController) {
+                activeAbortController.abort()
+                activeAbortController = null
             }
         }
+        window.addEventListener("pagehide", onHide)
+        return () => window.removeEventListener("pagehide", onHide)
     }, [])
     const cancelGeneration = React.useCallback(() => {
-        if (abortControllerRef.current) {
-            abortControllerRef.current.abort()
-            abortControllerRef.current = null
+        if (activeAbortController) {
+            activeAbortController.abort()
+            activeAbortController = null
             useChatStore.getState().setLoading(false)
         }
     }, [])
@@ -211,7 +223,8 @@ export function useChatHandler() {
             // Check if this is the first message in the session (it was just added, so length is 1)
             const isFirstMessage = useChatStore.getState().messages.filter(m => m.role === "user").length === 1;
 
-            abortControllerRef.current = new AbortController()
+            const aborter = new AbortController()
+            activeAbortController = aborter
 
             // Conversation history for follow-up resolution (server-side
             // planner + intent analyzer). Last 10 non-empty turns, content
@@ -247,7 +260,7 @@ export function useChatHandler() {
                     isFirstMessage,
                     history
                 }),
-                signal: abortControllerRef.current.signal
+                signal: aborter.signal
             })
 
             if (!response.ok) {

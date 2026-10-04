@@ -220,6 +220,8 @@ export interface Message {
         replyPreview?: string
         /** Planner LLM failure that forced a heuristic fallback plan. */
         plannerError?: string
+        /** Deep toggle was on but the query only needed the quick path. */
+        deepDowngraded?: boolean
     }
     /**
      * Refusal trace. Set when the backend answered without tool data

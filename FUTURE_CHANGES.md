@@ -4,6 +4,18 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
 
 ## Synced
 
+- [x] **Deep + visualization auto-decide:** with the deep toggle on, the
+  route runs one cheap `decidePlan` probe first — conversational or
+  ≤2-step plans (`shouldDowngradeDeep`, `DEEP_QUICK_STEP_LIMIT = 2` in
+  `lib/planner.ts`) take the quick pipeline (same tool registry) instead
+  of the ResearchManager, are metered as chat turns, and persist
+  `deepDowngraded: true` on the plan trace; probe errors fail open to
+  full deep. Visualization panel auto-enables on genuinely chartable
+  turns only (`isChartablePayload` in `lib/visualization/data-parser.ts`:
+  successful telemetry/laps series or deep chart_specs; never uncollapses,
+  never auto-disables). Verified live against dev server both directions
+  (downgrade: `deepDowngraded` + no `research_start`, correct answer;
+  3-step what-if: `research_start` fires) + 41 unit tests + tsc/eslint clean.
 - [x] **Red-team round 2 fixes (`ses_f068cdb6`, novelty-enforced):** planner
   prompt gains rule 6b (exact tool names only; constructor points via
   get_driver_standings), sector-times → get_laps (rule 11), history-facts

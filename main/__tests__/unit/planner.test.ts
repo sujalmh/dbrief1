@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { planQuery, createFallbackPlan, decidePlan, type Plan } from '@/lib/planner'
+import { planQuery, createFallbackPlan, decidePlan, shouldDowngradeDeep, type Plan } from '@/lib/planner'
 import { createTestPlannerModel } from '../utils/llm-client'
 import {
     assertPlanContainsTool,
@@ -407,3 +407,28 @@ describe('decidePlan', () => {
         await expect(decidePlan(model, 'hey')).rejects.toThrow();
     });
 })
+
+// =============================================================================
+// Deep Auto-Decide Tests (pure — no LLM)
+// =============================================================================
+
+describe('shouldDowngradeDeep', () => {
+    const planWith = (n: number): Plan => ({
+        steps: Array.from({ length: n }, (_, i) => ({
+            description: `step ${i}`,
+            tool: 'get_race',
+            args: {},
+        })),
+    });
+
+    it('downgrades empty, one-step, and two-step plans', () => {
+        expect(shouldDowngradeDeep(planWith(0))).toBe(true);
+        expect(shouldDowngradeDeep(planWith(1))).toBe(true);
+        expect(shouldDowngradeDeep(planWith(2))).toBe(true);
+    });
+
+    it('keeps three-plus-step plans on deep research', () => {
+        expect(shouldDowngradeDeep(planWith(3))).toBe(false);
+        expect(shouldDowngradeDeep(planWith(5))).toBe(false);
+    });
+});

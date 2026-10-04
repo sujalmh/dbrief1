@@ -6,6 +6,7 @@ import { useChatStore, type Message, type ResearchIteration } from "@/lib/store"
 import { useSession } from "@/lib/cf/session-context"
 import { createSession, saveMessage, saveContext, patchSessionMeta } from "@/lib/cf/client"
 import { sanitizeCitations } from "@/lib/utils"
+import { isChartablePayload } from "@/lib/visualization/data-parser"
 
 /** Minimal shape of SSE payload steps/tasks — fields are unknown until validated. */
 interface SsePlanStep {
@@ -364,6 +365,9 @@ export function useChatHandler() {
                                             ...(typeof data.plannerError === "string" && data.plannerError
                                                 ? { plannerError: data.plannerError.slice(0, 500) }
                                                 : {}),
+                                            ...(data.deepDowngraded === true
+                                                ? { deepDowngraded: true as const }
+                                                : {}),
                                         })
                                         break
                                     case "refusal":
@@ -447,6 +451,14 @@ export function useChatHandler() {
                                         // Make the new message the active one so the
                                         // visualization panel reflects the latest reply.
                                         useChatStore.getState().setActiveMessageId(assistantMsgId)
+                                        // Auto-decide the visualization toggle: turn
+                                        // the panel on when this turn actually
+                                        // produced chartable series. Never force
+                                        // it open (collapsed state untouched) and
+                                        // never auto-disable an explicit choice.
+                                        if (isChartablePayload(data.data) && !useChatStore.getState().settings.visualizeEnabled) {
+                                            useChatStore.getState().updateSettings({ visualizeEnabled: true })
+                                        }
                                         break
                                     case "metadata":
                                         // Update session title and type in the store
@@ -575,6 +587,11 @@ export function useChatHandler() {
                                         // Also set visualization data for the panel
                                         if (data.specs && data.specs.length > 0) {
                                             useChatStore.getState().setVisualizationData(data.specs)
+                                            // Deep-research chart specs are an explicit
+                                            // chart decision — same auto-decide as above.
+                                            if (!useChatStore.getState().settings.visualizeEnabled) {
+                                                useChatStore.getState().updateSettings({ visualizeEnabled: true })
+                                            }
                                         }
                                         // Make the new message the active one so the
                                         // visualization panel renders the new specs.

@@ -10,7 +10,8 @@ import {
     extractLapTimes,
     extractTelemetry,
     extractComparison,
-    hasVisualizableData
+    hasVisualizableData,
+    isChartablePayload
 } from '@/lib/visualization/data-parser'
 import {
     assertVisualizationIntegrity,
@@ -304,5 +305,43 @@ describe('Has Visualizable Data', () => {
 {"data": [{"Speed": 300, "throttle": 100, "Distance": 0}]}
 \`\`\``
         expect(hasVisualizableData(content)).toBe(true)
+    })
+})
+
+// =============================================================================
+// Is Chartable Payload Tests (visualization auto-decide)
+// =============================================================================
+
+describe('Is Chartable Payload', () => {
+    it('should return true for successful telemetry series', () => {
+        expect(isChartablePayload([
+            { tool: 'get_telemetry', success: true, data: { data: [{ Speed: 300 }] } },
+        ])).toBe(true)
+    })
+
+    it('should return true for successful lap series', () => {
+        expect(isChartablePayload([
+            { tool: 'get_race', success: true, data: { results: [{ position: 1 }] } },
+            { tool: 'get_laps', success: true, data: { laps: [{ LapNumber: 1 }] } },
+        ])).toBe(true)
+    })
+
+    it('should return false for tables alone', () => {
+        expect(isChartablePayload([
+            { tool: 'get_driver_standings', success: true, data: { standings: [{ position: 1 }] } },
+        ])).toBe(false)
+    })
+
+    it('should return false when series are empty or failed', () => {
+        expect(isChartablePayload([
+            { tool: 'get_telemetry', success: true, data: { data: [] } },
+            { tool: 'get_laps', success: false, data: { laps: [{ LapNumber: 1 }] } },
+        ])).toBe(false)
+    })
+
+    it('should return false for non-array payloads', () => {
+        expect(isChartablePayload(null)).toBe(false)
+        expect(isChartablePayload({})).toBe(false)
+        expect(isChartablePayload([])).toBe(false)
     })
 })

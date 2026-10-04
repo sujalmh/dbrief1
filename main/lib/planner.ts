@@ -214,6 +214,23 @@ export interface PlanDecision {
 }
 
 /**
+ * Deep-research auto-decide threshold. Plans at or under this many steps
+ * run the quick pipeline even when the deep toggle is on: both pipelines
+ * share the same tool registry, so deep research adds ~10x the LLM calls
+ * for zero additional capability on few-step queries.
+ */
+export const DEEP_QUICK_STEP_LIMIT = 2;
+
+/**
+ * True when a plan is small enough that deep research would only add
+ * latency and cost. The caller still handles needsPlan=false (direct
+ * reply) through the same quick path.
+ */
+export function shouldDowngradeDeep(plan: Plan): boolean {
+    return plan.steps.length <= DEEP_QUICK_STEP_LIMIT;
+}
+
+/**
  * Resolve a raw parsed model response into a PlanDecision.
  * Accepts both the new shape ({needs_plan, steps?, reply?, reasoning?})
  * and the legacy shape ({steps, reasoning?}, with or without a PLAN: prefix

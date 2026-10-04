@@ -32,7 +32,7 @@ import type { StructuredTool } from "@langchain/core/tools";
 export const maxDuration = 300;
 
 import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type AiMode } from "@/lib/llm";
-import { decidePlan, createFallbackPlan, type Plan } from "@/lib/planner";
+import { decidePlan, createFallbackPlan, shouldDowngradeDeep, type Plan, type PlanDecision } from "@/lib/planner";
 import {
     classifyPrompt,
     isConversationalFastPath,
@@ -68,6 +68,7 @@ import {
     freeCaps,
     byokCaps,
     type Tier as QuotaTier,
+    type QuotaKind,
 } from "@/lib/cf/quotas";
 
 // =============================================================================
@@ -323,7 +324,11 @@ export async function POST(request: NextRequest) {
         // BYOK callers (own key) get looser caps; everyone is metered
         // because hosting (Vercel/D1/R2) costs accrue regardless.
         const quotaTier: QuotaTier = mode === "byok" ? "byok" : "managed";
-        const quotaKind = deepResearchMode ? "deep" : "chat";
+        // Mutable: a deep-toggled turn auto-downgraded to the quick path
+        // (see below) is metered as a chat turn, not a deep run. The door
+        // pre-flight above stays on the toggle (stricter gate); the rare
+        // deep-exhausted-but-chat-available case 429s and can retry untoggled.
+        let quotaKind: QuotaKind = deepResearchMode ? "deep" : "chat";
         const quotaIpRaw = extractIpKey(request);
         const quotaIpHash = quotaIpRaw ? hashIp(quotaIpRaw) : null;
         const quotaUid = userId ?? `anon:${quotaIpHash ?? "unknown"}`;
@@ -609,13 +614,47 @@ export async function POST(request: NextRequest) {
                     };
 
                     // =================================================================
+                    // Deep Research auto-decide: one cheap plan first. When the
+                    // toggle is on but the query needs no plan (conversational)
+                    // or only a few steps, run the quick pipeline instead —
+                    // both pipelines share the same tool registry, so deep
+                    // research only adds latency and cost here. Fail open:
+                    // any probe error falls through to full deep research.
+                    // =================================================================
+                    let preplanned: PlanDecision | null = null;
+                    let deepDowngraded = false;
+                    if (deepResearchMode) {
+                        try {
+                            const probe = await decidePlan(
+                                plannerModel,
+                                message,
+                                true,
+                                deepResearchMode,
+                                history,
+                                { jevRecency: jevRecencyHint }
+                            );
+                            if (!probe.needsPlan || shouldDowngradeDeep(probe.plan)) {
+                                deepDowngraded = true;
+                                preplanned = probe;
+                                // Meter what we actually run, not the toggle.
+                                quotaKind = "chat";
+                            }
+                        } catch (error) {
+                            console.warn(
+                                "[Deep auto-decide] Probe failed, staying on deep path:",
+                                error instanceof Error ? error.message.slice(0, 200) : error
+                            );
+                        }
+                    }
+
+                    // =================================================================
                     // Deep Research Mode: delegate to the four-agent ResearchManager.
                     // The manager yields ResearchEvents that we forward as SSE events
                     // so the frontend's existing handler (research_start, plan_iteration,
                     // task_update, evidence, reflection, confidence, chart_specs, token,
                     // visualization, done) lights up the full deep research UI.
                     // =================================================================
-                    if (deepResearchMode) {
+                    if (deepResearchMode && !deepDowngraded) {
                         // Responder was pre-initialized in parallel with the
                         // planner above (both are needed in deep mode).
                         const responderModel = deepResponderModel;
@@ -776,15 +815,19 @@ export async function POST(request: NextRequest) {
                         // In Deep Research Mode, force web search to be enabled
                         const effectiveWebSearch = deepResearchMode ? true : web_search;
 
+                        // Auto-downgraded turns reuse the probe plan instead
+                        // of paying for a second identical planner call.
                         const runDecide = () =>
-                            decidePlan(
-                                plannerModel,
-                                message,
-                                effectiveWebSearch,
-                                deepResearchMode,
-                                history,
-                                { jevRecency: jevRecencyHint }
-                            );
+                            preplanned
+                                ? Promise.resolve(preplanned)
+                                : decidePlan(
+                                    plannerModel,
+                                    message,
+                                    effectiveWebSearch,
+                                    deepResearchMode,
+                                    history,
+                                    { jevRecency: jevRecencyHint }
+                                );
                         let decision: Awaited<ReturnType<typeof runDecide>>;
                         try {
                             decision = await runDecide();
@@ -851,6 +894,9 @@ export async function POST(request: NextRequest) {
                             ? { replyPreview: directReply.slice(0, 300) }
                             : {}),
                         ...(plannerErrorMsg ? { plannerError: plannerErrorMsg } : {}),
+                        // Auto-decide trace: the toggle asked for deep, but
+                        // the query only needed the quick pipeline.
+                        ...(deepDowngraded ? { deepDowngraded: true } : {}),
                     });
 
                     // Clamp simulation iterations to the caller's tier cap

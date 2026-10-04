@@ -16,6 +16,7 @@ import {
     buildJevState,
     classifyPrompt,
     isConversationalFastPath,
+    hasF1EntitySignal,
     isOffTopicRefusal,
     isRecencyRoute,
     type JevClassification,
@@ -386,5 +387,19 @@ describe("isOffTopicRefusal", () => {
             isOffTopicRefusal(makeClassification({ intent: "race_result", confidence: 0.9, inScopeNoul: 0.5 }))
         ).toBe(false);
         expect(isOffTopicRefusal(null)).toBe(false);
+    });
+});
+
+describe("hasF1EntitySignal", () => {
+    it("passes F1-shaped queries with invalid entities", () => {
+        expect(hasF1EntitySignal("Results for Mickey Mouse in 2024")).toBe(true);
+        expect(hasF1EntitySignal("2024 Grand Prix of Nowhere winner")).toBe(true);
+        expect(hasF1EntitySignal("telemetry for Senna 1994")).toBe(true);
+    });
+
+    it("stays silent on non-F1 prompts", () => {
+        expect(hasF1EntitySignal("What's the capital of France?")).toBe(false);
+        expect(hasF1EntitySignal("Write a carbonara recipe")).toBe(false);
+        expect(hasF1EntitySignal("Who won the Super Bowl?")).toBe(false);
     });
 });

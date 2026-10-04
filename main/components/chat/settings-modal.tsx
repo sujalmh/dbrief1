@@ -210,9 +210,10 @@ export function SettingsModal() {
 
     return (
         <Dialog open={isSettingsOpen} onOpenChange={setSettingsOpen}>
-            {/* Gradient outline + frosted glass body, matching the composer. */}
-            <DialogContent className="sm:max-w-[520px] max-h-[90dvh] overflow-y-auto border-none bg-gradient-to-br from-white/25 via-white/10 to-transparent p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
-                <div className="rounded-[calc(0.5rem-1px)] bg-background/85 backdrop-blur-2xl p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
+            {/* Liquid glass, matching the composer. Outer ring is lighter
+                on the left/right edges and darker across the top/bottom. */}
+            <DialogContent className="sm:max-w-[520px] max-h-[90dvh] overflow-y-auto border-none bg-gradient-to-r from-white/40 via-white/10 to-white/40 dark:from-white/25 dark:via-white/5 dark:to-white/25 p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
+                <div className="rounded-[calc(0.5rem-1px)] bg-white/75 dark:bg-black/45 backdrop-blur-xl p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                 <DialogHeader className="mb-4 text-center">
                     <div className="mx-auto mb-2 h-1 w-12 rounded-full bg-gradient-to-r from-[var(--f1-red)] to-[var(--f1-red)]/40" />
                     <DialogTitle className="text-xl font-black uppercase italic tracking-widest">AI Setup</DialogTitle>
@@ -261,7 +262,7 @@ export function SettingsModal() {
                     </div>
 
                     {/* Appearance — theme lives here now (removed from navbar) */}
-                    <div className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3 backdrop-blur">
+                    <div className="space-y-2 rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 p-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
                         <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">
                             Appearance
                         </Label>
@@ -288,7 +289,7 @@ export function SettingsModal() {
                     </div>
 
                     {isByok ? (
-                        <div className="space-y-4 rounded-xl border border-white/10 p-3 bg-white/5 backdrop-blur">
+                        <div className="space-y-4 rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 p-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
                             <div className="space-y-2">
                                 <Label htmlFor="byokBaseUrl" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">
                                     Model URL
@@ -404,7 +405,7 @@ export function SettingsModal() {
                             </div>
                         </div>
                     ) : (
-                        <div className="rounded-xl border border-white/10 p-3 bg-white/5 backdrop-blur">
+                        <div className="rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 p-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
                             <p className="text-xs text-muted-foreground leading-relaxed">
                                 Managed mode uses the model configured by the app owner
                                 (MiMo V2.5, same model for planning and answering).

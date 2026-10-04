@@ -16,7 +16,9 @@ import {
     shareUrl,
     type ShareLinkInfo,
 } from "@/lib/cf/client";
-import { Check, Copy, Link2, Loader2, Trash2 } from "lucide-react";
+import { exportConversation } from "@/lib/utils/export-conversation";
+import { useChatStore } from "@/lib/store";
+import { Check, Copy, Download, FileJson, FileText, Link2, Loader2, Share2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ShareDialogProps {
@@ -86,7 +88,7 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
         try {
             await navigator.clipboard.writeText(shareUrl(token));
         } catch {
-            // Clipboard API unavailable (permissions) — select fallback.
+            // Clipboard API unavailable: select fallback.
             const el = document.getElementById(`share-url-${token}`) as HTMLInputElement | null;
             el?.select();
             try {
@@ -99,42 +101,60 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
         setTimeout(() => setCopied((c) => (c === token ? null : c)), 2000);
     };
 
+    const handleDownload = (format: "markdown" | "json") => {
+        const st = useChatStore.getState();
+        exportConversation(st.messages, format, {
+            title: sessionTitle || st.sessions.find((s) => s.id === st.currentSessionId)?.title,
+        });
+    };
+    const hasMessages = useChatStore((s) => s.messages.length > 0);
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[480px] border-none bg-gradient-to-br from-white/25 via-white/10 to-transparent p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
-                <div className="rounded-[calc(0.5rem-1px)] bg-background/85 backdrop-blur-2xl p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
-                    <DialogHeader className="mb-4 text-center">
-                        <div className="mx-auto mb-2 h-1 w-12 rounded-full bg-gradient-to-r from-[var(--f1-purple)] to-[var(--f1-purple)]/40" />
-                        <DialogTitle className="text-xl font-black uppercase italic tracking-widest">
-                            Share chat
-                        </DialogTitle>
-                        <DialogDescription className="text-muted-foreground/80">
-                            {sessionTitle ? (
-                                <>
-                                    <span className="truncate font-mono">“{sessionTitle}”</span>
-                                    <br />
-                                </>
-                            ) : null}
-                            Anyone with the link can read this chat. No sign-in needed.
-                        </DialogDescription>
+            {/* Liquid glass, matching the composer. Outer ring is lighter
+                on the left/right edges and darker across the top/bottom. */}
+            <DialogContent className="sm:max-w-[440px] border-none bg-gradient-to-r from-white/40 via-white/10 to-white/40 dark:from-white/25 dark:via-white/5 dark:to-white/25 p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
+                <div className="rounded-[calc(0.5rem-1px)] bg-white/75 dark:bg-black/45 backdrop-blur-xl p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                    <DialogHeader className="mb-4 text-left">
+                        <div className="flex items-center gap-3">
+                            <span className="btn-wheel btn-wheel-purple h-9 w-9 shrink-0">
+                                <Share2 className="h-4 w-4" />
+                            </span>
+                            <div className="min-w-0">
+                                <DialogTitle className="text-sm font-bold uppercase tracking-wider">
+                                    Share
+                                </DialogTitle>
+                                <DialogDescription className="truncate text-xs text-muted-foreground">
+                                    {sessionTitle ? (
+                                        <span className="font-mono">{sessionTitle}</span>
+                                    ) : (
+                                        "Read-only link. No sign-in needed."
+                                    )}
+                                </DialogDescription>
+                            </div>
+                        </div>
                     </DialogHeader>
 
-                    <div className="grid gap-3 px-2">
+                    <div className="grid gap-3">
                         {loading ? (
                             <div className="flex items-center justify-center py-6">
                                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                             </div>
                         ) : links.length === 0 ? (
-                            <p className="rounded-xl border border-white/10 bg-white/5 p-3 text-xs leading-relaxed text-muted-foreground">
-                                No links yet. Shared views are read-only and show messages
-                                plus sources only — charts, usage stats, and internals stay
-                                private. You can revoke a link at any time.
-                            </p>
+                            <div className="flex items-center gap-3 rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 px-3 py-2.5 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
+                                <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <div>
+                                    <p className="text-xs font-semibold">No links yet</p>
+                                    <p className="text-[11px] text-muted-foreground">
+                                        Read-only. Shows messages and sources.
+                                    </p>
+                                </div>
+                            </div>
                         ) : (
                             links.map((l) => (
                                 <div
                                     key={l.token}
-                                    className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 p-2 pl-3"
+                                    className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 px-2 py-1.5 pl-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]"
                                 >
                                     <Link2 className="h-4 w-4 shrink-0 text-[var(--f1-purple)]" />
                                     <input
@@ -194,6 +214,39 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
                             )}
                             {links.length === 0 ? "Create share link" : "Create another link"}
                         </Button>
+
+                        <div className="rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 p-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
+                            <div className="mb-2 flex items-center gap-2 text-muted-foreground">
+                                <Download className="h-3.5 w-3.5" />
+                                <span className="text-[11px] font-bold uppercase tracking-wider">
+                                    Download
+                                </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleDownload("markdown")}
+                                    disabled={!hasMessages}
+                                    className="btn-physical h-8 gap-1.5 text-xs"
+                                >
+                                    <FileText className="h-3.5 w-3.5" />
+                                    Markdown
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleDownload("json")}
+                                    disabled={!hasMessages}
+                                    className="btn-physical h-8 gap-1.5 text-xs"
+                                >
+                                    <FileJson className="h-3.5 w-3.5" />
+                                    JSON
+                                </Button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </DialogContent>

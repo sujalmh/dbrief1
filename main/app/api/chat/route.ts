@@ -37,12 +37,13 @@ import {
     classifyPrompt,
     isConversationalFastPath,
     isOffTopicRefusal,
+    hasF1EntitySignal,
     isRecencyRoute,
     JEV_CONVERSATIONAL_REPLY,
     JEV_OFF_TOPIC_REPLY,
     type JevClassification,
 } from "@/lib/jev";
-import { executeSteps, aggregateContext } from "@/lib/executor";
+import { executeSteps, aggregateContext, buildRefusalMessage } from "@/lib/executor";
 import { UsageAccumulator, getModelId, type UsageTotals } from "@/lib/llm-usage";
 import { f1Tools } from "@/lib/tools/fastf1";
 import { getSearchTools } from "@/lib/tools/search";
@@ -236,6 +237,10 @@ const RESPONDER_SYSTEM_PROMPT = `You are an expert Formula 1 AI assistant with d
 - When the context contains a \`get_events\` schedule AND web results, determine the latest COMPLETED event yourself: the event with the greatest \`event_date\` that is still on or before the Current Date above. That event — and only that event — is "the last race".
 - The winner must come from web evidence ABOUT THAT EVENT (its GP name / circuit / date appearing in the title, URL, or snippet). A winners-list snippet covering many races is evidence only if you can tie the row to the anchored event.
 - NEVER substitute a different dated event just because it has a cleaner result page (e.g. answering with the British GP when the schedule shows a later completed race). If no web evidence covers the anchored event, say exactly that: "The latest completed event is <GP> (<date>), but the retrieved sources don't confirm its winner" — then offer the closest confirmed result as a clearly-labeled fallback, never as the answer.
+- NEVER headline a result you believe is stale. If the schedule anchor step failed (no \`get_events\` data in context), say the anchor is unavailable and give only web-backed results labeled with their event + date — never present an older table as "the latest".
+
+## Simulation Grounding
+- When the context contains \`run_simulation\` output, check \`parameters_used.grounding\`. If it is "defaults" or "defaults-despite-reference", present the numbers as an ILLUSTRATIVE estimate only: give ranges, never precise percentiles, and state in one sentence that no real session data grounded the run. Never invent the race the user didn't name.
 
 ## Race-Result Grounding
 - Every race answer MUST name the Grand Prix and year the data came from (it is in the tool payload). "The most recent race" is never an acceptable substitute for the event name.`;
@@ -542,7 +547,7 @@ export async function POST(request: NextRequest) {
                     // capital of France?") must refuse, not receive the
                     // capability greeting. Ambiguity and classifier
                     // outages fall through to the pipeline (see lib/jev.ts).
-                    if (isOffTopicRefusal(jevClassification)) {
+                    if (isOffTopicRefusal(jevClassification) && !hasF1EntitySignal(message)) {
                         sendEvent("refusal", { reason: "off_topic" });
                         sendEvent("token", { content: JEV_OFF_TOPIC_REPLY });
                         sendEvent("done", {});
@@ -996,19 +1001,11 @@ export async function POST(request: NextRequest) {
                         const failedSteps = executionContext.results
                             .filter((r) => !r.success)
                             .map((r) => ({ step: r.step, tool: r.tool, error: r.error || "unknown error" }));
-                        // Persist the refusal decision (reason + failed
-                        // steps) as its own event before the refusal text
-                        // streams — otherwise this path leaves no trace of
-                        // WHY no tools produced data.
                         sendEvent("refusal", {
                             reason: allFailed ? "all_steps_failed" : "context_empty",
                             failedSteps,
                         });
-                        const refusalMsg = "I was unable to retrieve any F1 data for your query. This may be due to an invalid Grand Prix name, session type, or year. Please verify the details and try again.\n\n**What went wrong:**\n" +
-                            failedSteps
-                                .map((r) => `- Step ${r.step} (${r.tool}): ${r.error}`)
-                                .join("\n");
-                        sendEvent("token", { content: refusalMsg });
+                        sendEvent("token", { content: buildRefusalMessage(failedSteps, plan.reasoning) });
                         sendEvent("done", {});
                         recordTurn(countSimUsage(executionContext.results));
                         safeClose();

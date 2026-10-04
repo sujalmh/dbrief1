@@ -126,6 +126,7 @@ export class ResearchManager {
         let researchType: ResearchType = "factual";
         let strategy = "";
         let consecutiveStops = 0;
+        let consecutiveEmptyIterations = 0;
         let timedOut = false;
 
         try {
@@ -316,23 +317,18 @@ export class ResearchManager {
                         taskId: result.taskId,
                         status: result.success ? "success" : "failed",
                         data: result.data,
-                        evidenceId: this.evidenceStore.getById(
-                            this.memory.getCachedEvidenceId(result.tool, result.args) || ""
-                        )?.id,
+                        evidenceId: result.evidenceId,
                     };
                 }
 
                 // Emit evidence for new items
                 const evidenceMap = new Map<string, string>();
                 for (const result of results) {
-                    if (!result.success) continue;
-                    const evidenceId = this.memory.getCachedEvidenceId(result.tool, result.args);
-                    if (evidenceId) {
-                        evidenceMap.set(result.taskId, evidenceId);
-                        const evidence = this.evidenceStore.getById(evidenceId);
-                        if (evidence) {
-                            yield { type: "evidence", evidence };
-                        }
+                    if (!result.success || !result.evidenceId) continue;
+                    evidenceMap.set(result.taskId, result.evidenceId);
+                    const evidence = this.evidenceStore.getById(result.evidenceId);
+                    if (evidence) {
+                        yield { type: "evidence", evidence };
                     }
                 }
 
@@ -341,6 +337,18 @@ export class ResearchManager {
 
                 // Update budget
                 budget.tasksExecuted += results.length;
+
+                // Early exit: consecutive iterations with zero successes
+                // mean the data plane is down or the plan is unworkable —
+                // grinding to the wall clock only burns time and quota.
+                if (results.length > 0 && results.every((r) => !r.success)) {
+                    consecutiveEmptyIterations++;
+                    if (consecutiveEmptyIterations >= 2) {
+                        break;
+                    }
+                } else {
+                    consecutiveEmptyIterations = 0;
+                }
 
                 // --- Reflect ---
                 let reflection: Reflection;

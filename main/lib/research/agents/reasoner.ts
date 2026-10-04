@@ -41,7 +41,7 @@ const ReflectionOutputSchema = z.object({
     answeredPart: z.string(),
     stillMissing: z.array(z.string()),
     nextAction: z.enum(["call_tool", "stop"]),
-    nextStrategy: z.string().optional(),
+    nextStrategy: z.string().nullable(),
     reasoning: z.string(),
 });
 

@@ -475,9 +475,31 @@ export class EvidenceStore {
     /**
      * Summarize a large array by keeping the first few items, last few items,
      * and count. For arrays of objects, extracts key fields.
+     *
+     * Schedules (`events`, `grand_prix`) and full classifications
+     * (`results`, `standings`) are NEVER shredded: the synthesizer anchors
+     * "last"/"next" race by comparing every event_date against today, and
+     * answers backmarker questions from full tables. These payloads are
+     * small (a 25-event schedule ≈ 6KB), so they are included whole
+     * whenever they fit the per-item budget.
      */
     private summarizeArray(key: string, arr: unknown[], maxChars: number): string {
         if (arr.length === 0) return "[]";
+
+        // Complete-data keys: include whole when they fit the budget.
+        // Schedules are always included whole — even over budget — because
+        // a shredded schedule silently moves the "latest completed event"
+        // anchor and produces confidently-wrong recency answers. A full
+        // season schedule is only ~6KB.
+        if (key === "events" || key === "grand_prix") {
+            return JSON.stringify(arr, null, 2);
+        }
+        if (key === "results" || key === "standings") {
+            const whole = JSON.stringify(arr, null, 2);
+            if (whole.length <= maxChars) return whole;
+            // Over budget (shouldn't happen for real payloads): fall through
+            // to the generic head+tail summary below.
+        }
 
         // For small arrays, include all
         const allStr = JSON.stringify(arr, null, 2);

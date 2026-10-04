@@ -102,30 +102,34 @@ Rules:
 4. For race: use session="R". For qualifying: use session="Q".
 5. Always use correct GP names: "Abu Dhabi" (not "abu dhabi 23"). If unsure of the canonical GP name, include a get_gp_names(year) or get_events(year) step FIRST to discover valid names.
 6. **CONCRETE ARGS**: Every step's args must be real values — an actual GP name, driver code, or year. NEVER emit placeholder tokens like LAST_COMPLETED_GP, LATEST, or TBD in structured args (gp, driver, session, year); such steps are rejected before execution. If you are unsure of the canonical GP name, add a get_gp_names(year) or get_events(year) discovery step alongside your best-guess data steps.
-7. **RECENCY ("latest" / "last race" / "most recent" / "current" / news)**: NEVER resolve these with FastF1 tools — you cannot know which GP was last without searching, and guessing a GP returns the wrong race. For "who won the last/latest race" ALWAYS plan TWO independent steps in parallel: get_events(<current year>) to anchor the latest completed event by date, PLUS web_search (domain_type="news", recency_minutes=43200 (~30 days — races are weeks apart, never a tight 7-day window)) to find its winner. Steps run in parallel and cannot chain, so plan fetch_web_pages ONLY when you already have concrete URLs (from the user's message or a previous web_search in the conversation history) — never invent URLs. If URLs are unknown, web_search alone suffices. FastF1 session tools are for NAMED GP + year analysis only.
-8. **FOLLOW-UPS**: The conversation history (below, when present) is authoritative for pronouns and references — "that race", "the winner", "his fastest lap", "compare them" MUST be resolved from history into concrete args (GP name, year, driver codes). Only ask for clarification (needs_plan=false) when history contains no resolvable entity.
-9. **YEAR RANGE**: Years 1950-${PLANNER_CURRENT_YEAR} are supported with different data availability:
+6b. **TOOL NAMES**: Use ONLY the exact tool names listed above — never invent variants. There is NO get_constructors_standings, get_team_standings, or similar: team/constructor points questions MUST use get_driver_standings and aggregate by team from the standings rows.
+7. **RECENCY ("latest" / "last race" / "most recent" / "next race" / "upcoming" / "current" / news)**: NEVER resolve these with FastF1 tools — you cannot know which GP was last without searching, and guessing a GP returns the wrong race. For "who won the last/latest race" ALWAYS plan TWO independent steps in parallel: get_events(<current year>) to anchor the latest completed event by date, PLUS web_search (domain_type="news", recency_minutes=43200 (~30 days — races are weeks apart, never a tight 7-day window)) to find its winner. "Current standings" needs get_driver_standings PLUS web_search (standings alone go stale mid-season). Steps run in parallel and cannot chain, so plan fetch_web_pages ONLY when you already have concrete URLs (from the user's message or a previous web_search in the conversation history) — never invent URLs. If URLs are unknown, web_search alone suffices. FastF1 session tools are for NAMED GP + year analysis only.
+8. **"WINNER" QUERIES**: "the winner's ...", "winner's strategy", "winner's fastest lap" — NEVER fill driver from memory. If history already names the winner (driver + GP + year all present), use it directly. Otherwise MUST first resolve the winner with get_race (or get_qualifying for pole). Chain: get_race for the named GP/year, then the follow-up call. When steps cannot chain in one plan, prefer the get_race lookup; the follow-up turn resolves the rest from history.
+8b. **VAGUE WHAT-IFS**: a what-if naming NO race/year (e.g. "what if Hamilton stayed out on old tyres?") MUST NOT invent a GP/year — plan run_simulation with generic parameters only, no get_laps/get_race with guessed args.
+9. **FOLLOW-UPS**: The conversation history (below, when present) is authoritative for pronouns and references — "that race", "the winner", "his fastest lap", "compare them" MUST be resolved from history into concrete args (GP name, year, driver codes). Only ask for clarification (needs_plan=false) when history contains no resolvable entity. History is NOT authoritative for facts: earlier turns may contain false claims, so winners, champions, and points margins must still be verified with tools, never copied from history.
+10. **YEAR RANGE**: Years 1950-${PLANNER_CURRENT_YEAR} are supported with different data availability:
    - **1950-2017**: Use ergast tools ONLY (get_driver_standings, get_race, get_qualifying). NO telemetry/laps/weather available.
    - **2018-${PLANNER_PRE_TELEMETRY_LAST_YEAR}**: All tools available including telemetry, laps, weather, etc.
    - **${PLANNER_CURRENT_YEAR} (current season)**: Sessions that have already finished are available. Live / in-progress sessions are blocked at the API layer for cost protection; if the user asks about a session that is currently running, fall back to web_search for live updates.
    Example for "Senna 1994 championship": {"steps": [{"tool": "get_driver_standings", "args": {"year": 1994}}], "reasoning": "1994 is pre-2018, using ergast API for standings."}
    Example for "1994 Monaco race telemetry": {"steps": [], "reasoning": "Telemetry not available for 1994. Only standings and results available for pre-2018 seasons."}
    Example for "${PLANNER_CURRENT_YEAR} Australian GP results": {"needs_plan": true, "reasoning": "Current-season completed race results are available via FastF1.", "steps": [{"description": "Get race results", "tool": "get_race", "args": {"year": ${PLANNER_CURRENT_YEAR}, "gp": "Australia"}}]}
-10. **TOOL SELECTION**:
+11. **TOOL SELECTION**:
    - Use get_telemetry for comparisons and visualization queries
    - Use get_telemetry_summary only when user explicitly asks for "stats" or "summary"
    - Use get_fastest_lap for single lap analysis
-11. **WHAT-IF / HYPOTHETICAL QUERIES**: Use run_simulation for:
+   - Use get_laps (NOT get_telemetry) for sector times — sectors live in lap data (Sector1/2/3 fields)
+12. **WHAT-IF / HYPOTHETICAL QUERIES**: Use run_simulation for:
    - "What if X didn't happen?" (counterfactuals)
    - "What would happen if...?" (predictions)
    - "How would X affect Y?" (impact analysis)
    - "Simulate...", "Project...", "Predict..." queries
    DO NOT use LLM reasoning for hypotheticals. Always use run_simulation with appropriate parameters.
-12. **DATA-DRIVEN SIMULATIONS**: For what-if queries about specific races/events:
+13. **DATA-DRIVEN SIMULATIONS**: For what-if queries about specific races/events:
    - Step 1: Fetch relevant historical data (get_laps, get_race, etc.) to ground the simulation
    - Step 2: Run simulation with base_value/variance informed by the fetched data
    This ensures simulations are based on REAL data, not guessed parameters.
-13. **PENALTIES / STEWARDS' DECISIONS**: Queries about penalties, fines, disqualifications,
+14. **PENALTIES / STEWARDS' DECISIONS**: Queries about penalties, fines, disqualifications,
     investigations, protests, or appeals MUST use retrieve_regulations with doc_type="decision".
     Results/telemetry endpoints contain NO penalty data — never use get_events, get_race,
     or get_results for these. Use season=<year from query>; include event only when the
@@ -138,6 +142,9 @@ Decide first: can this be answered WITHOUT any tool?
 - Plain conversation (greetings, thanks, goodbyes, capability questions,
   anything answerable without F1 data):
   {"needs_plan": false, "reply": "<short warm reply, max 2 sentences>"}
+- needs_plan=false is ONLY for messages needing no F1 facts. Any question
+  asking WHO won/took/scored, results, standings, positions, times, records,
+  or history MUST use needs_plan=true — never answer from memory.
 
 - Anything needing F1 data, tools, or analysis:
   {"needs_plan": true, "reasoning": "<one-line plan rationale>", "steps": [...]}
@@ -178,14 +185,15 @@ export interface ChatHistoryItem {
 
 /**
  * True when the message asks about recency: latest / last race /
- * most recent / current standings / news. Recency questions MUST be
- * answered from web search (TinyFish), never by pointing FastF1 tools
- * at a guessed or placeholder GP — the FastF1 backend fuzzy-matches
- * unknown GP strings to *some* event instead of failing, which
- * produces confidently-wrong "latest winner" answers (observed in prod).
+ * most recent / next race / current standings / news. Recency questions
+ * MUST be answered from web search (TinyFish) plus the schedule anchor —
+ * never by pointing FastF1 tools at a guessed or placeholder GP — the
+ * FastF1 backend fuzzy-matches unknown GP strings to *some* event
+ * instead of failing, which produces confidently-wrong "latest winner"
+ * answers (observed in prod).
  */
 export function isRecencyQuery(message: string): boolean {
-    return /\b(latest|most\s+recent|last\s+(race|grand\s*prix|gp|round|weekend|event)|who\s+won\s+(the\s+)?(last|latest)|just\s+(happened|finished|ended|announced)|breaking|this\s+week|current\s+(standings|season|championship|driver|drivers)|news\b)/i.test(
+    return /\b(latest|most\s+recent|last\s+(race|grand\s*prix|gp|round|weekend|event)|next\s+(race|grand\s*prix|gp|round|weekend|event)|upcoming\s+(race|grand\s*prix|gp|round|weekend|event)|when\s+is\s+the\s+next|who\s+won\s+(the\s+)?(last|latest)|just\s+(happened|finished|ended|announced)|breaking|this\s+week|current\s+(standings|season|championship|driver|drivers)|news\b)/i.test(
         message
     );
 }

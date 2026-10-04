@@ -113,8 +113,9 @@ export function InfoModal({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[640px] max-h-[85dvh] overflow-hidden border-none bg-background/95 backdrop-blur-xl shadow-2xl p-0 gap-0">
-                <DialogHeader className="px-6 pt-5 pb-3 text-left border-b border-border/50">
+            <DialogContent className="sm:max-w-[640px] max-h-[85dvh] overflow-hidden border-none bg-gradient-to-r from-white/40 via-white/10 to-white/40 dark:from-white/25 dark:via-white/5 dark:to-white/25 p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
+                <div className="rounded-[calc(0.5rem-1px)] bg-white/75 dark:bg-black/45 backdrop-blur-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] overflow-hidden">
+                <DialogHeader className="px-6 pt-5 pb-3 text-left border-b border-white/10">
                     <DialogTitle className="text-base font-bold tracking-tight">
                         Information
                     </DialogTitle>
@@ -122,7 +123,7 @@ export function InfoModal({
 
                 <div className="flex min-h-0 flex-col sm:flex-row">
                     {/* Section nav — top tabs on phones, left rail on desktop */}
-                    <nav className="flex shrink-0 flex-row gap-1 overflow-x-auto border-b border-border/50 p-3 sm:w-40 sm:flex-col sm:border-b-0 sm:border-r">
+                    <nav className="flex shrink-0 flex-row gap-1 overflow-x-auto border-b border-white/10 p-3 sm:w-40 sm:flex-col sm:border-b-0 sm:border-r">
                         {SECTIONS.map(({ id, label, icon: Icon }) => (
                             <button
                                 key={id}
@@ -132,7 +133,7 @@ export function InfoModal({
                                     "flex items-center gap-2 rounded-md px-3 py-2 text-xs font-bold uppercase tracking-wider transition-colors whitespace-nowrap",
                                     section === id
                                         ? "bg-[var(--f1-red)]/15 text-[var(--f1-red)]"
-                                        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                                        : "text-muted-foreground hover:text-foreground hover:bg-white/10 dark:hover:bg-black/30"
                                 )}
                             >
                                 <Icon className="h-4 w-4 shrink-0" />
@@ -147,6 +148,7 @@ export function InfoModal({
                         {section === "privacy" && <PrivacyBody />}
                         {section === "terms" && <TermsBody />}
                     </div>
+                </div>
                 </div>
             </DialogContent>
         </Dialog>

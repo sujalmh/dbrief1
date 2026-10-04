@@ -116,7 +116,7 @@ export function QuotaStrip() {
                 <div
                     role="dialog"
                     aria-label="Daily usage details"
-                    className="absolute bottom-full right-0 z-50 mb-2 rounded-xl border border-white/15 bg-background/90 shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-2xl"
+                    className="absolute bottom-full right-0 z-50 mb-2 rounded-xl border border-white/15 bg-white/75 dark:bg-black/45 shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-xl"
                 >
                     <QuotaCard quota={quota} />
                 </div>

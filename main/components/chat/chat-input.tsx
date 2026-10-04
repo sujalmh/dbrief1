@@ -54,8 +54,9 @@ export function ChatInput() {
     // Gradient outline: 1px gradient ring wrapping the glass body. The
     // outer div IS the border (padding 1px, gradient bg); the inner div
     // is the frosted glass — a light-catching edge, not a flat border.
+    // Ring is lighter on the left/right edges, darker across top/bottom.
     return (
-        <div className="rounded-[2rem] bg-gradient-to-br from-white/30 via-white/10 to-white/5 p-px shadow-[0_8px_32px_rgba(0,0,0,0.25)] dark:from-white/20 dark:via-white/10 dark:to-transparent dark:shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
+        <div className="rounded-[2rem] bg-gradient-to-r from-white/40 via-white/10 to-white/40 p-px shadow-[0_8px_32px_rgba(0,0,0,0.25)] dark:from-white/25 dark:via-white/5 dark:to-white/25 dark:shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
         <div className="relative rounded-[calc(2rem-1px)] transition-all duration-300 backdrop-blur-xl
             bg-white/70 hover:bg-white/80
             dark:bg-black/40 dark:hover:bg-black/50

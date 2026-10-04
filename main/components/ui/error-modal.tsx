@@ -25,7 +25,7 @@ export function ErrorModal() {
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.95, opacity: 0 }}
                     onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                    className="relative w-full max-w-md overflow-hidden rounded-xl bg-[#151515] border border-red-600 shadow-2xl"
+                    className="relative w-full max-w-md overflow-hidden rounded-xl border border-white/15 bg-white/75 dark:bg-black/45 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
                 >
                     {/* Header Strip */}
                     <div className="h-1 w-full bg-red-600" />
@@ -37,11 +37,11 @@ export function ErrorModal() {
                             </div>
                             
                             <div className="flex-1 space-y-2">
-                                <h3 className="text-lg font-bold uppercase tracking-wider text-white">
+                                <h3 className="text-lg font-bold uppercase tracking-wider text-foreground">
                                     System Malfunction
                                 </h3>
                                 
-                                <div className="text-sm text-gray-400 leading-relaxed font-mono border-l-2 border-red-600/30 pl-3">
+                                <div className="text-sm text-muted-foreground leading-relaxed font-mono border-l-2 border-red-600/30 pl-3">
                                     {error}
                                 </div>
                             </div>
@@ -61,7 +61,7 @@ export function ErrorModal() {
                     {/* Close Button */}
                     <button 
                         onClick={() => setError(null)}
-                        className="absolute right-4 top-4 text-gray-500 hover:text-white transition-colors"
+                        className="absolute right-4 top-4 text-muted-foreground hover:text-foreground transition-colors"
                     >
                         <X className="h-4 w-4" />
                     </button>

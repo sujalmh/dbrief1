@@ -126,12 +126,17 @@ async function executeStep(
     // common ones without hiding actual bugs.
     const { tool, normalizedTool, aliasHit } = resolveTool(step.tool, tools);
     if (!tool) {
+        if (process.env.NODE_ENV === "development") {
+            console.warn(
+                `[Executor] Step ${stepIndex}: unknown tool "${step.tool}". Available: ${Object.keys(tools).join(", ")}`
+            );
+        }
         return {
             step: stepIndex,
             tool: step.tool,
             args: step.args,
             success: false,
-            error: `Unknown tool: ${step.tool}. Available: ${Object.keys(tools).join(", ")}`,
+            error: `Unknown tool: ${step.tool}`,
             durationMs: Date.now() - startTime,
         };
     }
@@ -324,8 +329,24 @@ export async function executeSteps(
 
 const MAX_CONTEXT_TOKENS = 150_000; // Safe limit below 262k
 const CHARS_PER_TOKEN = 3; // Safer estimate for dense JSON: 1 token ≈ 3 characters
-/** Max rows kept per list payload (results, standings, events, ...) before row-truncation kicks in. */
+/** Max rows kept per list payload before row-truncation kicks in. */
 const MAX_ROWS_PER_LIST = 12;
+/**
+ * Per-payload row caps. Schedules and full classifications must stay
+ * COMPLETE in LLM context — the responder anchors "last race" / "next
+ * race" by comparing every event_date against today, and answers
+ * backmarker questions (P20, last place) from full results tables.
+ * These payloads are small (a 25-event schedule ≈ 6KB, a 20-driver
+ * table ≈ 3KB), so keeping them whole is cheaper than a wrong answer.
+ * Large time-series (`data`, `messages`, `laps`, ...) keep the tight cap.
+ */
+const ROW_CAP_BY_KEY: Record<string, number> = {
+    events: 30,
+    grand_prix: 30,
+    results: 25,
+    standings: 25,
+    sessions: 15,
+};
 
 /**
  * Estimate token count from a string
@@ -540,6 +561,127 @@ function summarizeFetchForLLM(data: { pages: unknown[];[key: string]: unknown })
 }
 
 /**
+ * Check if data is regulation retrieval output (has 'retrieved_documents' array)
+ */
+function isRegulationData(data: unknown): data is { retrieved_documents: unknown[];[key: string]: unknown } {
+    return (
+        typeof data === "object" &&
+        data !== null &&
+        "retrieved_documents" in data &&
+        Array.isArray((data as { retrieved_documents: unknown[] }).retrieved_documents)
+    );
+}
+
+const MAX_REG_DOCS = 5;
+const MAX_REG_CONTENT_CHARS = 1500;
+
+/**
+ * Citation fields kept per regulation chunk. Everything needed to cite
+ * and link the source survives; chunk text is trimmed, never dropped.
+ */
+const REG_DOC_FIELDS = [
+    "source",
+    "title",
+    "url",
+    "source_url",
+    "doc_type",
+    "section",
+    "event",
+    "season",
+    "published_on",
+    "relevance_score",
+] as const;
+
+/**
+ * Trim regulation chunks for LLM consumption: keep the top docs by
+ * relevance_score with full citation fields plus the head of each chunk.
+ * Without this the generic 10k stub below nukes the whole payload and
+ * the responder refuses despite relevant docs being retrieved.
+ */
+function summarizeRegulationsForLLM(data: { retrieved_documents: unknown[];[key: string]: unknown }): Record<string, unknown> {
+    const docs = (data.retrieved_documents as Array<Record<string, unknown>>)
+        .filter((doc) => typeof doc === "object" && doc !== null)
+        .map((doc, index) => ({ doc, index }))
+        .sort((a, b) => {
+            const ra = typeof a.doc.relevance_score === "number" ? a.doc.relevance_score : -1;
+            const rb = typeof b.doc.relevance_score === "number" ? b.doc.relevance_score : -1;
+            return rb - ra || a.index - b.index;
+        })
+        .map(({ doc }) => doc);
+    let trimmed = false;
+    const kept = docs.slice(0, MAX_REG_DOCS).map((doc) => {
+        const out: Record<string, unknown> = {};
+        for (const f of REG_DOC_FIELDS) {
+            if (doc[f] !== undefined && doc[f] !== null && doc[f] !== "") {
+                out[f] = doc[f];
+            }
+        }
+        const content = typeof doc.content === "string" ? doc.content : "";
+        if (content.length > MAX_REG_CONTENT_CHARS) {
+            trimmed = true;
+            out.content = content.slice(0, MAX_REG_CONTENT_CHARS) + "\n\n[truncated for context]";
+        } else {
+            out.content = content;
+        }
+        return out;
+    });
+    const dropped = docs.length - kept.length;
+    return {
+        retrieved_documents: kept,
+        ...("used_subqueries" in data ? { used_subqueries: data.used_subqueries } : {}),
+        ...(dropped > 0 ? { retrieved_documents_truncated_from: docs.length } : {}),
+        ...(dropped > 0 || trimmed
+            ? { note: "Regulation chunks trimmed to head excerpts for LLM context efficiency" }
+            : {}),
+    };
+}
+
+/**
+ * Fields the responder needs per classification row. Everything else the
+ * backend sends (headshot URLs, team colors, empty broadcast/country
+ * fields, Q1-Q3 nulls on race payloads) is context bloat: ~500 chars/row
+ * × 20 rows trips the 10KB generic stub and hides the backmarkers.
+ */
+const CLASSIFICATION_ROW_FIELDS = [
+    "Position",
+    "ClassifiedPosition",
+    "GridPosition",
+    "Abbreviation",
+    "Driver",
+    "DriverId",
+    "FullName",
+    "FirstName",
+    "LastName",
+    "TeamName",
+    "TeamId",
+    "Time",
+    "Gap",
+    "Q1",
+    "Q2",
+    "Q3",
+    "Status",
+    "Points",
+    "Laps",
+] as const;
+
+/**
+ * Project a fat classification row to the fields the responder needs.
+ * Non-object rows and rows matching none of the known fields pass
+ * through untouched (never destroy shapes we don't recognize).
+ */
+function compactClassificationRow(row: unknown): unknown {
+    if (typeof row !== "object" || row === null || Array.isArray(row)) return row;
+    const rec = row as Record<string, unknown>;
+    const compact: Record<string, unknown> = {};
+    for (const f of CLASSIFICATION_ROW_FIELDS) {
+        if (rec[f] !== undefined && rec[f] !== null && rec[f] !== "") {
+            compact[f] = rec[f];
+        }
+    }
+    return Object.keys(compact).length > 0 ? compact : row;
+}
+
+/**
  * Reduce a single result's data if it's too large
  */
 function reduceResultData(result: ExecutionResult): ExecutionResult {
@@ -552,6 +694,14 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
         return {
             ...result,
             data: summarizeFetchForLLM(result.data),
+        };
+    }
+
+    // Check if it's regulation retrieval output and trim chunk texts
+    if (isRegulationData(result.data)) {
+        return {
+            ...result,
+            data: summarizeRegulationsForLLM(result.data),
         };
     }
 
@@ -594,23 +744,37 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
         }
     }
 
-    // Check for other large row-list payloads (results, standings, events,
-    // weather, tyres, stints, race control, ...): keep the first rows and
-    // note how many were omitted, instead of nuking the whole payload.
-    // (Without this, e.g. a 20-driver results table collapses to a
-    // "[Data too large]" stub and the responder is forced to refuse.)
+    // Check for other large row-list payloads (weather, tyres, stints,
+    // race control, ...): keep the first rows and note how many were
+    // omitted, instead of nuking the whole payload. (Without this, e.g.
+    // a 20-driver results table collapses to a "[Data too large]" stub
+    // and the responder is forced to refuse.) Schedules and full
+    // classifications are exempt up to their per-key caps (see
+    // ROW_CAP_BY_KEY) so date-anchoring ("last"/"next" race) and
+    // backmarker questions always see complete data.
+    //
+    // Classification tables also carry fat per-driver rows (headshot URLs,
+    // team colors, empty broadcast fields — ~500 chars/row). They are
+    // projected to the fields the responder actually needs (see
+    // compactClassificationRow) so the full 20-driver grid fits in context
+    // instead of tripping the 10KB generic stub below.
     if (typeof result.data === "object" && result.data !== null) {
-        const rec = result.data as Record<string, unknown>;
+        const rec = { ...(result.data as Record<string, unknown>) };
+        if (Array.isArray(rec.results)) {
+            rec.results = (rec.results as unknown[]).map(compactClassificationRow);
+            result = { ...result, data: rec };
+        }
         for (const key of Object.keys(rec)) {
             const val = rec[key];
-            if (Array.isArray(val) && val.length > MAX_ROWS_PER_LIST) {
+            const cap = ROW_CAP_BY_KEY[key] ?? MAX_ROWS_PER_LIST;
+            if (Array.isArray(val) && val.length > cap) {
                 return {
                     ...result,
                     data: {
                         ...rec,
-                        [key]: val.slice(0, MAX_ROWS_PER_LIST),
+                        [key]: val.slice(0, cap),
                         [`${key}_truncated_from`]: val.length,
-                        note: `Showing first ${MAX_ROWS_PER_LIST} of ${val.length} ${key} for LLM context efficiency`,
+                        note: `Showing first ${cap} of ${val.length} ${key} for LLM context efficiency`,
                     },
                 };
             }
@@ -637,6 +801,32 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
     return result;
 }
 
+
+export interface FailedStep {
+    step: number;
+    tool: string;
+    error: string;
+}
+
+export function buildRefusalMessage(failedSteps: FailedStep[], planReasoning?: string): string {
+    const allServer = failedSteps.length > 0 && failedSteps.every((r) => SERVER_ERROR_RE.test(r.error));
+    const headline = allServer
+        ? "The F1 data service is temporarily unavailable. Please try again in a moment."
+        : "I was unable to retrieve any F1 data for your query. This may be due to an invalid Grand Prix name, session type, or year. Please verify the details and try again.";
+    const detail = failedSteps.length > 0
+        ? failedSteps.map((r) => `- Step ${r.step} (${r.tool}): ${sanitizeStepError(r.error)}`).join("\n")
+        : (planReasoning || "No execution steps were produced for this query.");
+    return `${headline}\n\n**What went wrong:**\n` + detail;
+}
+
+const SERVER_ERROR_RE = /api key|unauthorized|\b40[013]\b|forbidden|timed out|timeout|network|fetch failed|service unavailable|internal server error/i;
+
+function sanitizeStepError(error: string): string {
+    if (SERVER_ERROR_RE.test(error)) {
+        return "The F1 data service is temporarily unavailable. Please try again in a moment.";
+    }
+    return error;
+}
 
 export function aggregateContext(context: ExecutionContext): string {
     if (context.results.length === 0) {

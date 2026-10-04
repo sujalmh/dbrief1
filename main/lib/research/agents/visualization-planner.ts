@@ -48,7 +48,7 @@ const IntentProposalSchema = z.object({
                 purpose: z.string().describe("One-line summary of the chart's purpose"),
                 question: z.string().describe("The user-facing question this chart answers"),
                 evidenceIds: z.array(z.string()).describe("IDs of evidence to use (E1, E2, ...)"),
-                focus: z.array(z.string()).optional().describe("Optional driver/team/compound codes to highlight"),
+                focus: z.array(z.string()).nullable().describe("Driver/team/compound codes to highlight, or null"),
             })
         )
         .describe("List of meaningful chart intents. Return an empty array if no charts are needed."),
@@ -163,7 +163,7 @@ export class VisualizationPlanner {
                         purpose: c.purpose,
                         question: c.question,
                         evidenceIds: c.evidenceIds,
-                        focus: c.focus,
+                        focus: c.focus ?? undefined,
                     };
                 })
                 .filter((c): c is IntentProposal => c !== null);

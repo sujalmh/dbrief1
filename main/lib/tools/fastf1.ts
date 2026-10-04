@@ -43,7 +43,7 @@ async function f1Get(endpoint: string): Promise<unknown> {
 
     if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        throw new Error(error.error || `F1 API error: ${response.status}`);
+        throw new Error(`F1 API error ${response.status}: ${error.error || response.statusText}`);
     }
 
     return parseResponseBody(response);
@@ -62,7 +62,7 @@ async function f1Post(endpoint: string, body: unknown): Promise<unknown> {
 
     if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        throw new Error(error.error || `F1 API error: ${response.status}`);
+        throw new Error(`F1 API error ${response.status}: ${error.error || response.statusText}`);
     }
 
     return parseResponseBody(response);

@@ -107,10 +107,10 @@ IMPORTANT: Use the entities above as-is for tool args (driver codes, GP names, y
 ${toolList}
 
 ## Rules
-1. Each task must use a tool from the list above.
+1. Each task must use a tool from the list above, spelled EXACTLY as listed — never invent variants (there is no get_constructors_standings: use get_driver_standings and aggregate by team).
 2. Tool args must match the tool's input schema.
-3. Use {{task_id.field.path}} template syntax in args to reference outputs of prior tasks. Example: { "gp": "{{task_1.events[2].event_name}}" }
-4. Use dependsOn to specify task IDs that must complete before this task can run.
+3. Use {{task_id.field.path}} template syntax in args to reference outputs of prior tasks. Example: { "gp": "{{task_1_1.events[2].event_name}}" }
+4. Task IDs are assigned in order as task_<iteration>_<n> (first task this iteration is task_1_1, second task_1_2, ...). Use dependsOn with those EXACT IDs to specify task IDs that must complete before this task can run.
 5. Each task needs a rationale explaining why it's needed.
 6. Only produce tasks that are needed for the current strategy — don't over-plan.
 7. For years before 2018, only use get_driver_standings, get_race, get_qualifying, get_results (no telemetry/laps).
@@ -130,9 +130,9 @@ When the objective is a prediction, counterfactual, or "what-if" scenario (keywo
    - "position" for finishing positions
 4. Set dependsOn so the simulation task runs AFTER the data-fetch tasks.
 Example plan for "What if Abu Dhabi 2021 didn't end under safety car?":
-  task_1: get_laps(year=2021, gp="Abu Dhabi", session="R", driver="HAM", lap_start=50, lap_end=55)
-  task_2: get_laps(year=2021, gp="Abu Dhabi", session="R", driver="VER", lap_start=50, lap_end=55)
-  task_3: run_simulation(scenario_id="abu-dhabi-21-no-sc", horizon="race", metric="gap", reference_data="{{task_1}}", reference_field="LapTime", dependsOn=["task_1","task_2"])
+  task_1_1: get_laps(year=2021, gp="Abu Dhabi", session="R", driver="HAM", lap_start=50, lap_end=55)
+  task_1_2: get_laps(year=2021, gp="Abu Dhabi", session="R", driver="VER", lap_start=50, lap_end=55)
+  task_1_3: run_simulation(scenario_id="abu-dhabi-21-no-sc", horizon="race", metric="gap", reference_data="{{task_1_1}}", reference_field="LapTime", dependsOn=["task_1_1","task_1_2"])
 If no historical data is relevant (pure hypothetical), you may call run_simulation with explicit base_value/variance, but prefer grounding in data whenever possible.
 
 ## Current State
@@ -149,31 +149,10 @@ ${memory.toContextString()}`;
 
         const humanMsg = `Strategy from Reasoner: ${strategy}\n\nGenerate tasks for this strategy.`;
 
-        // Try structured output first (guarantees schema-valid JSON)
-        try {
-            const structuredModel = this.model.withStructuredOutput(PlanOutputSchema, { name: "plan", strict: true });
-            const validated = await structuredModel.invoke([
-                new SystemMessage(systemPrompt),
-                new HumanMessage(humanMsg),
-            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.planner) });
-
-            const tasks: Task[] = validated.tasks.map((t, index) => ({
-                id: `task_${iteration}_${index + 1}`,
-                description: t.description,
-                tool: t.tool,
-                args: t.args,
-                dependsOn: t.dependsOn || [],
-                status: "pending" as const,
-                iteration,
-                rationale: t.rationale,
-            }));
-
-            return { tasks, reasoning: validated.reasoning || "" };
-        } catch (structuredError) {
-            console.log("[Planner] Structured output failed, falling back to manual parsing:", structuredError instanceof Error ? structuredError.message : structuredError);
-        }
-
-        // Fallback: manual invoke + JSON extraction
+        // Manual invoke + JSON extraction. Structured output is not used
+        // here: free-form per-tool args cannot be expressed in the
+        // gateway's structured-output subset (no records, no optionals),
+        // and a schematized empty object makes the model emit empty args.
         let response: { content: unknown };
         try {
             response = await this.model.invoke([
@@ -204,7 +183,7 @@ ${memory.toContextString()}`;
                 dependsOn: t.dependsOn || [],
                 status: "pending" as const,
                 iteration,
-                rationale: t.rationale,
+                rationale: t.rationale ?? undefined,
             }));
 
             return { tasks, reasoning: validated.reasoning || "" };
@@ -231,7 +210,7 @@ ${memory.toContextString()}`;
                     dependsOn: t.dependsOn || [],
                     status: "pending" as const,
                     iteration,
-                    rationale: t.rationale,
+                    rationale: t.rationale ?? undefined,
                 }));
 
                 console.log("[Planner] Retry succeeded, generated", tasks.length, "tasks");

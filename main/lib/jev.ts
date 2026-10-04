@@ -437,3 +437,9 @@ export function isOffTopicRefusal(c: JevClassification | null): boolean {
     if (c.inScopeNoul < JEV_IN_SCOPE_CHAT_MIN && isConversationalFastPath(c)) return true;
     return false;
 }
+
+const F1_ENTITY_RE = /(?:19|20)\d{2}|\bgrand prix\b|\bgp\b|qualifying|standings|championship|telemetry|podium|\bpole\b|race control|\bdrs\b|\bsafety car\b/i;
+
+export function hasF1EntitySignal(message: string): boolean {
+    return F1_ENTITY_RE.test(message);
+}

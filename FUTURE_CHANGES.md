@@ -4,6 +4,55 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
 
 ## Synced
 
+- [x] **Red-team round 2 fixes (`ses_f068cdb6`, novelty-enforced):** planner
+  prompt gains rule 6b (exact tool names only; constructor points via
+  get_driver_standings), sector-times → get_laps (rule 11), history-facts
+  must be re-verified with tools (rule 9), winner queries use history's
+  winner when already named else get_race first (rule 8); deep planner
+  rule 1 hardened the same way; shallow executor no longer echoes the
+  full tool registry on unknown tools (F1b info disclosure);
+  buildRefusalMessage switches to a service-down headline when every
+  failure is server-side (F6); ResearchManager breaks after 2 consecutive
+  all-failed iterations instead of grinding to the 5-min wall clock
+  (F3 — verified live: 2 iterations, 76s, clean done vs timeouts at
+  ~300s). Verified: 4/4 + 2/2 targeted probes, 41/41 matrix, 66 unit
+  tests, tsc clean. Local-only artifacts (no F1_API_KEY in `.env.local`,
+  401s) explain the red team's C1/M4 data gaps; prod has both keys.
+  Deliberately unchanged: F1-creative refusal, "live timing" copy.
+- [x] **Red-team fixes (independent session `ses_f06c07fb`: ~30 live probes):**
+  `F1 API error <status>:` prefix in `lib/tools/fastf1.ts` so 401/403
+  skip retries in both executors (deep mode burned ~5 min retrying auth
+  failures); `sanitizeStepError` in `lib/executor.ts` maps auth/network/
+  timeout failures to neutral copy (refusals blamed the user's GP/year
+  and leaked "Invalid or missing API key"); planner prompt now forces
+  data questions through tools (was answering winners/history from
+  memory), routes current-standings via standings+web, resolves "the
+  winner" through get_race first, and bans invented GPs in vague
+  what-ifs; responder prompt abstains (never stale-headlines) when the
+  schedule anchor fails and hedges ungrounded sims to ranges;
+  `hasF1EntitySignal` in `lib/jev.ts` keeps F1-shaped queries with bad
+  entities (fake drivers) in the pipeline instead of the off-topic wall.
+  Verified: 7/7 targeted planner probes + 41/41 matrix + 95 unit tests +
+  tsc clean. Local-only artifacts (no F1_API_KEY / EMBEDDINGS_API_KEY in
+  `.env.local`) left as env gaps: C1 data-plane outage, M4 empty RAG —
+  prod has both keys. Deliberately unchanged: F1-creative refusal (M3),
+  "live timing" copy + OAuth wall (U1) — product decisions.
+- [x] **Recency answers fixed (verified against prod traces):** `isRecencyQuery`
+  now covers "next / upcoming race" (`lib/planner.ts`); schedule payloads
+  stay complete in LLM context (`events`/`grand_prix` cap 30, `results`/
+  `standings` cap 25, fat classification rows compacted to key fields in
+  `lib/executor.ts`; `events` never shredded in
+  `lib/research/evidence-store.ts`); FastAPI `get_session` fails closed
+  (404) on unknown GP names via schedule lookup (`resolve_gp_name` in
+  `api/main.py`) instead of fuzzy-matching placeholders to the wrong race.
+  Root causes were confirmed from 9 prod sessions: "who won the last race"
+  asked 5× with 4 different wrong answers (truncated schedule anchored on
+  July, unanchored web winners-list guess, fuzzy-matched
+  `gp=LAST_COMPLETED_GP`, planner-fallback refusal), and "what's the next
+  race" hedged because the 25-event schedule was cut to the first 12.
+  Tests: `__tests__/unit/executor.test.ts` (schedule completeness,
+  compaction, oversize truncation), `planner-recency.test.ts`
+  (next/upcoming positives, historical "when did X last win" negative).
 - [x] Parallel pre-execution LLM calls (`main/app/api/chat/route.ts`,
       `main/lib/research/manager.ts`): intent + planner + session metadata
   overlap; planner + responder init overlap in deep mode; classify + intent

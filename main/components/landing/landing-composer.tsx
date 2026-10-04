@@ -17,7 +17,7 @@ export function LandingComposer() {
             aria-label="Sign in with Google to ask about race strategy"
             className="group block w-full rounded-[2rem] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
-            <div className="rounded-[2rem] bg-gradient-to-br from-white/30 via-white/10 to-white/5 p-px shadow-[0_8px_32px_rgba(0,0,0,0.25)] dark:from-white/20 dark:via-white/10 dark:to-transparent dark:shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
+            <div className="rounded-[2rem] bg-gradient-to-r from-white/40 via-white/10 to-white/40 p-px shadow-[0_8px_32px_rgba(0,0,0,0.25)] dark:from-white/25 dark:via-white/5 dark:to-white/25 dark:shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
                 <div className="relative rounded-[calc(2rem-1px)] bg-white/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] backdrop-blur-xl transition-all duration-300 group-hover:bg-white/80 dark:bg-black/40 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] dark:group-hover:bg-black/50">
                     {/* Input row */}
                     <div className="flex gap-2 p-3 pb-0">

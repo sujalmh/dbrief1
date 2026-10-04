@@ -315,6 +315,9 @@ async def get_session(year: int, gp: str, session_type: str) -> fastf1.core.Sess
     """
     _validate_year(year)
     validate_gp_param(gp)
+    # Fail closed on unknown GP names (see resolve_gp_name): FastF1 would
+    # otherwise fuzzy-match placeholders/typos to the wrong event.
+    gp = resolve_gp_name(year, gp)
     cache_key = _session_cache_key(year, gp, session_type)
 
     # Fast path: cache hit
@@ -412,6 +415,37 @@ def _validate_year(year: int) -> int:
             detail=f"Year must be between 1950 and {max_year}",
         )
     return year
+
+
+def resolve_gp_name(year: int, gp: str) -> str:
+    """Resolve a user-supplied Grand Prix identifier to its canonical
+    schedule EventName, or raise 404 when nothing matches.
+
+    FastF1's get_session() fuzzy-matches unknown strings to *some* event
+    instead of failing, which used to turn LLM placeholder args (e.g.
+    gp="LAST_COMPLETED_GP") into confidently-wrong race data. Every
+    session-loading path goes through get_session(), so validating here
+    fails closed for all of them. Matching mirrors the /f1/sessions
+    lookup (round number, EventName, Location, Country substrings) so
+    anything that works there keeps working here.
+    """
+    schedule = get_event_schedule(year)
+    needle = str(gp).strip().lower()
+    for _, row in schedule.iterrows():
+        if (
+            str(row.get("RoundNumber")) == str(gp).strip()
+            or (needle and needle in str(row.get("EventName", "")).lower())
+            or (needle and needle in str(row.get("Location", "")).lower())
+            or (needle and needle in str(row.get("Country", "")).lower())
+        ):
+            return str(row.get("EventName", gp))
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            f"Event '{gp}' not found in the {year} schedule. "
+            f"Use /f1/gp-names?year={year} to discover valid Grand Prix names."
+        ),
+    )
 
 async def get_driver_lap(session: fastf1.core.Session, driver: str, lap_identifier: str):
     """

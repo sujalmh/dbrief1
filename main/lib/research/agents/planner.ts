@@ -74,6 +74,13 @@ export class Planner {
 
         const toolList = this.registry.toPromptString(deepResearch);
 
+        // Fresh per-call date anchor. The strategy/intent text usually
+        // carries the year, but when it doesn't (or degrades to null) the
+        // planner falls back to its training cutoff and fetches the wrong
+        // season — so the prompt itself must state today's date.
+        const currentDate = new Date().toISOString().split("T")[0];
+        const currentYear = new Date().getFullYear();
+
         // Build the intent analysis section if available — this gives the
         // planner structured entity/data-need guidance instead of guessing
         // from a raw strategy string.
@@ -102,6 +109,9 @@ IMPORTANT: Use the entities above as-is for tool args (driver codes, GP names, y
             : "";
 
         const systemPrompt = `You are the Planner in an F1 research agent. Your job is to translate the Reasoner's strategy into concrete, executable tasks.
+
+## Current Date
+Today is ${currentDate}. The ${currentYear} season is in progress. "Recent", "latest", and "last race" mean the most recently completed event on or before today — always anchor to ${currentYear} unless the question names another year.
 
 ## Available Tools (discover from this list — do NOT use tools not listed here)
 ${toolList}

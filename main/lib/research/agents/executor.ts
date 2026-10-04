@@ -347,7 +347,13 @@ export class Executor {
             return this.resolveTemplateString(value, completedTasks);
         }
         if (Array.isArray(value)) {
-            return value.map((v) => this.resolveTemplateValue(v, completedTasks));
+            // Drop unresolved references: a template pointing at missing
+            // output (e.g. urls from an empty search result) resolves to
+            // undefined, and passing [undefined] fails tool schema
+            // validation instead of degrading gracefully.
+            return value
+                .map((v) => this.resolveTemplateValue(v, completedTasks))
+                .filter((v) => v !== undefined);
         }
         if (value !== null && typeof value === "object") {
             const resolved: Record<string, unknown> = {};

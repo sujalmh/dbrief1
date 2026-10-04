@@ -300,11 +300,58 @@ export class ToolRegistry {
         const str = tools
             .map((m) => {
                 const reqStr = m.requires.length > 0 ? ` (requires: ${m.requires.join(", ")})` : "";
-                return `### ${m.name}${reqStr}\n${m.description}\nOutput: ${m.outputShape}`;
+                const tool = this.tools.get(m.name);
+                const argsStr = tool ? describeToolArgs(tool) : null;
+                return `### ${m.name}${reqStr}\n${m.description}\n${argsStr ? `${argsStr}\n` : ""}Output: ${m.outputShape}`;
             })
             .join("\n\n");
         this.promptCache.set(deepResearch, str);
         return str;
+    }
+}
+
+/**
+ * Render a tool's exact input arg names from its zod schema, so the
+ * planner emits real arg names (recency_minutes) instead of invented
+ * ones (recency_days, count) that validation silently strips.
+ * Returns null when the schema can't be introspected.
+ */
+function describeToolArgs(tool: StructuredTool): string | null {
+    try {
+        const schema = (tool as { schema?: unknown }).schema as
+            | { shape?: Record<string, unknown> }
+            | undefined;
+        const shape = schema?.shape;
+        if (!shape || typeof shape !== "object") return null;
+        const parts: string[] = [];
+        for (const [name, field] of Object.entries(shape)) {
+            const f = field as {
+                description?: unknown;
+                isOptional?: () => boolean;
+                constructor?: { name?: string };
+                _zod?: { def?: { type?: string; innerType?: unknown } };
+            };
+            const optional =
+                typeof f.isOptional === "function"
+                    ? f.isOptional()
+                    : /Optional$/.test(f?.constructor?.name ?? "");
+            let type: string =
+                (f._zod?.def?.type as string | undefined) ?? "unknown";
+            if (type === "optional") {
+                const inner = f._zod?.def?.innerType as
+                    | { _zod?: { def?: { type?: string } } }
+                    | undefined;
+                type = inner?._zod?.def?.type ?? "unknown";
+            }
+            const desc =
+                typeof f.description === "string"
+                    ? ` — ${f.description.slice(0, 120)}`
+                    : "";
+            parts.push(`${name}${optional ? "?" : ""}: ${type}${desc}`);
+        }
+        return parts.length > 0 ? `Args: { ${parts.join("; ")} }` : null;
+    } catch {
+        return null;
     }
 }
 

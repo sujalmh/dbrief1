@@ -127,6 +127,7 @@ export class ResearchManager {
         let strategy = "";
         let consecutiveStops = 0;
         let consecutiveEmptyIterations = 0;
+        let consecutiveStallIterations = 0;
         let timedOut = false;
 
         try {
@@ -348,6 +349,19 @@ export class ResearchManager {
                     }
                 } else {
                     consecutiveEmptyIterations = 0;
+                }
+
+                // Stall guard: iterations can succeed while adding no new
+                // evidence (e.g. redundant re-searches of answered
+                // questions). Two in a row means the loop is spinning —
+                // stop and synthesize from what exists.
+                if (evidenceMap.size === 0) {
+                    consecutiveStallIterations++;
+                    if (consecutiveStallIterations >= 2) {
+                        break;
+                    }
+                } else {
+                    consecutiveStallIterations = 0;
                 }
 
                 // --- Reflect ---

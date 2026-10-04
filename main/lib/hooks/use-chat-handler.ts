@@ -83,6 +83,61 @@ export function useChatHandler() {
         // same reason — set just before fetch, read on completion and
         // in the finally safety net below.
         let requestStartedAt = 0
+        // Accumulated streamed text. Hoisted so the catch block can
+        // persist failed generations (error events, exceptions) instead
+        // of leaving the user message with no assistant row.
+        let assistantContent = ""
+
+        // Save the FULL assistant message (steps + args, visualizationData,
+        // evidence/iterations/reflections/confidence/chartSpecs, usage,
+        // degraded warnings, reasoning) so reopening the session resumes
+        // exactly where the user left off. Defined at function scope so
+        // error paths can persist failed generations too. Large payloads
+        // are offloaded to Storage by session-io; reload hydrates them.
+        const saveAssistantMessage = () => {
+            // Wall-clock response time — recorded for every completed
+            // turn in both modes, ahead of the cloud save so the
+            // persisted message carries it for reopened sessions.
+            if (requestStartedAt > 0) {
+                useChatStore.getState().setMessageDurationMs(assistantMsgId, Date.now() - requestStartedAt);
+            }
+            if (effectiveSessionId && !effectiveSessionId.startsWith("local_") && assistantContent) {
+                const storeMsg = useChatStore.getState().messages.find((m) => m.id === assistantMsgId);
+                const fullMsg: Message = {
+                    id: assistantMsgId,
+                    role: "assistant",
+                    content: assistantContent,
+                    timestamp: storeMsg?.timestamp ?? Date.now(),
+                    ...(storeMsg?.durationMs != null ? { durationMs: storeMsg.durationMs } : {}),
+                    ...(storeMsg?.reasoning ? { reasoning: storeMsg.reasoning } : {}),
+                    ...(storeMsg?.isError !== undefined ? { isError: storeMsg.isError } : {}),
+                    ...(storeMsg?.steps ? { steps: storeMsg.steps } : {}),
+                    ...(storeMsg?.citations ? { citations: storeMsg.citations } : {}),
+                    ...(storeMsg?.visualizationData !== undefined && storeMsg.visualizationData !== null
+                        ? { visualizationData: storeMsg.visualizationData }
+                        : {}),
+                    ...(storeMsg?.degradedWarnings ? { degradedWarnings: storeMsg.degradedWarnings } : {}),
+                    ...(storeMsg?.usage ? { usage: storeMsg.usage } : {}),
+                    ...(storeMsg?.researchType ? { researchType: storeMsg.researchType } : {}),
+                    ...(storeMsg?.iterations ? { iterations: storeMsg.iterations } : {}),
+                    ...(storeMsg?.evidence ? { evidence: storeMsg.evidence } : {}),
+                    ...(storeMsg?.confidence ? { confidence: storeMsg.confidence } : {}),
+                    ...(storeMsg?.reflections ? { reflections: storeMsg.reflections } : {}),
+                    ...(storeMsg?.chartSpecs ? { chartSpecs: storeMsg.chartSpecs } : {}),
+                    ...(storeMsg?.planTrace ? { planTrace: storeMsg.planTrace } : {}),
+                    ...(storeMsg?.refusal ? { refusal: storeMsg.refusal } : {}),
+                    ...(storeMsg?.feedback ? { feedback: storeMsg.feedback } : {}),
+                };
+                const sid = effectiveSessionId;
+                const s = useChatStore.getState();
+                saveMessage(sid, fullMsg).then(() =>
+                    saveContext(sid, {
+                        visualizationData: s.visualizationData ?? undefined,
+                        activeMessageId: s.activeMessageId,
+                    })
+                );
+            }
+        };
         state.addMessage({
             id: assistantMsgId,
             role: "assistant",
@@ -219,61 +274,10 @@ export function useChatHandler() {
 
             const reader = response.body.getReader()
             const decoder = new TextDecoder()
-            let assistantContent = ""
+            assistantContent = ""
             let currentSteps: NonNullable<Message['steps']> = []
             let buffer = ""
             let done = false
-
-            // Function to save assistant message on completion.
-            // Saves the FULL message (steps + args, visualizationData,
-            // evidence/iterations/reflections/confidence/chartSpecs, usage,
-            // degraded warnings, reasoning) so reopening the session
-            // resumes exactly where the user left off. Large payloads are
-            // offloaded to Storage by session-io; reload hydrates them.
-            const saveAssistantMessage = () => {
-                // Wall-clock response time — recorded for every completed
-                // turn in both modes, ahead of the cloud save so the
-                // persisted message carries it for reopened sessions.
-                if (requestStartedAt > 0) {
-                    useChatStore.getState().setMessageDurationMs(assistantMsgId, Date.now() - requestStartedAt);
-                }
-                if (effectiveSessionId && !effectiveSessionId.startsWith("local_") && assistantContent) {
-                    const storeMsg = useChatStore.getState().messages.find((m) => m.id === assistantMsgId);
-                    const fullMsg: Message = {
-                        id: assistantMsgId,
-                        role: "assistant",
-                        content: assistantContent,
-                        timestamp: storeMsg?.timestamp ?? Date.now(),
-                        ...(storeMsg?.durationMs != null ? { durationMs: storeMsg.durationMs } : {}),
-                        ...(storeMsg?.reasoning ? { reasoning: storeMsg.reasoning } : {}),
-                        ...(storeMsg?.isError !== undefined ? { isError: storeMsg.isError } : {}),
-                        ...(storeMsg?.steps ? { steps: storeMsg.steps } : {}),
-                        ...(storeMsg?.citations ? { citations: storeMsg.citations } : {}),
-                        ...(storeMsg?.visualizationData !== undefined && storeMsg.visualizationData !== null
-                            ? { visualizationData: storeMsg.visualizationData }
-                            : {}),
-                        ...(storeMsg?.degradedWarnings ? { degradedWarnings: storeMsg.degradedWarnings } : {}),
-                        ...(storeMsg?.usage ? { usage: storeMsg.usage } : {}),
-                        ...(storeMsg?.researchType ? { researchType: storeMsg.researchType } : {}),
-                        ...(storeMsg?.iterations ? { iterations: storeMsg.iterations } : {}),
-                        ...(storeMsg?.evidence ? { evidence: storeMsg.evidence } : {}),
-                        ...(storeMsg?.confidence ? { confidence: storeMsg.confidence } : {}),
-                        ...(storeMsg?.reflections ? { reflections: storeMsg.reflections } : {}),
-                        ...(storeMsg?.chartSpecs ? { chartSpecs: storeMsg.chartSpecs } : {}),
-                        ...(storeMsg?.planTrace ? { planTrace: storeMsg.planTrace } : {}),
-                        ...(storeMsg?.refusal ? { refusal: storeMsg.refusal } : {}),
-                        ...(storeMsg?.feedback ? { feedback: storeMsg.feedback } : {}),
-                    };
-                    const sid = effectiveSessionId;
-                    const s = useChatStore.getState();
-                    saveMessage(sid, fullMsg).then(() =>
-                        saveContext(sid, {
-                            visualizationData: s.visualizationData ?? undefined,
-                            activeMessageId: s.activeMessageId,
-                        })
-                    );
-                }
-            };
 
             const scheduleUpdate = () => {
                 if (updateFrameId) return
@@ -574,11 +578,16 @@ export function useChatHandler() {
                                         // modal catches the user's attention
                                         // and lets them acknowledge it.
                                         useChatStore.getState().setError(data.message)
-                                        useChatStore.getState().updateMessage(
-                                            assistantMsgId,
-                                            data.message || "An error occurred while generating a response.",
-                                            true
-                                        )
+                                        {
+                                            const errorText = data.message || "An error occurred while generating a response."
+                                            useChatStore.getState().updateMessage(assistantMsgId, errorText, true)
+                                            // Persist the failure like any completed turn —
+                                            // otherwise the user message is saved with no
+                                            // assistant row and the failure is invisible
+                                            // (and undebuggable) on reload.
+                                            if (!assistantContent) assistantContent = errorText
+                                            saveAssistantMessage()
+                                        }
                                         return
                                 }
                             } else if (parsed.content) {
@@ -632,7 +641,9 @@ export function useChatHandler() {
             console.error(error)
             const message = error instanceof Error ? error.message : "An unexpected error occurred"
             useChatStore.getState().setError(message)
-            useChatStore.getState().updateMessage(assistantMsgId, "", true)
+            useChatStore.getState().updateMessage(assistantMsgId, message, true)
+            if (!assistantContent) assistantContent = message
+            saveAssistantMessage()
         } finally {
             // Safety net: stamp the response time on every exit path
             // (server-error events, aborts, exceptions) so the footer

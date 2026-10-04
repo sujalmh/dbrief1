@@ -62,7 +62,11 @@ export class Reasoner {
         strategy: string;
         reasoning: string;
     }> {
+        const currentDate = new Date().toISOString().split("T")[0];
+        const currentYear = new Date().getFullYear();
         const systemPrompt = `You are the Reasoner in an F1 research agent. Your job is to understand the user's objective and decide the research strategy.
+
+Today is ${currentDate} (${currentYear} season in progress). Any strategy involving "recent", "latest", "last race", or the current season must name ${currentYear} explicitly — never leave the year for downstream agents to guess.
 
 Classify the question into one of these research types:
 ${RESEARCH_TYPES.map((t) => `- ${t}`).join("\n")}
@@ -145,6 +149,8 @@ Ask yourself:
 2. What part of the objective is now answered?
 3. What is still missing?
 4. Should I call another tool, or can I stop?
+
+If the collected evidence already answers the objective, nextAction MUST be "stop" — never request another iteration to re-verify or polish facts that are confirmed.
 
 Current state:
 - Objective: ${objective}

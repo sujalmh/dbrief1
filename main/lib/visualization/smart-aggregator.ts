@@ -82,13 +82,18 @@ export function synthesizeChartSpecs(
     const specs: ChartSpec[] = [];
 
     for (const result of results) {
+        // Non-data outputs (schedules, session lists, name lookups,
+        // regulations, web results, simulations) have no chart renderer —
+        // synthesizing from them produced empty/garbage charts under
+        // text answers (e.g. a blank bar chart under "last race summary").
+        if (NON_CHARTABLE_TOOLS.has(result.tool.toLowerCase())) continue;
         if (!result.success) continue;
         const rows = extractRows(result.data);
         if (rows.length === 0) continue;
 
-        const intent = inferIntentFromTool(result.tool, rows);
+        const intent = inferIntentFromTool(result.tool, rows, query);
         const spec = synthesizeOne(result, rows, intent, focus);
-        if (spec) specs.push(spec);
+        if (spec && hasChartData(spec)) specs.push(spec);
 
         if (intent === "lap_progression") {
             // Multi-driver lap data also gets a pace-distribution swarm
@@ -96,13 +101,31 @@ export function synthesizeChartSpecs(
             // reads at a glance — plus a position bump when the payload
             // carries per-lap positions.
             const swarm = synthesizeSwarm(result, rows);
-            if (swarm) specs.push(swarm);
+            if (swarm && hasChartData(swarm)) specs.push(swarm);
             const bump = synthesizeBump(result, rows);
-            if (bump) specs.push(bump);
+            if (bump && hasChartData(bump)) specs.push(bump);
         }
     }
 
     return specs;
+}
+
+/** Tool outputs with no chart renderer — never synthesize from these. */
+const NON_CHARTABLE_TOOLS = new Set([
+    "get_events",
+    "get_seasons",
+    "get_sessions",
+    "get_gp_names",
+    "retrieve_regulations",
+    "web_search",
+    "fetch_web_pages",
+    "run_simulation",
+]);
+
+/** True when a spec carries at least one plottable row. */
+function hasChartData(spec: ChartSpec): boolean {
+    const data = (spec.config as { data?: unknown })?.data;
+    return Array.isArray(data) && data.length > 0;
 }
 
 /** Round/lap + position + driver shape → rank-flow data. */
@@ -143,7 +166,7 @@ function hasLapTimeColumn(rows: Array<Record<string, unknown>>): boolean {
     return rows.some((r) => LAP_TIME_KEYS.some((k) => r[k] !== undefined && r[k] !== null && r[k] !== ""));
 }
 
-function inferIntentFromTool(tool: string, rows: Array<Record<string, unknown>>): string {
+function inferIntentFromTool(tool: string, rows: Array<Record<string, unknown>>, query = ""): string {
     // Round/lap + position + driver without lap times is rank-flow data
     // (season standings progression, in-race position trace) — detect it
     // by shape first so season-long get_race payloads don't collapse into
@@ -157,6 +180,12 @@ function inferIntentFromTool(tool: string, rows: Array<Record<string, unknown>>)
     if (text.includes("laps")) return "lap_progression";
     if (text.includes("standings")) return "standings_breakdown";
     if (text.includes("qualifying")) return "qualifying_pace";
+    if (hasFinishShape(rows)) {
+        // Single-GP classification: a finishing-order bar by default.
+        // Only draw the grid-vs-finish scatter when the question is
+        // actually about grid movement (gains, starts, overtakes).
+        return isGridGainQuery(query) ? "qualifying_vs_result" : "finishing_order";
+    }
     if (text.includes("race")) return "qualifying_vs_result";
     if (text.includes("tyres") || text.includes("stints") || text.includes("stint")) return "strategy_breakdown";
     if (text.includes("weather")) return "weather_conditions";
@@ -166,9 +195,25 @@ function inferIntentFromTool(tool: string, rows: Array<Record<string, unknown>>)
         const first = rows[0];
         if ("q3" in first || "Q3" in first) return "qualifying_pace";
         if ("points" in first) return "standings_breakdown";
-        if ("position" in first && "driver" in first) return "qualifying_vs_result";
+        if (hasFinishShape(rows)) {
+            return isGridGainQuery(query) ? "qualifying_vs_result" : "finishing_order";
+        }
     }
     return "compare_drivers";
+}
+
+/** Rows carry a per-driver finish/position column (single-GP classification). */
+function hasFinishShape(rows: Array<Record<string, unknown>>): boolean {
+    const keys = new Set<string>();
+    for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
+    const hasDriver = DRIVER_KEYS.some((k) => keys.has(k));
+    const hasPos = POS_KEYS.some((k) => keys.has(k));
+    return hasDriver && hasPos;
+}
+
+/** True when the question is about grid movement, not just the result. */
+function isGridGainQuery(query: string): boolean {
+    return /grid|start|gain|overtak|mover|climb|progress|come through|charge/i.test(query);
 }
 
 function synthesizeOne(
@@ -197,6 +242,9 @@ function synthesizeOne(
             if (data.some((d) => d.speed != null)) series.push("speed");
             if (data.some((d) => d.throttle != null)) series.push("throttle");
             if (data.some((d) => d.brake != null)) series.push("brake");
+            // No plottable channels at all — render nothing instead of
+            // empty axes.
+            if (series.length === 0) return null;
             return {
                 id: `telemetry_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
                 type: "line",
@@ -217,10 +265,15 @@ function synthesizeOne(
         }
 
         case "lap_progression": {
-            const data = rows.map((r) => ({
-                x: toNumberSafe(r["lap_number"] ?? r["LapNumber"] ?? r["lap"]) ?? 0,
-                y: toNumberSafe(r["lap_time"] ?? r["LapTime"] ?? r["time"]) ?? 0,
-            }));
+            const data = rows
+                .map((r) => ({
+                    x: toNumberSafe(r["lap_number"] ?? r["LapNumber"] ?? r["lap"]),
+                    y: toNumberSafe(r["lap_time"] ?? r["LapTime"] ?? r["time"]),
+                }))
+                .filter((d): d is { x: number; y: number } => d.x != null && d.y != null);
+            // Lap rows without lap numbers/times plot a flat line at
+            // (0,0) — render nothing instead.
+            if (data.length === 0) return null;
             return {
                 id: `laps_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
                 type: "line",
@@ -316,8 +369,47 @@ function synthesizeOne(
             return synthesizeBump(result, rows);
         }
 
-        case "strategy_breakdown": {
-            // tyre compound usage: { driver: { SOFT: n, MEDIUM: n, HARD: n } }
+        case "finishing_order": {
+            // Single-GP classification ordered by finish (P1 first, winner
+            // highlighted). Renders ascending — the bar renderer sorts
+            // descending by default, so the spec carries sortAsc.
+            const driver = pick("driver", "Driver", "Abbreviation") ?? "driver";
+            const pos = pick("finish", "Finish", "finish_position", "FinishPosition", "position", "Position", "pos", "Pos") ?? "position";
+            const data = rows
+                .map((r) => ({
+                    key: String(r[driver] ?? "?"),
+                    value: toNumberSafe(r[pos]) ?? NaN,
+                }))
+                .filter((d) => Number.isFinite(d.value) && d.value > 0)
+                .sort((a, b) => a.value - b.value);
+            if (data.length === 0) return null;
+            const winner = data[0]!;
+            return {
+                id: `finish_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
+                type: "horizontal_bar",
+                title: `Finishing Order: ${argsSummary(result.args)}`,
+                subtitle: "Final classification",
+                dataSource: result.tool,
+                xField: driver,
+                yField: pos,
+                config: {
+                    data,
+                    xAxisLabel: "Finishing position",
+                    yAxisLabel: "Driver",
+                    unit: "pos",
+                    intent,
+                    sortAsc: true,
+                    highlight: { key: winner.key, value: winner.value },
+                },
+            };
+        }
+
+        case "weather_conditions":
+            // No weather renderer exists — a generic comparison bar from
+            // temperature rows would be misleading, so render nothing.
+            return null;
+
+        case "strategy_breakdown": {            // tyre compound usage: { driver: { SOFT: n, MEDIUM: n, HARD: n } }
             const driver = pick("driver", "Driver") ?? "driver";
             const compound = pick("compound", "Compound") ?? "compound";
             const data = new Map<string, Record<string, number | string>>();

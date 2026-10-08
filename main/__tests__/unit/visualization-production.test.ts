@@ -126,6 +126,36 @@ describe("production path produces charts", () => {
         ).toEqual(["scatter"]);
     });
 
+    it("plain race results produce a finishing-order bar, not a scatter", () => {
+        expect(
+            producedCharts(
+                [{
+                    tool: "get_race", args: ARGS_2024_MONZA, success: true,
+                    data: { results: [{ driver: "VER", grid: 1, finish: 1 }, { driver: "NOR", grid: 4, finish: 2 }] },
+                }],
+                "Monza results"
+            )
+        ).toEqual(["horizontal_bar"]);
+    });
+
+    it("schedule and news answers produce no charts", () => {
+        expect(
+            producedCharts(
+                [
+                    {
+                        tool: "get_events", args: { year: 2026 }, success: true,
+                        data: { events: [{ round_number: 16, event_name: "Bahrain GP" }] },
+                    },
+                    {
+                        tool: "web_search", args: { query: "x" }, success: true,
+                        data: { results: [{ title: "t", url: "u", snippet: "s" }] },
+                    },
+                ],
+                "last race summary"
+            )
+        ).toEqual([]);
+    });
+
     it("tyre and stint answers produce a stacked bar chart", () => {
         const stints = {
             results: [

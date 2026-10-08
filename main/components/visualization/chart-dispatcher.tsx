@@ -54,6 +54,8 @@ interface SpecConfig {
     /** Dumbbell endpoint labels (e.g., seasons); fall back to "A"/"B". */
     leftLabel?: string;
     rightLabel?: string;
+    /** Horizontal bars: ascending order (P1 first) for rank charts. */
+    sortAsc?: boolean;
 }
 
 /**
@@ -107,6 +109,7 @@ export function ChartDispatcher({ spec }: { spec: ChartSpec }) {
                         yAxisLabel,
                         unit,
                         highlightKey: cfg.highlight?.key,
+                        sortAsc: cfg.sortAsc === true,
                     }}
                 />
             );

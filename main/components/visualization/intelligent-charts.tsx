@@ -166,11 +166,17 @@ interface HorizontalBarSpec {
     yAxisLabel: string;
     unit: string;
     highlightKey?: string;
+    /** Rank charts (finishing order): sort ascending so P1 leads. */
+    sortAsc?: boolean;
 }
 
 export function HorizontalBarChart({ spec }: { spec: HorizontalBarSpec }) {
-    // Re-sort by value desc — the planner already sorts, but be defensive.
-    const data = [...spec.data].sort((a, b) => b.value - a.value);
+    // Re-sort defensively — the planner already sorts, but be defensive.
+    // Rank charts sort ascending (P1 first, winner highlighted);
+    // everything else sorts descending (leader first).
+    const data = [...spec.data].sort((a, b) =>
+        spec.sortAsc ? a.value - b.value : b.value - a.value
+    );
     const highlight = spec.highlightKey ?? data[0]?.key;
 
     return (

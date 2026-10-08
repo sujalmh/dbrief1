@@ -185,6 +185,33 @@ describe("ChartDispatcher coverage", () => {
         expect(branch).toMatch(/LineOrAreaChart/);
     });
 
+    it("maps sortAsc for rank charts (finishing order, P1 first)", () => {
+        const dispatcher = readSource("components/visualization/chart-dispatcher.tsx");
+        expect(dispatcher).toMatch(/sortAsc/);
+        expect(dispatcher).toMatch(/sortAsc\?: boolean/);
+        expect(dispatcher).toMatch(/sortAsc: cfg\.sortAsc === true/);
+        const charts = readSource("components/visualization/intelligent-charts.tsx");
+        expect(charts).toMatch(/sortAsc\?: boolean/);
+        expect(charts).toMatch(/spec\.sortAsc \? a\.value - b\.value : b\.value - a\.value/);
+    });
+
+    it("drops specs with no plottable rows", () => {
+        // Schedule-shaped rows carry no driver/value columns — nothing
+        // plottable, so nothing may render (even past the tool gate).
+        const specs = synthesizeChartSpecs(
+            [
+                {
+                    tool: "get_laps",
+                    args: { year: 2024 },
+                    success: true,
+                    data: { laps: [{ foo: 1 }, { foo: 2 }] },
+                },
+            ],
+            "laps"
+        );
+        expect(specs).toEqual([]);
+    });
+
     it("propagates config.series (telemetry regression guard)", () => {
         expect(source).toMatch(/function resolveSeries/);
         expect(source).toMatch(/series: resolveSeries\(cfg, data\)/);
@@ -575,7 +602,7 @@ describe("F1 position-progression bump charts", () => {
         expect(specs.map((s) => s.type)).toEqual(["line", "swarm", "bump"]);
     });
 
-    it("single-round snapshots never become bumps", () => {
+    it("single-round snapshots become finishing order, not bumps", () => {
         const specs = synthesizeChartSpecs(
             [{
                 tool: "get_race", args: { year: 2024, gp: "Monza" }, success: true,
@@ -583,8 +610,9 @@ describe("F1 position-progression bump charts", () => {
             }],
             "monza result"
         );
-        // Falls back to the single-GP scatter path, not a 1-point bump.
-        expect(specs.map((s) => s.type)).toEqual(["scatter"]);
+        // A one-point bump is meaningless — the classification bar wins.
+        expect(specs.map((s) => s.type)).toEqual(["horizontal_bar"]);
+        expect(specs[0]?.title).toContain("Finishing Order");
     });
 });
 
@@ -640,7 +668,7 @@ describe("F1 driver comparison + fallbacks", () => {
         expectWellFormed(specs[0]!);
     });
 
-    it("weather payload does not crash (falls back to a comparison spec)", () => {
+    it("weather payload renders nothing (no weather renderer exists)", () => {
         const specs = synthesizeChartSpecs(
             [
                 {
@@ -656,8 +684,8 @@ describe("F1 driver comparison + fallbacks", () => {
             ],
             "was it wet"
         );
-        expect(specs).toHaveLength(1);
-        expectWellFormed(specs[0]!);
+        // A generic comparison bar from temperature rows would mislead.
+        expect(specs).toEqual([]);
     });
 
     it("stringified JSON data is parsed", () => {

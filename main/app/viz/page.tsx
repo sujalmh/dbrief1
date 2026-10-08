@@ -523,6 +523,38 @@ const DEMOS: Demo[] = [
         ],
     },
     {
+        label: "finishing order — final classification (P1 first)",
+        userQuery: "Monza 2024 results",
+        content: "Leclerc won from pole ahead of Piastri, with Norris third.",
+        chartSpecs: [
+            spec({
+                id: "demo-finish",
+                type: "horizontal_bar",
+                title: "Finishing Order: 2024 • Monza",
+                subtitle: "Final classification",
+                question: "Who won at Monza?",
+                insight: "LEC converts pole into victory",
+                dataSource: "demo",
+                xField: "driver",
+                yField: "finish",
+                config: {
+                    data: [
+                        { key: "LEC", value: 1 },
+                        { key: "PIA", value: 2 },
+                        { key: "NOR", value: 3 },
+                        { key: "HAM", value: 4 },
+                        { key: "VER", value: 6 },
+                    ],
+                    xAxisLabel: "Finishing position",
+                    yAxisLabel: "Driver",
+                    unit: "pos",
+                    sortAsc: true,
+                    highlight: { key: "LEC", value: 1 },
+                },
+            }),
+        ],
+    },
+    {
         label: "multi-chart message — standings + grid vs finish stacked",
         userQuery: "Monza 2024 recap with standings context",
         content: "Two charts stack in one message, newest context first.",

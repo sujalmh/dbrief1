@@ -90,7 +90,34 @@ describe("synthesizeChartSpecs", () => {
         expect(cfg.unit).toBe("s");
     });
 
-    it("synthesizes a scatter chart for grid vs finish", () => {
+    it("synthesizes a scatter chart for grid-gain questions", () => {
+        const specs = synthesizeChartSpecs(
+            [
+                {
+                    tool: "get_race",
+                    args: { year: 2024, gp: "Monaco" },
+                    success: true,
+                    data: {
+                        results: [
+                            { driver: "VER", grid: 1, finish: 1 },
+                            { driver: "HAM", grid: 5, finish: 2 },
+                            { driver: "LEC", grid: 3, finish: 4 },
+                        ],
+                    },
+                },
+            ],
+            "who gained positions in the race"
+        );
+        expect(specs).toHaveLength(1);
+        const spec = specs[0];
+        expect(spec?.type).toBe("scatter");
+        const data = (spec?.config as { data: Array<{ x: number; y: number; group: string }> }).data;
+        expect(data).toHaveLength(3);
+        expect(data[0]?.x).toBe(1);
+        expect(data[0]?.y).toBe(1);
+    });
+
+    it("synthesizes a finishing-order bar for plain results questions", () => {
         const specs = synthesizeChartSpecs(
             [
                 {
@@ -110,11 +137,49 @@ describe("synthesizeChartSpecs", () => {
         );
         expect(specs).toHaveLength(1);
         const spec = specs[0];
-        expect(spec?.type).toBe("scatter");
-        const data = (spec?.config as { data: Array<{ x: number; y: number; group: string }> }).data;
-        expect(data).toHaveLength(3);
-        expect(data[0]?.x).toBe(1);
-        expect(data[0]?.y).toBe(1);
+        expect(spec?.type).toBe("horizontal_bar");
+        expect(spec?.title).toContain("Finishing Order");
+        const cfg = spec?.config as {
+            data: Array<{ key: string; value: number }>;
+            unit?: string;
+            sortAsc?: boolean;
+            highlight?: { key: string; value: number };
+        };
+        // P1 first, winner highlighted.
+        expect(cfg.sortAsc).toBe(true);
+        expect(cfg.unit).toBe("pos");
+        expect(cfg.data.map((d) => d.key)).toEqual(["VER", "HAM", "LEC"]);
+        expect(cfg.highlight).toEqual({ key: "VER", value: 1 });
+    });
+
+    it("skips non-chartable tools (schedule, search, regulations)", () => {
+        expect(
+            synthesizeChartSpecs(
+                [{
+                    tool: "get_events", args: { year: 2026 }, success: true,
+                    data: { events: [{ round_number: 1, event_name: "Bahrain GP" }] },
+                }],
+                "last race summary"
+            )
+        ).toEqual([]);
+        expect(
+            synthesizeChartSpecs(
+                [{
+                    tool: "web_search", args: { query: "x" }, success: true,
+                    data: { results: [{ title: "t", url: "u", snippet: "s" }] },
+                }],
+                "last race summary"
+            )
+        ).toEqual([]);
+        expect(
+            synthesizeChartSpecs(
+                [{
+                    tool: "retrieve_regulations", args: {}, success: true,
+                    data: { retrieved_documents: [{ title: "t", text: "x" }] },
+                }],
+                "what does the rule say"
+            )
+        ).toEqual([]);
     });
 
     it("synthesizes a line chart for telemetry", () => {

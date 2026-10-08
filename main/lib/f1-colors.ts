@@ -10,9 +10,11 @@
  *      driver→team→color mapping, tagged with season when known. This is
  *      what keeps colors correct across seasons and mid-season swaps with
  *      zero code changes: whatever the API returns wins.
- *   2. STATIC (fallback) — the last fully-curated grid below, used only
- *      when no live data has been seen (e.g. pure regulation answers).
- *      Stale entries here are harmless: layer 1 overrides them.
+ *   2. STATIC (fallback) — the last fully-curated grid below (2025),
+ *      used only when no live data was ever seen for the driver (e.g.
+ *      pure regulation answers). Per-season learned entries outrank it,
+ *      and the latest observed seat outranks it, so post-swap staleness
+ *      here self-heals the moment fresh data arrives.
  */
 
 export const TEAM_COLORS: Record<string, string> = {
@@ -32,32 +34,52 @@ export const TEAM_COLORS: Record<string, string> = {
     "Alfa Romeo": "#900000"
 }
 
+/**
+ * Case-insensitive TEAM_COLORS lookup (API casing varies).
+ */
+function teamColorFor(team: string): string | null {
+    const direct = TEAM_COLORS[team];
+    if (direct) return direct;
+    const found = Object.keys(TEAM_COLORS).find((k) => k.toLowerCase() === team.toLowerCase());
+    return found ? TEAM_COLORS[found]! : null;
+}
+
 export const DRIVER_TO_TEAM: Record<string, string> = {
-    // 2024 Grid
+    // 2025 grid (curated baseline; live learned data always wins).
+    // Departed drivers keep their last team so historical answers still
+    // highlight — per-season learned entries take precedence anyway.
     "VER": "Red Bull Racing", "Max Verstappen": "Red Bull Racing",
-    "PER": "Red Bull Racing", "Sergio Perez": "Red Bull Racing",
-    "HAM": "Mercedes", "Lewis Hamilton": "Mercedes",
-    "RUS": "Mercedes", "George Russell": "Mercedes",
+    "TSU": "Red Bull Racing", "Yuki Tsunoda": "Red Bull Racing",
+    "HAM": "Ferrari", "Lewis Hamilton": "Ferrari",
     "LEC": "Ferrari", "Charles Leclerc": "Ferrari",
-    "SAI": "Ferrari", "Carlos Sainz": "Ferrari",
     "NOR": "McLaren", "Lando Norris": "McLaren",
     "PIA": "McLaren", "Oscar Piastri": "McLaren",
+    "RUS": "Mercedes", "George Russell": "Mercedes",
+    "ANT": "Mercedes", "Kimi Antonelli": "Mercedes",
     "ALO": "Aston Martin", "Fernando Alonso": "Aston Martin",
     "STR": "Aston Martin", "Lance Stroll": "Aston Martin",
     "GAS": "Alpine", "Pierre Gasly": "Alpine",
-    "OCO": "Alpine", "Esteban Ocon": "Alpine",
+    "COL": "Alpine", "Franco Colapinto": "Alpine",
+    "DOO": "Alpine", "Jack Doohan": "Alpine",
     "ALB": "Williams", "Alex Albon": "Williams",
-    "SAR": "Williams", "Logan Sargeant": "Williams",
-    "TSU": "RB", "Yuki Tsunoda": "RB",
+    "SAI": "Williams", "Carlos Sainz": "Williams",
+    "LAW": "RB", "Liam Lawson": "RB",
+    "HAD": "RB", "Isack Hadjar": "RB",
+    "OCO": "Haas", "Esteban Ocon": "Haas",
+    "BEA": "Haas", "Oliver Bearman": "Haas",
+    "HUL": "Kick Sauber", "Nico Hulkenberg": "Kick Sauber",
+    "BOR": "Kick Sauber", "Gabriel Bortoleto": "Kick Sauber",
+    // Historical (pre-2025 seats).
+    "PER": "Red Bull Racing", "Sergio Perez": "Red Bull Racing",
     "RIC": "RB", "Daniel Ricciardo": "RB",
     "MAG": "Haas", "Kevin Magnussen": "Haas",
-    "HUL": "Haas", "Nico Hulkenberg": "Haas",
     "BOT": "Kick Sauber", "Valtteri Bottas": "Kick Sauber",
     "ZHO": "Kick Sauber", "Zhou Guanyu": "Kick Sauber",
+    "SAR": "Williams", "Logan Sargeant": "Williams",
     // Common Nicknames/Shortnames mapping (optional but helpful)
     "Checo": "Red Bull Racing",
     "Max": "Red Bull Racing",
-    "Lewis": "Mercedes",
+    "Lewis": "Ferrari",
     "Fernando": "Aston Martin",
     "Lando": "McLaren"
 }
@@ -102,8 +124,17 @@ interface LearnedEntry {
     season?: number;
 }
 
-/** Driver code or full name (upper-cased) → learned entry. */
-const learnedDrivers = new Map<string, LearnedEntry>();
+/** Season key for the per-season registry ("unknown" when untagged). */
+function seasonKey(season?: number): string {
+    return season === undefined ? "unknown" : String(season);
+}
+
+/**
+ * Driver code or full name (upper-cased) → season → learned entry.
+ * Per-season (not single-slot) so a 2025 observation never corrupts a
+ * 2024 answer after a mid-season driver swap.
+ */
+const learnedDrivers = new Map<string, Map<string, LearnedEntry>>();
 /** Team name (lower-cased) → learned color. */
 const learnedTeams = new Map<string, { color: string; season?: number }>();
 /** Extra highlight tokens contributed by learned data (codes + surnames). */
@@ -135,16 +166,29 @@ function learnRow(row: Record<string, unknown>, season?: number): boolean {
         .find((v): v is string => typeof v === "string" && v.trim().length > 0)?.trim();
     const team = [row.TeamName, row.team, row.Team]
         .find((v): v is string => typeof v === "string" && v.trim().length > 0)?.trim();
-    const color = normalizeColor(row.TeamColor ?? row.team_color);
-    if ((!code && !fullName) || !team || !color) return false;
+    if ((!code && !fullName) || !team) return false;
+    // Explicit-but-garbage colors are suspect data — skip the row. A
+    // missing color with a known team is enriched from the team map so
+    // new drivers on known teams highlight immediately.
+    const rawColor = row.TeamColor ?? row.team_color;
+    const color = normalizeColor(rawColor) ?? (rawColor == null ? teamColorFor(team) : null);
+    if (!color) return false;
 
     const entry: LearnedEntry = { team, color, season };
+    const remember = (key: string) => {
+        let bySeason = learnedDrivers.get(key);
+        if (!bySeason) {
+            bySeason = new Map();
+            learnedDrivers.set(key, bySeason);
+        }
+        bySeason.set(seasonKey(season), entry);
+    };
     if (code) {
-        learnedDrivers.set(code.toUpperCase(), entry);
+        remember(code.toUpperCase());
         if (code.length === 3) learnedTokens.add(code.toUpperCase());
     }
     if (fullName) {
-        learnedDrivers.set(fullName.toUpperCase(), entry);
+        remember(fullName.toUpperCase());
         learnedTokens.add(fullName);
         for (const part of fullName.split(" ")) {
             if (part.length > 2) learnedTokens.add(part);
@@ -216,28 +260,43 @@ export function getDriverColor(input: string, season?: number): string {
     if (!input) return "#FFFFFF";
     const normalized = input.trim().toLowerCase();
 
-    // 1. Learned (live API data). Prefer a season match, else any entry.
-    const directLearned = learnedDrivers.get(normalized.toUpperCase());
-    const partialLearned = directLearned ? undefined : Array.from(learnedDrivers.keys()).find(k => {
-        const parts = k.toLowerCase().split(" ");
-        return parts.includes(normalized);
-    });
-    const learnedKey = directLearned ? normalized.toUpperCase() : partialLearned;
-    if (learnedKey) {
-        const entry = learnedDrivers.get(learnedKey)!;
-        if (season === undefined || entry.season === undefined || entry.season === season) {
-            return entry.color;
+    // 1. Learned (live API data): exact season first, then the latest
+    // observed season (current teams beat the stale static grid after
+    // driver swaps), then untagged entries, then static.
+    const directLearnedKey = normalized.toUpperCase();
+    const partialLearnedKey = learnedDrivers.has(directLearnedKey)
+        ? undefined
+        : Array.from(learnedDrivers.keys()).find((k) => {
+              const parts = k.toLowerCase().split(" ");
+              return parts.includes(normalized);
+          });
+    const learnedKey = learnedDrivers.has(directLearnedKey) ? directLearnedKey : partialLearnedKey;
+    const bySeason = learnedKey ? learnedDrivers.get(learnedKey) : undefined;
+    if (bySeason && bySeason.size > 0) {
+        const exact =
+            season !== undefined ? bySeason.get(seasonKey(season)) : undefined;
+        if (exact) return exact.color;
+        let latest: LearnedEntry | undefined;
+        let latestSeason = -Infinity;
+        for (const [key, entry] of bySeason) {
+            const year = key === "unknown" ? -1 : parseInt(key, 10);
+            if (Number.isFinite(year) && year > latestSeason) {
+                latestSeason = year;
+                latest = entry;
+            }
         }
-        // Season mismatch: fall through to static rather than show the
-        // wrong year's color... unless nothing else knows this driver.
-        const staticKnown = Object.keys(DRIVER_TO_TEAM).some(k => k.toLowerCase() === normalized);
-        if (!staticKnown) return entry.color;
+        // No exact season: the latest observed seat wins over the static
+        // grid (which goes stale the moment a driver switches teams).
+        // Untagged observations only apply when nothing dated exists.
+        if (latest) return latest.color;
+        const untagged = bySeason.get("unknown");
+        if (untagged) return untagged.color;
     }
 
     // 2. Static grid fallback.
-    const directKey = Object.keys(DRIVER_TO_TEAM).find(k => k.toLowerCase() === normalized);
-    if (directKey) {
-        const team = DRIVER_TO_TEAM[directKey];
+    const directStaticKey = Object.keys(DRIVER_TO_TEAM).find(k => k.toLowerCase() === normalized);
+    if (directStaticKey) {
+        const team = DRIVER_TO_TEAM[directStaticKey];
         return resolveTeamColor(team) ?? "#FFFFFF";
     }
 

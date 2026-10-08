@@ -908,6 +908,14 @@ describe("inline wiring", () => {
         expect(source).toMatch(/dynamic\(/);
     });
 
+    it("charts never precede the response text", () => {
+        const inline = readSource("components/visualization/inline-charts.tsx");
+        expect(inline).toMatch(/contentStarted/);
+        expect(inline).toMatch(/isStreaming && !contentStarted/);
+        const bubble = readSource("components/chat/message-bubble.tsx");
+        expect(bubble).toMatch(/contentStarted=\{message\.content\.trim\(\)\.length > 0\}/);
+    });
+
     it("chat-shell has no side panel reserve", () => {
         const source = readSource("components/chat/chat-shell.tsx");
         expect(source).not.toMatch(/VisualizationPanel/);
@@ -927,14 +935,18 @@ describe("inline wiring", () => {
         expect(source).not.toMatch(/setActiveMessageId/);
     });
 
-    it("control-panel has a combined Deep pill with On/Off status", () => {
+    it("control-panel has a sliding Deep switch with On/Off status", () => {
         const source = readSource("components/chat/control-panel.tsx");
         expect(source).not.toMatch(/visualizeEnabled/);
         expect(source).not.toMatch(/BarChart3/);
         expect(source).toMatch(/\? "On" : "Off"/);
         expect(source).not.toMatch(/Deep on/);
         expect(source).not.toMatch(/Deep off/);
-        expect(source).toMatch(/shadow-\[inset/);
+        // Fixed-size track, sliding knob, outlines on active + hover.
+        expect(source).toMatch(/w-\[76px\]/);
+        expect(source).toMatch(/translate-x-\[44px\]/);
+        expect(source).toMatch(/hover:outline/);
+        expect(source).toMatch(/outline-purple-300\/60/);
         expect(source).toMatch(/deepResearchMode/);
     });
 });

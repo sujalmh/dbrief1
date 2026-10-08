@@ -433,8 +433,15 @@ export async function clearMessages(userId: string, sessionId: string): Promise<
 
 export async function listMessages(userId: string, sessionId: string): Promise<Message[]> {
     await requireSession(userId, sessionId);
+    // Order by insertion (rowid), NOT wall-clock timestamp. Timestamps
+    // tie constantly (same-ms placeholder creation) and can even invert:
+    // the persisted user copy used to be re-stamped after session
+    // creation, landing seconds AFTER the assistant placeholder and
+    // rendering user-below-assistant on every reload. Insertion order is
+    // the true causal order (edits upsert in place, retries append).
+    await d1Exec(`CREATE INDEX IF NOT EXISTS idx_messages_session_rowid ON messages(session_id, rowid)`).catch(() => undefined);
     const rows = await d1Query<MessageDbRow>(
-        `SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC LIMIT 500`,
+        `SELECT * FROM messages WHERE session_id = ? ORDER BY rowid ASC LIMIT 500`,
         [sessionId]
     );
     const out: Message[] = [];

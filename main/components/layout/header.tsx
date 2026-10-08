@@ -1,6 +1,6 @@
 "use client"
 
-import { Settings, Share2, Info, Menu } from "lucide-react"
+import { Settings, Share2, Github, Menu } from "lucide-react"
 import dynamic from "next/dynamic"
 import { Button } from "@/components/ui/button"
 import { useChatStore } from "@/lib/store"
@@ -149,7 +149,7 @@ export function Header() {
                     </TooltipContent>
                 </Tooltip>
 
-                {/* Info Button — opens About / Privacy / Terms */}
+                {/* Source Button — GitHub glyph, opens About / Privacy / Terms */}
                 <Tooltip>
                     <TooltipTrigger asChild>
                         <Button
@@ -158,7 +158,7 @@ export function Header() {
                             onClick={() => setInfoOpen(true)}
                             className="btn-wheel btn-wheel-blue h-9 w-9 md:h-10 md:w-10"
                         >
-                            <Info className="h-5 w-5" />
+                            <Github className="h-5 w-5" />
                             <span className="sr-only">Information</span>
                         </Button>
                     </TooltipTrigger>
@@ -186,10 +186,10 @@ export function Header() {
                 </Tooltip>
             </div>
 
-            {/* Profile — always visible (phones included): avatar opens
-                settings/share/about/contact/logout. */}
+            {/* Profile — phones only (desktop has it in the sidebar).
+                Avatar opens settings/share/about/contact/logout. */}
             {user && (
-                <div className="flex shrink-0 items-center">
+                <div className="flex shrink-0 items-center md:hidden">
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <Button

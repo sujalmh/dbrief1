@@ -55,39 +55,51 @@ export function ControlPanel() {
     return (
         <div className="flex items-center justify-between w-full pt-2">
             <div className="flex items-center gap-1">
-                {/* Deep Research Mode — combined section: toggle + status.
-                    The pill is recessed (indent effect); the status reads
-                    On/Off, dim while off and highlighted when on. */}
-                <div className="flex h-8 items-center gap-1 rounded-full border border-white/10 bg-black/30 py-1 pl-1 pr-2.5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.5)]">
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                {...deepResearchPress}
-                                className="btn-wheel btn-wheel-purple h-6 w-6"
-                                data-active={settings.deepResearchMode}
+                {/* Deep Research Mode — sliding switch. Fixed-size track
+                    (never resizes on toggle); the knob slides left/right.
+                    Active adds outline to track + text; hover outlines
+                    the track. */}
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <button
+                            type="button"
+                            {...deepResearchPress}
+                            aria-pressed={deepOn}
+                            aria-label={deepOn ? "Deep research on - turn off" : "Deep research off - turn on"}
+                            className={cn(
+                                "relative h-8 w-[76px] shrink-0 rounded-full border bg-black/30 shadow-[inset_0_1px_2px_rgba(0,0,0,0.5)] outline-1 transition-colors duration-200",
+                                deepOn
+                                    ? "border-purple-400/70 bg-purple-500/15 outline outline-purple-300/60 hover:outline-purple-200"
+                                    : "border-white/10 hover:outline hover:outline-white/30"
+                            )}
+                        >
+                            <span
+                                aria-hidden
+                                className={cn(
+                                    "absolute left-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full transition-transform duration-200",
+                                    deepOn ? "translate-x-[44px]" : "translate-x-0",
+                                    "btn-wheel btn-wheel-purple"
+                                )}
                             >
                                 <Brain className="h-3.5 w-3.5" />
-                            </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom">
-                            <p>{settings.deepResearchMode ? "Deep Research Mode" : "Normal Mode"}</p>
-                        </TooltipContent>
-                    </Tooltip>
-                    <button
-                        type="button"
-                        {...deepResearchPress}
-                        aria-pressed={deepOn}
-                        aria-label={deepOn ? "Deep research on - turn off" : "Deep research off - turn on"}
-                        className={cn(
-                            "text-[11px] font-bold uppercase tracking-wider transition-colors",
-                            deepOn ? "text-purple-300" : "text-muted-foreground/40 hover:text-muted-foreground/70"
-                        )}
-                    >
-                        {deepOn ? "On" : "Off"}
-                    </button>
-                </div>
+                            </span>
+                            <span
+                                aria-hidden
+                                className={cn(
+                                    "absolute top-1/2 -translate-y-1/2 text-[11px] font-bold uppercase tracking-wider transition-all duration-200",
+                                    deepOn
+                                        ? "left-2.5 rounded-sm text-purple-300 outline outline-1 outline-purple-300/60"
+                                        : "right-2.5 text-muted-foreground/40"
+                                )}
+                            >
+                                {deepOn ? "On" : "Off"}
+                            </span>
+                        </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                        <p>{settings.deepResearchMode ? "Deep Research Mode" : "Normal Mode"}</p>
+                    </TooltipContent>
+                </Tooltip>
             </div>
 
             {/* Right side: inline usage (hover for details) + AI mode badge. */}

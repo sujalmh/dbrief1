@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Info, ShieldCheck, FileText } from "lucide-react"
+import { Info, ShieldCheck, FileText, Github } from "lucide-react"
 import {
     Dialog,
     DialogContent,
@@ -9,6 +9,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { F1_REQUIRED_NOTICE, F1_EXTENDED_NOTICE } from "@/components/legal/f1-disclaimer"
+import { REPO_URL } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
 type InfoSection = "about" | "privacy" | "terms"
@@ -33,14 +34,25 @@ function AboutBody() {
                 Modes at the top of the chat (Telemetry, Comparison,
                 Strategy, Insights) reflect the current session. Deep
                 Research mode runs a multi-step investigation with
-                evidence, confidence, and chart specs; the visualization
-                panel renders the charts for the active reply.
+                evidence, confidence, and charts rendered inline with
+                each reply.
             </p>
             <p>
                 Two AI setups are supported: Managed (the app owner&apos;s
                 model, no setup) and BYOK (your own OpenAI-compatible
                 endpoint and key, stored in a secure cookie and never in
                 local storage).
+            </p>
+            <p>
+                <a
+                    href={REPO_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 font-bold text-foreground underline underline-offset-2 hover:text-[var(--f1-red)]"
+                >
+                    <Github className="h-4 w-4" />
+                    Dbrief1 on GitHub
+                </a>
             </p>
             <p className="text-xs">
                 {F1_REQUIRED_NOTICE} {F1_EXTENDED_NOTICE}

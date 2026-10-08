@@ -95,7 +95,7 @@ export function ProfileModal({
                             type="button"
                             variant="ghost"
                             onClick={openSettings}
-                            className="btn-wheel h-10 justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide"
+                            className="btn-wheel btn-wheel-orange h-10 justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide"
                         >
                             <Settings className="h-4 w-4" />
                             Settings
@@ -106,7 +106,7 @@ export function ProfileModal({
                             variant="ghost"
                             onClick={() => setShareOpen(true)}
                             disabled={!currentSessionId}
-                            className="btn-wheel h-10 justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide"
+                            className="btn-wheel btn-wheel-purple h-10 justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide"
                         >
                             <Share2 className="h-4 w-4" />
                             Share session
@@ -116,7 +116,7 @@ export function ProfileModal({
                             type="button"
                             variant="ghost"
                             onClick={() => setInfoOpen(true)}
-                            className="btn-wheel h-10 justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide"
+                            className="btn-wheel btn-wheel-blue h-10 justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide"
                         >
                             <Info className="h-4 w-4" />
                             About
@@ -128,7 +128,7 @@ export function ProfileModal({
                                 variant="ghost"
                                 onClick={() => setShowContact((v) => !v)}
                                 aria-expanded={showContact}
-                                className="h-10 w-full justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide hover:bg-transparent"
+                                className="btn-wheel btn-wheel-yellow h-10 w-full justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide hover:bg-transparent"
                             >
                                 <Mail className="h-4 w-4" />
                                 Contact
@@ -150,7 +150,7 @@ export function ProfileModal({
                             type="button"
                             variant="ghost"
                             onClick={() => void handleLogout()}
-                            className="btn-wheel h-10 justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide text-muted-foreground hover:text-[var(--f1-red)]"
+                            className="btn-wheel btn-wheel-red h-10 justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide"
                         >
                             <LogOut className="h-4 w-4" />
                             Logout

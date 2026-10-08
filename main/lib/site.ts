@@ -22,6 +22,9 @@ function resolveSiteUrl(): string {
 
 export const siteUrl = resolveSiteUrl();
 
+/** Public source repository (navbar links, info modal). */
+export const REPO_URL = "https://github.com/sujalmh/dbrief1";
+
 export const site = {
   name: "Dbrief1",
   shortName: "Dbrief1",

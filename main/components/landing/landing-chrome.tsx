@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { Moon, Sun } from "lucide-react";
+import { Moon, Sun, Github } from "lucide-react";
 import {
     AppHeaderShell,
     LogoBadge,
@@ -9,6 +9,7 @@ import {
     type ModeLabel,
 } from "@/components/layout/header-shell";
 import { Button } from "@/components/ui/button";
+import { REPO_URL } from "@/lib/site";
 
 /**
  * Public chrome.
@@ -58,10 +59,20 @@ export function LandingHeader({
             {/* The header's mode selector doubles as the demo switcher. */}
             <ModePill active={activeMode} onSelect={onSelectMode} />
 
-            {/* Actions — theme + sign-in. The navbar carries its own
-                conversion point; the composer below is the second. */}
+            {/* Actions — theme + GitHub + sign-in. The navbar carries its
+                own conversion point; the composer below is the second. */}
             <div className="flex shrink-0 items-center gap-2 md:gap-3">
                 <ThemeToggle />
+                <a
+                    href={REPO_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="Dbrief1 on GitHub"
+                    title="Dbrief1 on GitHub"
+                    className="btn-wheel inline-flex h-9 w-9 items-center justify-center md:h-10 md:w-10"
+                >
+                    <Github className="h-5 w-5" />
+                </a>
                 <a
                     href="/api/auth/google"
                     className="btn-wheel btn-wheel-red inline-flex h-9 items-center px-3 text-[11px] font-bold uppercase tracking-wider text-white no-underline md:h-10 md:px-4 md:text-xs"

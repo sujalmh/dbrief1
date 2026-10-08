@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 
 function readSource(rel: string): string {
@@ -89,6 +89,55 @@ describe("landing copy has no staccato sentences", () => {
             "overtake ~lap",
         ]) {
             expect(copy, `banned fragment resurfaced: "${fragment}"`).not.toContain(fragment);
+        }
+    });
+});
+
+describe("repo docs have no staccato sentences", () => {
+    // README.md / CONTRIBUTING.md live at the repo root (one level up).
+    const docs = ["../README.md", "../CONTRIBUTING.md"].map((rel) =>
+        readFileSync(join(process.cwd(), rel), "utf8")
+    );
+
+    it("uses flowing sentences (no 1-3 word fragments)", () => {
+        for (const [i, doc] of docs.entries()) {
+            // Only prose counts: skip fenced code, images, and headings.
+            // Track fences on raw lines (filtering ``` first would blind
+            // the toggle and leak code lines into the check).
+            const inProse: string[] = [];
+            let fenced = false;
+            for (const line of doc.split("\n")) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith("```")) {
+                    fenced = !fenced;
+                    continue;
+                }
+                if (fenced || trimmed.startsWith("!")) continue;
+                inProse.push(line);
+            }
+            for (const sentence of sentences(inProse.join("\n"))) {
+                // Headings, list markers, and table rows are labels, not sentences.
+                const cleaned = sentence
+                    .replace(/^#{1,6}\s+/, "")
+                    .replace(/^[-*]\s+/, "")
+                    .replace(/^\d+[.)]\s+/, "")
+                    .replace(/\s*\d+[.)]\s*$/, "")
+                    .trim();
+                if (!cleaned || cleaned.startsWith("|")) continue;
+                // Fragments without sentence punctuation are headings or
+                // labels, not sentences (e.g. a lone "## Workflow").
+                if (!/[.!?:]/.test(cleaned)) continue;
+                const words = cleaned.split(/\s+/).filter(Boolean);
+                expect(words.length, `doc ${i}: "${cleaned}"`).toBeGreaterThan(3);
+            }
+        }
+    });
+
+    it("mentions the screenshots it embeds", () => {
+        const readme = docs[0] ?? "";
+        for (const shot of ["assets/readme-landing.jpg", "assets/readme-chat.jpg", "assets/readme-mobile.jpg"]) {
+            expect(readme).toContain(shot);
+            expect(existsSync(join(process.cwd(), "..", shot))).toBe(true);
         }
     });
 });

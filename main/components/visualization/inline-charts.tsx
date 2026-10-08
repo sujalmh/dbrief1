@@ -45,6 +45,12 @@ interface InlineChartsProps {
     query?: string;
     /** True while this message is still streaming. */
     isStreaming?: boolean;
+    /**
+     * True once the answer text has started (first token painted).
+     * Charts never precede the response: while streaming with no text
+     * yet, a compact placeholder holds the slot instead.
+     */
+    contentStarted?: boolean;
 }
 
 export function InlineCharts({
@@ -53,16 +59,17 @@ export function InlineCharts({
     visualizationData,
     query = "",
     isStreaming = false,
+    contentStarted = true,
 }: InlineChartsProps) {
     const specs = useMemo(
         () => resolveInlineChartSpecs({ chartSpecs, visualizationData, query }),
         [chartSpecs, visualizationData, query]
     );
 
-    // Streaming with data on the way: hold a compact placeholder so the
-    // layout doesn't jump when the first spec resolves. No specs and not
-    // streaming → render nothing (chat stays clean when there's nothing
-    // chartable).
+    // Streaming with data on the way — or with specs ready but no answer
+    // text yet: hold a compact placeholder so charts never appear before
+    // the response starts. No specs and not streaming → render nothing
+    // (chat stays clean when there's nothing chartable).
     if (specs.length === 0) {
         if (isStreaming) {
             return (
@@ -77,6 +84,19 @@ export function InlineCharts({
             );
         }
         return null;
+    }
+
+    if (isStreaming && !contentStarted) {
+        return (
+            <div
+                data-testid="inline-charts-loading"
+                data-message-id={messageId}
+                className="mt-3 flex items-center gap-2 rounded-xl border border-border/50 bg-muted/20 px-4 py-3 text-xs text-muted-foreground animate-pulse"
+            >
+                <BarChart3 className="h-4 w-4 shrink-0 text-[var(--f1-yellow)]" />
+                <span className="font-mono uppercase tracking-wider">Preparing charts…</span>
+            </div>
+        );
     }
 
     return (

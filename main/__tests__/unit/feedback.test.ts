@@ -152,12 +152,13 @@ describe("feedback + contact + admin wiring", () => {
         expect(settings).toMatch(/user\?\.isAdmin/);
     });
 
-    it("navbar avatar opens the profile modal (all sizes)", () => {
+    it("navbar avatar is phones-only (desktop uses the sidebar)", () => {
         const header = readSource("components/layout/header.tsx");
         expect(header).toMatch(/ProfileModal/);
         expect(header).toMatch(/profile-modal/);
         expect(header).toMatch(/setProfileOpen\(true\)/);
         expect(header).toMatch(/avatarUrl/);
+        expect(header).toMatch(/md:hidden/);
     });
 
     it("phone navbar: logo + sidebar toggle, icon buttons desktop-only", () => {
@@ -177,6 +178,27 @@ describe("feedback + contact + admin wiring", () => {
         expect(profile).toMatch(/InfoModal/);
         expect(profile).toMatch(/ShareDialog/);
         expect(profile).toMatch(/Logout/);
+    });
+
+    it("profile + settings buttons all carry wheel colors", () => {
+        const profile = readSource("components/profile/profile-modal.tsx");
+        expect(profile).toMatch(/btn-wheel-orange/);
+        expect(profile).toMatch(/btn-wheel-purple/);
+        expect(profile).toMatch(/btn-wheel-blue/);
+        expect(profile).toMatch(/btn-wheel-yellow/);
+        expect(profile).toMatch(/btn-wheel-red/);
+        const contact = readSource("components/profile/contact-form.tsx");
+        expect(contact).toMatch(/btn-wheel-green/);
+        const settings = readSource("components/chat/settings-modal.tsx");
+        expect(settings).toMatch(/btn-wheel-blue/);
+        expect(settings).toMatch(/btn-wheel-red/);
+        expect(settings).toMatch(/btn-wheel-green/);
+    });
+
+    it("shared dialog close button is a colored wheel", () => {
+        const dialog = readSource("components/ui/dialog.tsx");
+        expect(dialog).toMatch(/btn-wheel/);
+        expect(dialog).toMatch(/hover:text-\[var\(--f1-red\)\]/);
     });
 
     it("feedback dialog collects stars + comment and saves first_response", () => {
@@ -241,5 +263,33 @@ describe("feedback + contact + admin wiring", () => {
         expect(source).toMatch(/last 7 days/i);
         expect(source).toMatch(/Not authorized/);
         expect(source).toMatch(/loadFeedback\(/);
+    });
+});
+
+describe("github links", () => {
+    it("landing navbar links to the repo", () => {
+        const chrome = readSource("components/landing/landing-chrome.tsx");
+        expect(chrome).toMatch(/REPO_URL/);
+        expect(chrome).toMatch(/target="_blank"/);
+        expect(chrome).toMatch(/Github/);
+        const site = readSource("lib/site.ts");
+        expect(site).toMatch(/REPO_URL/);
+        expect(site).toMatch(/github\.com\/sujalmh\/dbrief1/);
+    });
+
+    it("app navbar shows a GitHub glyph for the info modal", () => {
+        const header = readSource("components/layout/header.tsx");
+        expect(header).toMatch(/<Github/);
+        expect(header).toMatch(/setInfoOpen\(true\)/);
+        expect(header).toMatch(/InfoModal/);
+    });
+
+    it("info modal keeps its sections and links the repo", () => {
+        const modal = readSource("components/layout/info-modal.tsx");
+        expect(modal).toMatch(/AboutBody/);
+        expect(modal).toMatch(/PrivacyBody/);
+        expect(modal).toMatch(/TermsBody/);
+        expect(modal).toMatch(/REPO_URL/);
+        expect(modal).toMatch(/Dbrief1 on GitHub/);
     });
 });

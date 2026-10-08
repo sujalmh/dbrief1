@@ -76,12 +76,17 @@ export function useChatHandler() {
         state.setLoading(true)
         state.setError(null)
 
+        // One timestamp for the user turn, used by BOTH the optimistic
+        // bubble and the persisted copy. Re-stamping at persist time
+        // (after session creation) used to land seconds after the
+        // assistant placeholder, inverting reload order.
+        const userMsgTimestamp = Date.now()
         if (!overrideInput) {
             state.addMessage({
                 id: userMsgId,
                 role: "user",
                 content: messageText,
-                timestamp: Date.now()
+                timestamp: userMsgTimestamp
             })
         }
 
@@ -219,7 +224,7 @@ export function useChatHandler() {
                     id: userMsgId,
                     role: "user",
                     content: messageText,
-                    timestamp: Date.now(),
+                    timestamp: userMsgTimestamp,
                 };
                 const sid = effectiveSessionId;
                 saveMessage(sid, userMsg);
@@ -636,7 +641,7 @@ export function useChatHandler() {
             // `done`. This is rare but can happen if the connection
             // drops mid-flight, the server crashes silently, or the
             // provider hangs and we never get a payload. Without this
-            // the user sees a frozen "AWAITING DATA..." bubble forever.
+            // the user sees a frozen loading bubble forever.
             // Detect it and surface a clear inline error.
             const finalMsg = useChatStore.getState().messages.find(m => m.id === assistantMsgId)
             const finalContent = finalMsg?.content ?? assistantContent

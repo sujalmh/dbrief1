@@ -88,7 +88,7 @@ export function ContactForm() {
                     size="sm"
                     onClick={() => void handleSend()}
                     disabled={sending}
-                    className="btn-wheel h-8 px-4 text-xs"
+                    className="btn-wheel btn-wheel-green h-8 px-4 text-xs"
                 >
                     {sending ? "Sending..." : "Send message"}
                 </Button>

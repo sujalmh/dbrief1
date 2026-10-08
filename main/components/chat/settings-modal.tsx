@@ -382,7 +382,7 @@ export function SettingsModal() {
                                     size="sm"
                                     onClick={handleTestKey}
                                     disabled={isTesting || isSaving}
-                                    className="btn-wheel h-8 px-3 text-xs"
+                                    className="btn-wheel btn-wheel-blue h-8 px-3 text-xs"
                                 >
                                     {isTesting ? (
                                         <>
@@ -436,7 +436,7 @@ export function SettingsModal() {
                             }
                         }}
                         type="button"
-                        className="btn-wheel h-9 px-4 text-muted-foreground hover:text-[var(--f1-red)] text-xs uppercase tracking-wide"
+                        className="btn-wheel btn-wheel-red h-9 px-4 text-xs uppercase tracking-wide"
                     >
                         Clear Telemetry
                     </Button>

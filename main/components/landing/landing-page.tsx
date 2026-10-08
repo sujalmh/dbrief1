@@ -33,10 +33,10 @@ export function LandingPage() {
 
     return (
         <MotionConfig reducedMotion="user">
-            <div className="flex h-dvh w-full flex-col overflow-hidden bg-background font-sans text-foreground antialiased selection:bg-[#E10600]/15">
+            <div className="flex h-dvh w-full flex-col overflow-hidden bg-carbon font-sans text-foreground antialiased selection:bg-[#E10600]/15">
                 <LandingHeader activeMode={activeMode} onSelectMode={selectMode} />
 
-                <main className="relative z-10 mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-hidden bg-carbon px-3 sm:px-4">
+                <main className="relative z-10 mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-hidden px-3 sm:px-4">
                     <div className="shrink-0">
                         <LandingHero />
                     </div>

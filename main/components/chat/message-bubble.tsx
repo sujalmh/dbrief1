@@ -17,9 +17,8 @@ import {
 import { PlanningGrid } from "@/components/chat/planning-grid"
 import { EvidencePanel } from "@/components/chat/evidence-panel"
 import { ReflectionTrace } from "@/components/chat/reflection-trace"
-import { RadioWave } from "@/components/chat/radio-wave"
 import { UsageFooter } from "@/components/chat/usage-footer"
-import { useRef, memo, useCallback, useState, useMemo } from "react"
+import { useRef, memo, useCallback, useState, useMemo, useEffect } from "react"
 import { useChatHandler } from "@/lib/hooks/use-chat-handler"
 import { getDriverColor, getDriverPattern, seasonFromPayload } from "@/lib/f1-colors"
 import type { Components } from "react-markdown"
@@ -212,8 +211,20 @@ const createMarkdownComponents = (season?: number): Components => ({
     strong: ({ children, ...props }) => <strong {...props}><HighlightedText season={season}>{children}</HighlightedText></strong>
 });
 
-// Base remark plugins shared by user + assistant content (user content
-// additionally treats single newlines as hard breaks).
+/** Rotating pit-wall loading lines while the answer streams in. */
+export const LOADING_LINES = [
+    "Race engineer is thinking…",
+    "Churning through the data…",
+    "Reading telemetry traces…",
+    "Checking timing screens…",
+    "Crunching lap times…",
+    "Scanning the field…",
+    "Plotting strategy options…",
+    "Warming up the pit wall…",
+];
+
+/** How long each loading line shows before rotating. */
+export const LOADING_LINE_INTERVAL_MS = 2400;
 
 // rehype-sanitize strips unknown hast properties by default, which would
 // drop the alert kind (`dataAlert`) our blockquote renderer reads.
@@ -370,6 +381,18 @@ export const MessageContent = memo(function MessageContent({
         }
         return null;
     }, [steps, iterations]);
+    // Rotating pit-wall loading lines while no live step status exists.
+    // The timer only runs for the empty state below (live pipeline text
+    // always wins when present).
+    const [flavorIndex, setFlavorIndex] = useState(0);
+    useEffect(() => {
+        if (content || statusLine) return;
+        const id = setInterval(() => {
+            setFlavorIndex((i) => (i + 1) % LOADING_LINES.length);
+        }, LOADING_LINE_INTERVAL_MS);
+        return () => clearInterval(id);
+    }, [content, statusLine]);
+    const loadingLine = statusLine ?? LOADING_LINES[flavorIndex % LOADING_LINES.length] ?? "Race engineer is thinking…";
     if (content) {
         return (
             <ReactMarkdown
@@ -384,14 +407,22 @@ export const MessageContent = memo(function MessageContent({
 
     if (!isUser && !isError) {
         return (
-            <div className="flex min-w-0 max-w-full items-center gap-3 py-2">
+            <div className="flex min-w-0 max-w-full items-center gap-3 py-2" aria-live="polite">
+                <span className="flex shrink-0 items-center gap-1" aria-hidden>
+                    {[0, 1, 2].map((i) => (
+                        <span
+                            key={i}
+                            className="h-1.5 w-1.5 rounded-full bg-[var(--f1-red)] animate-bounce"
+                            style={{ animationDelay: `${i * 180}ms` }}
+                        />
+                    ))}
+                </span>
                 <span
                     title={statusLine ?? undefined}
-                    className="text-xs font-mono text-muted-foreground animate-pulse truncate min-w-0 max-w-[55vw] sm:max-w-[300px]"
+                    className="text-xs font-mono text-muted-foreground truncate min-w-0 max-w-[55vw] sm:max-w-[300px]"
                 >
-                    {statusLine ?? "AWAITING DATA..."}
+                    {loadingLine}
                 </span>
-                <RadioWave />
             </div>
         );
     }
@@ -740,6 +771,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                         visualizationData={message.visualizationData}
                         query={userQuery}
                         isStreaming={isStreaming}
+                        contentStarted={message.content.trim().length > 0}
                     />
                 )}
 

@@ -24,3 +24,10 @@ export function shouldPromptFirstFeedback(state: FirstFeedbackState): boolean {
     if (!state.hasContent) return false;
     return state.assistantCount === 1;
 }
+
+/**
+ * Delay between the first answer completing and the popup opening.
+ * The user needs a moment to read the answer before being asked to
+ * rate it — 12 seconds lands inside the requested 10-15s window.
+ */
+export const FIRST_FEEDBACK_DELAY_MS = 12_000;

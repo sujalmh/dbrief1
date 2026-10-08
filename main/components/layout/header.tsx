@@ -115,7 +115,7 @@ export function Header() {
                         <Menu className="h-5 w-5" />
                         <span className="sr-only">Toggle sidebar</span>
                     </Button>
-                    <LogoBadge />
+                    <LogoBadge onBackground className="bg-transparent shadow-none" />
                 </div>
                 {/* Dynamic Session Badge — compact + truncated on phones */}
                 <SessionBadge label={context.sessionString} />

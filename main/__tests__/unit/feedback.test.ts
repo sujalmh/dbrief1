@@ -14,7 +14,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { validateFeedbackInput } from "@/lib/cf/feedback";
-import { shouldPromptFirstFeedback } from "@/lib/feedback";
+import { shouldPromptFirstFeedback, FIRST_FEEDBACK_DELAY_MS } from "@/lib/feedback";
 import { useChatStore } from "@/lib/store";
 
 function readSource(rel: string): string {
@@ -89,6 +89,11 @@ describe("shouldPromptFirstFeedback", () => {
         ).toBe(true);
     });
 
+    it("popup delay lands in the 10-15s reading window", () => {
+        expect(FIRST_FEEDBACK_DELAY_MS).toBeGreaterThanOrEqual(10_000);
+        expect(FIRST_FEEDBACK_DELAY_MS).toBeLessThanOrEqual(15_000);
+    });
+
     it("never fires twice, on errors, on empty content, or on later turns", () => {
         const base = { prompted: false, assistantCount: 1, isError: false, hasContent: true };
         expect(shouldPromptFirstFeedback({ ...base, prompted: true })).toBe(false);
@@ -158,6 +163,7 @@ describe("feedback + contact + admin wiring", () => {
     it("phone navbar: logo + sidebar toggle, icon buttons desktop-only", () => {
         const header = readSource("components/layout/header.tsx");
         expect(header).toMatch(/LogoBadge/);
+        expect(header).toMatch(/onBackground/);
         expect(header).toMatch(/setSidebarOpen\(!isSidebarOpen\)/);
         expect(header).toMatch(/md:hidden/);
         expect(header).toMatch(/hidden items-center.*md:flex/);
@@ -188,11 +194,12 @@ describe("feedback + contact + admin wiring", () => {
         expect(source).toMatch(/feedback-dialog/);
     });
 
-    it("chat handler triggers the popup once via the pure helper", () => {
+    it("chat handler schedules the popup after a reading delay", () => {
         const source = readSource("lib/hooks/use-chat-handler.ts");
         expect(source).toMatch(/shouldPromptFirstFeedback/);
         expect(source).toMatch(/markFeedbackPrompted\(\)/);
-        expect(source).toMatch(/setFeedbackOpen\(true\)/);
+        expect(source).toMatch(/setTimeout\(\(\) => \{\s*useChatStore\.getState\(\)\.setFeedbackOpen\(true\);\s*\}, FIRST_FEEDBACK_DELAY_MS\)/);
+        expect(source).toMatch(/FIRST_FEEDBACK_DELAY_MS/);
     });
 
     it("feedback API writes for linked users, reads for admins only", () => {

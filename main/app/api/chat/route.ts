@@ -32,7 +32,7 @@ import type { StructuredTool } from "@langchain/core/tools";
 export const maxDuration = 300;
 
 import { getPlannerModel, getResponderModel, chatContentToText, LLM_TIMEOUT_MS, type AiMode } from "@/lib/llm";
-import { decidePlan, createFallbackPlan, shouldDowngradeDeep, type Plan, type PlanDecision } from "@/lib/planner";
+import { decidePlan, createFallbackPlan, shouldDowngradeDeep, isRecencyQuery, type Plan, type PlanDecision } from "@/lib/planner";
 import {
     classifyPrompt,
     isConversationalFastPath,
@@ -47,7 +47,7 @@ import { executeSteps, aggregateContext, buildRefusalMessage } from "@/lib/execu
 import { ANSWER_STYLE_PROMPT, CHART_GUIDANCE_STANDARD_PROMPT } from "@/lib/synthesis/answer-style";
 import { UsageAccumulator, getModelId, type UsageTotals } from "@/lib/llm-usage";
 import { f1Tools } from "@/lib/tools/fastf1";
-import { getSearchTools } from "@/lib/tools/search";
+import { getSearchTools, extractResultUrls } from "@/lib/tools/search";
 import { getRegulationTools } from "@/lib/tools/regulation";
 import { getSimulationTools } from "@/lib/tools/simulation";
 import { ResearchManager } from "@/lib/research/manager";
@@ -981,6 +981,61 @@ export async function POST(request: NextRequest) {
                             sendEvent("step_update", { step, status, additional });
                         }
                     );
+
+                    // 3b. Auto-verify recency answers: fetch the top web_search
+                    // URLs. Search snippets routinely omit the key fact (the
+                    // winner's name is often cut off), and the shallow planner
+                    // cannot chain fetch-after-search (URLs are unknown until
+                    // search returns). So for recency turns with a successful
+                    // search and no planned fetch, run one verification fetch
+                    // here — deterministic, no extra LLM call. Per TinyFish
+                    // docs, fetch is the documented path to full page content
+                    // ("Use Fetch when you already know the URL").
+                    if (
+                        isRecencyQuery(message) &&
+                        !plan.steps.some((s) => s.tool === "fetch_web_pages") &&
+                        executionContext.results.some((r) => r.tool === "web_search" && r.success)
+                    ) {
+                        const urls = [...new Set(
+                            executionContext.results.flatMap((r) =>
+                                r.tool === "web_search" && r.success ? extractResultUrls(r.data) : []
+                            )
+                        )].slice(0, 3);
+                        if (urls.length > 0 && tools["fetch_web_pages"]) {
+                            const fetchStep = executionContext.results.length + 1;
+                            sendEvent("step_update", { step: fetchStep, status: "running" });
+                            const fetchStart = Date.now();
+                            try {
+                                const raw = await tools["fetch_web_pages"].invoke({
+                                    urls,
+                                    question: message.slice(0, 500),
+                                });
+                                const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+                                executionContext.results.push({
+                                    step: fetchStep,
+                                    tool: "fetch_web_pages",
+                                    args: { urls },
+                                    success: true,
+                                    data: parsed,
+                                    durationMs: Date.now() - fetchStart,
+                                });
+                                executionContext.successCount++;
+                                sendEvent("step_update", { step: fetchStep, status: "success" });
+                            } catch (e) {
+                                const err = e instanceof Error ? e.message : String(e);
+                                executionContext.results.push({
+                                    step: fetchStep,
+                                    tool: "fetch_web_pages",
+                                    args: { urls },
+                                    success: false,
+                                    error: err,
+                                    durationMs: Date.now() - fetchStart,
+                                });
+                                executionContext.failureCount++;
+                                sendEvent("step_update", { step: fetchStep, status: "failed", additional: err });
+                            }
+                        }
+                    }
 
                     // Responder is only needed for tool-backed questions.
                     let responderModel;

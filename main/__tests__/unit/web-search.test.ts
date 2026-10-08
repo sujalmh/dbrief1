@@ -237,3 +237,30 @@ describe("fetchWebPagesTool", () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 });
+
+describe("extractResultUrls", () => {
+    it("collects distinct http urls, skipping junk", async () => {
+        const { extractResultUrls } = await import("@/lib/tools/search");
+        expect(
+            extractResultUrls({
+                results: [
+                    { url: "https://a.com/1" },
+                    { url: "https://a.com/1" },
+                    { url: "not-a-url" },
+                    { url: 42 },
+                    {},
+                ],
+            })
+        ).toEqual(["https://a.com/1"]);
+    });
+
+    it("accepts JSON strings and tolerates garbage", async () => {
+        const { extractResultUrls } = await import("@/lib/tools/search");
+        expect(extractResultUrls(JSON.stringify({ results: [{ url: "http://b.com/x" }] }))).toEqual([
+            "http://b.com/x",
+        ]);
+        expect(extractResultUrls("{broken")).toEqual([]);
+        expect(extractResultUrls(null)).toEqual([]);
+        expect(extractResultUrls({})).toEqual([]);
+    });
+});

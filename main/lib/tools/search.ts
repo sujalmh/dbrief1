@@ -395,3 +395,21 @@ export function getSearchTools(): Record<string, StructuredTool> {
         fetch_web_pages: fetchWebPagesTool,
     };
 }
+
+/**
+ * Collect distinct http(s) URLs from web_search result payloads.
+ * Used by the recency auto-verify fetch: only concrete URLs the search
+ * actually returned are ever fetched, never invented ones.
+ */
+export function extractResultUrls(data: unknown): string[] {
+    try {
+        const parsed = typeof data === "string" ? JSON.parse(data) : data;
+        const hits = (parsed as { results?: { url?: unknown }[] } | null)?.results ?? [];
+        const urls = hits
+            .map((h) => h.url)
+            .filter((u): u is string => typeof u === "string" && u.startsWith("http"));
+        return [...new Set(urls)];
+    } catch {
+        return [];
+    }
+}

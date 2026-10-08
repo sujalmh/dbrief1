@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { planQuery, createFallbackPlan, decidePlan, shouldDowngradeDeep, type Plan } from '@/lib/planner'
+import { planQuery, createFallbackPlan, decidePlan, shouldDowngradeDeep, enforceRecencyYear, type Plan } from '@/lib/planner'
 import { createTestPlannerModel } from '../utils/llm-client'
 import {
     assertPlanContainsTool,
@@ -430,5 +430,42 @@ describe('shouldDowngradeDeep', () => {
     it('keeps three-plus-step plans on deep research', () => {
         expect(shouldDowngradeDeep(planWith(3))).toBe(false);
         expect(shouldDowngradeDeep(planWith(5))).toBe(false);
+    });
+});
+
+describe('enforceRecencyYear', () => {
+    const CY = new Date().getFullYear();
+    const planWithYears = (years: unknown[]): Plan => ({
+        steps: years.map((y, i) => ({
+            description: `step ${i}`,
+            tool: 'get_events',
+            args: { year: y },
+        })),
+    });
+
+    it('rewrites stale years on year-less recency queries', () => {
+        const out = enforceRecencyYear(planWithYears([CY - 1, CY - 1]), 'who won the last race', CY);
+        expect(out.steps.every((s) => (s.args as Record<string, unknown>).year === CY)).toBe(true);
+    });
+
+    it('rewrites season keys too', () => {
+        const plan: Plan = { steps: [{ description: 's', tool: 'retrieve_regulations', args: { season: CY - 1 } }] };
+        const out = enforceRecencyYear(plan, 'latest F1 news', CY);
+        expect((out.steps[0].args as Record<string, unknown>).season).toBe(CY);
+    });
+
+    it('leaves explicit-year recency queries alone', () => {
+        const plan = planWithYears([CY - 2]);
+        expect(enforceRecencyYear(plan, 'who won the last race of 2024?', CY)).toBe(plan);
+    });
+
+    it('leaves non-recency queries alone', () => {
+        const plan = planWithYears([CY - 1]);
+        expect(enforceRecencyYear(plan, 'Show telemetry for 2024 Monaco GP', CY)).toBe(plan);
+    });
+
+    it('leaves correct years untouched', () => {
+        const plan = planWithYears([CY]);
+        expect(enforceRecencyYear(plan, 'who won the last race', CY)).toBe(plan);
     });
 });

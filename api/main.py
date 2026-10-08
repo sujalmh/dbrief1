@@ -722,14 +722,14 @@ async def get_sessions(
     try:
         gp = validate_gp_param(gp)
         schedule = get_event_schedule(year)
-        
-        # Find the event
+
+        # Resolve through the single hardened matcher (two-pass,
+        # word-boundary, testing-safe) instead of inline substring
+        # matching, which let testing rows shadow real Grands Prix.
+        canonical = resolve_gp_name(year, gp)
         event = None
         for _, row in schedule.iterrows():
-            if (str(row.get("RoundNumber")) == gp or 
-                gp.lower() in str(row.get("EventName", "")).lower() or
-                gp.lower() in str(row.get("Location", "")).lower() or
-                gp.lower() in str(row.get("Country", "")).lower()):
+            if str(row.get("EventName", "")) == canonical:
                 event = row
                 break
         

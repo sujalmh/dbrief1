@@ -184,6 +184,50 @@ export interface ChatHistoryItem {
 }
 
 /**
+ * Year-arg keys the planner emits across tools (get_events/get_race/... use
+ * `year`; retrieve_regulations uses `season`).
+ */
+const RECENCY_YEAR_KEYS = new Set(["year", "season"]);
+
+/** Any explicit 4-digit year in the user's message pins the season. */
+const EXPLICIT_YEAR_RE = /(?:19|20)\d{2}/;
+
+/**
+ * Deterministic backstop for recency queries: when the message names no
+ * year, every year/season arg MUST be the current season. Prompt rules
+ * alone leak (a degraded intent or unlucky sample emits last year's
+ * number and the whole turn answers the wrong season), so this rewrites
+ * rather than asks. Explicit years ("last race of 2024") and non-recency
+ * queries pass through untouched.
+ */
+export function enforceRecencyYear(
+    plan: Plan,
+    message: string,
+    currentYear = new Date().getFullYear()
+): Plan {
+    if (!isRecencyQuery(message) || EXPLICIT_YEAR_RE.test(message)) return plan;
+    let touched = false;
+    const steps = plan.steps.map((s) => {
+        const args = s.args as Record<string, unknown>;
+        const fixed: Record<string, unknown> = { ...args };
+        let stepTouched = false;
+        for (const k of RECENCY_YEAR_KEYS) {
+            if (typeof fixed[k] === "number" && fixed[k] !== currentYear) {
+                fixed[k] = currentYear;
+                stepTouched = true;
+            }
+        }
+        if (stepTouched) {
+            touched = true;
+            return { ...s, args: fixed };
+        }
+        return s;
+    });
+    if (!touched) return plan;
+    return { ...plan, steps };
+}
+
+/**
  * True when the message asks about recency: latest / last race /
  * most recent / next race / current standings / news. Recency questions
  * MUST be answered from web search (TinyFish) plus the schedule anchor —
@@ -417,7 +461,10 @@ export async function decidePlan(
     });
     const { plan: parsed, reasoning } = parseJsonResponse(responseToText(response));
 
-    return resolveDecision(parsed, reasoning, webSearchEnabled, deepResearchMode, webRecencyOnly);
+    const decision = resolveDecision(parsed, reasoning, webSearchEnabled, deepResearchMode, webRecencyOnly);
+    // Deterministic backstop: prompt rules alone leak wrong years on
+    // recency queries, so the year is enforced in code, not just prose.
+    return { ...decision, plan: enforceRecencyYear(decision.plan, message) };
 }
 
 /**

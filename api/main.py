@@ -14,8 +14,10 @@ Features:
 
 import asyncio
 import os
+import re
 import time
 import logging
+import unicodedata
 from collections import OrderedDict
 from typing import Optional
 
@@ -417,6 +419,15 @@ def _validate_year(year: int) -> int:
     return year
 
 
+def _norm_gp(text: object) -> str:
+    """Normalize a GP string for matching: lowercase, accent-folded
+    ("Montréal" → "montreal"), trailing "GP"/"Grand Prix" qualifier
+    stripped ("Italian GP" → "italian")."""
+    s = str(text or "").lower()
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    return re.sub(r"\s+(gp|grand prix)$", "", s).strip()
+
+
 def resolve_gp_name(year: int, gp: str) -> str:
     """Resolve a user-supplied Grand Prix identifier to its canonical
     schedule EventName, or raise 404 when nothing matches.
@@ -425,18 +436,47 @@ def resolve_gp_name(year: int, gp: str) -> str:
     instead of failing, which used to turn LLM placeholder args (e.g.
     gp="LAST_COMPLETED_GP") into confidently-wrong race data. Every
     session-loading path goes through get_session(), so validating here
-    fails closed for all of them. Matching mirrors the /f1/sessions
-    lookup (round number, EventName, Location, Country substrings) so
-    anything that works there keeps working here.
+    fails closed for all of them.
+
+    Matching is two-pass: EventName substrings first, then
+    Location/Country substrings restricted to real race weekends
+    (RoundNumber > 0). Pre-season testing rows share host countries
+    (e.g. Location "Bahrain") and must never shadow a real Grand Prix —
+    resolving "Bahrain" to testing made FastF1 fall back to a future
+    event and trip the live-session cost gate for a completed race.
     """
     schedule = get_event_schedule(year)
-    needle = str(gp).strip().lower()
+    needle = _norm_gp(str(gp).strip())
+    if not needle:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Event '{gp}' not found in the {year} schedule. "
+                f"Use /f1/gp-names?year={year} to discover valid Grand Prix names."
+            ),
+        )
+
+    def _word_hit(needle: str, haystack: object) -> bool:
+        # Whole-word match so short aliases can't match inside longer
+        # words ("spa" must hit Spa-Francorchamps, not "Spanish").
+        return (
+            re.search(r"\b" + re.escape(needle) + r"\b", _norm_gp(haystack))
+            is not None
+        )
+
     for _, row in schedule.iterrows():
-        if (
-            str(row.get("RoundNumber")) == str(gp).strip()
-            or (needle and needle in str(row.get("EventName", "")).lower())
-            or (needle and needle in str(row.get("Location", "")).lower())
-            or (needle and needle in str(row.get("Country", "")).lower())
+        if str(row.get("RoundNumber")) == str(gp).strip() or _word_hit(
+            needle, row.get("EventName", "")
+        ):
+            return str(row.get("EventName", gp))
+    for _, row in schedule.iterrows():
+        try:
+            if int(row.get("RoundNumber") or 0) <= 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if _word_hit(needle, row.get("Location", "")) or _word_hit(
+            needle, row.get("Country", "")
         ):
             return str(row.get("EventName", gp))
     raise HTTPException(

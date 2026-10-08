@@ -12,13 +12,16 @@ import { tool, StructuredTool } from "@langchain/core/tools";
 // Configuration
 // =============================================================================
 
-const F1_API_BASE = process.env.F1_API_URL || "http://localhost:8000";
-const F1_API_KEY = process.env.F1_API_KEY || "";
 const TOOL_TIMEOUT_MS = 60000;
+
+function f1Base(): string {
+    return process.env.F1_API_URL || "http://localhost:8000";
+}
 
 function f1Headers(): Record<string, string> {
     const h: Record<string, string> = { "Content-Type": "application/json" };
-    if (F1_API_KEY) h["x-api-key"] = F1_API_KEY;
+    const key = process.env.F1_API_KEY || "";
+    if (key) h["x-api-key"] = key;
     return h;
 }
 // Cap on response body size (bytes) accepted from the F1 API.
@@ -35,7 +38,7 @@ const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
  * Make a GET request to the F1 API
  */
 async function f1Get(endpoint: string): Promise<unknown> {
-    const response = await fetch(`${F1_API_BASE}${endpoint}`, {
+    const response = await fetch(`${f1Base()}${endpoint}`, {
         method: "GET",
         headers: f1Headers(),
         signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
@@ -53,7 +56,7 @@ async function f1Get(endpoint: string): Promise<unknown> {
  * Make a POST request to the F1 API
  */
 async function f1Post(endpoint: string, body: unknown): Promise<unknown> {
-    const response = await fetch(`${F1_API_BASE}${endpoint}`, {
+    const response = await fetch(`${f1Base()}${endpoint}`, {
         method: "POST",
         headers: f1Headers(),
         body: JSON.stringify(body),

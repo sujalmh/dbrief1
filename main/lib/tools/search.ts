@@ -63,6 +63,37 @@ function fetchMaxChars(): number {
     return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 50_000) : 6000;
 }
 
+function fetchMinChars(): number {
+    // Floor for usable extraction. Per TinyFish, 10%+ of "successful"
+    // fetches come back nearly empty — enough to pass, not enough to
+    // reason on. Below this, the page goes to errors[] instead of
+    // pages[] so callers treat it as missing, not evidence.
+    const n = Number(process.env.TINYFISH_FETCH_MIN_CHARS);
+    return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 5000) : 200;
+}
+
+/** Max fetch attempts: one retry for transient failures (mirrors search). */
+const MAX_FETCH_ATTEMPTS = 2;
+
+/**
+ * Map HTTP statuses to actionable messages (per TinyFish error codes).
+ * Callers surface message verbatim, so "failed: 402" alone would baffle.
+ */
+function httpErrorMessage(service: "Search" | "Fetch", status: number): string {
+    switch (status) {
+        case 401:
+            return `${service} failed: invalid API key (401). Check TINYFISH_API_KEY.`;
+        case 402:
+            return `${service} quota exhausted (402 INSUFFICIENT_CREDITS) — daily free allowance used.`;
+        case 403:
+            return `${service} forbidden (403) by the upstream service.`;
+        case 404:
+            return `${service} API unavailable (404).`;
+        default:
+            return `${service} failed: ${status}`;
+    }
+}
+
 // =============================================================================
 // Search Tool
 // =============================================================================
@@ -208,12 +239,12 @@ export const webSearchTool = tool(
                     continue;
                 }
                 if (!response.ok) {
-                    // Non-retryable HTTP error (auth, validation, etc. —
-                    // 429/500/503 are handled above). Fail fast instead of
-                    // burning the remaining attempts on a certain repeat.
+                    // Non-retryable HTTP error (auth, validation, quota,
+                    // etc. — 429/500/503 are handled above). Fail fast instead
+                    // of burning the remaining attempts on a certain repeat.
                     return JSON.stringify({
                         error: true,
-                        message: `Search failed: ${response.status}`,
+                        message: httpErrorMessage("Search", response.status),
                         query,
                     });
                 }
@@ -300,76 +331,121 @@ export const webSearchTool = tool(
 // =============================================================================
 
 export const fetchWebPagesTool = tool(
-    async ({ urls, question }) => {
+    async ({ urls, question, ttl }) => {
         const sliced = (urls || []).slice(0, fetchMaxUrls());
-        try {
-            const apiKey = searchApiKey();
-            if (!apiKey) {
-                return JSON.stringify({
-                    error: true,
-                    message: "Web fetch is not configured on the server (missing TINYFISH_API_KEY).",
-                    urls: sliced,
-                });
-            }
-            if (sliced.length === 0) {
-                // Clean skip (not an error): the planner sometimes plans
-                // fetch alongside search before URLs are known. Succeeding
-                // keeps the step out of the failure count.
-                return JSON.stringify({ note: "No URLs to fetch — skipping", pages: [], errors: [] });
-            }
-
-            const response = await fetch(fetchBaseUrl(), {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
-                body: JSON.stringify({
-                    urls: sliced,
-                    format: "markdown",
-                    purpose: question
-                        ? `Answering an F1 question: ${question.slice(0, 500)}`
-                        : "Extracting page content to answer a Formula 1 question.",
-                }),
-                signal: AbortSignal.timeout(fetchTimeoutMs()),
-            });
-
-            if (!response.ok) {
-                throw new Error(`Fetch failed: ${response.status}`);
-            }
-
-            const maxChars = fetchMaxChars();
-            const data = await response.json() as {
-                results?: {
-                    url?: string;
-                    final_url?: string;
-                    title?: string | null;
-                    published_date?: string | null;
-                    text?: string | null;
-                }[];
-                errors?: { url?: string; error?: string; status?: number }[];
-            };
-            const pages = (data.results || []).map((r) => {
-                const text = typeof r.text === "string" ? r.text : "";
-                return {
-                    url: r.url || "",
-                    final_url: r.final_url || r.url || "",
-                    title: r.title || "",
-                    ...(r.published_date ? { published_date: r.published_date } : {}),
-                    text: text.length > maxChars ? text.slice(0, maxChars) + "\n\n[truncated]" : text,
-                };
-            });
-            const errors = (data.errors || []).map((e) => ({
-                url: e.url || "",
-                error: e.error || "fetch failed",
-                ...(typeof e.status === "number" ? { status: e.status } : {}),
-            }));
-
-            return JSON.stringify({ pages, errors, question: question || undefined });
-        } catch (error) {
+        const apiKey = searchApiKey();
+        if (!apiKey) {
             return JSON.stringify({
                 error: true,
-                message: error instanceof Error ? error.message : "Fetch failed",
+                message: "Web fetch is not configured on the server (missing TINYFISH_API_KEY).",
                 urls: sliced,
             });
         }
+        if (sliced.length === 0) {
+            // Clean skip (not an error): the planner sometimes plans
+            // fetch alongside search before URLs are known. Succeeding
+            // keeps the step out of the failure count.
+            return JSON.stringify({ note: "No URLs to fetch — skipping", pages: [], errors: [] });
+        }
+
+        let lastError: unknown = null;
+        for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
+            try {
+                const response = await fetch(fetchBaseUrl(), {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+                    body: JSON.stringify({
+                        urls: sliced,
+                        format: "markdown",
+                        ...(typeof ttl === "number" ? { ttl } : {}),
+                        purpose: question
+                            ? `Answering an F1 question: ${question.slice(0, 500)}`
+                            : "Extracting page content to answer a Formula 1 question.",
+                    }),
+                    signal: AbortSignal.timeout(fetchTimeoutMs()),
+                });
+
+                if (response.status === 429) {
+                    const wait = retryAfterMs(response) ?? 2000;
+                    lastError = new Error(`Fetch rate-limited (429)`);
+                    if (attempt < MAX_FETCH_ATTEMPTS) {
+                        await sleep(wait);
+                        continue;
+                    }
+                    break;
+                }
+                if (response.status === 500 || response.status === 503) {
+                    lastError = new Error(`Fetch unavailable: ${response.status}`);
+                    if (attempt < MAX_FETCH_ATTEMPTS) {
+                        await sleep(2000);
+                        continue;
+                    }
+                    break;
+                }
+                if (!response.ok) {
+                    return JSON.stringify({
+                        error: true,
+                        message: httpErrorMessage("Fetch", response.status),
+                        urls: sliced,
+                    });
+                }
+
+                const maxChars = fetchMaxChars();
+                const minChars = fetchMinChars();
+                const data = await response.json() as {
+                    results?: {
+                        url?: string;
+                        final_url?: string;
+                        title?: string | null;
+                        published_date?: string | null;
+                        text?: string | null;
+                    }[];
+                    errors?: { url?: string; error?: string; status?: number }[];
+                };
+                const pages: Record<string, unknown>[] = [];
+                const thin: { url: string; error: string }[] = [];
+                for (const r of data.results || []) {
+                    const text = typeof r.text === "string" ? r.text : "";
+                    if (text.length < minChars) {
+                        thin.push({
+                            url: r.url || "",
+                            error: `extracted text too thin (${text.length} chars, minimum ${minChars})`,
+                        });
+                        continue;
+                    }
+                    pages.push({
+                        url: r.url || "",
+                        final_url: r.final_url || r.url || "",
+                        title: r.title || "",
+                        ...(r.published_date ? { published_date: r.published_date } : {}),
+                        text: text.length > maxChars ? text.slice(0, maxChars) + "\n\n[truncated]" : text,
+                    });
+                }
+                const errors = [
+                    ...thin,
+                    ...(data.errors || []).map((e) => ({
+                        url: e.url || "",
+                        error: e.error || "fetch failed",
+                        ...(typeof e.status === "number" ? { status: e.status } : {}),
+                    })),
+                ];
+
+                return JSON.stringify({ pages, errors, question: question || undefined });
+            } catch (error) {
+                // Abort/timeout/network (or malformed body): transient
+                // class — one retry, then report.
+                lastError = error;
+                if (attempt < MAX_FETCH_ATTEMPTS) {
+                    await sleep(1500);
+                }
+            }
+        }
+
+        return JSON.stringify({
+            error: true,
+            message: lastError instanceof Error ? lastError.message : "Fetch failed",
+            urls: sliced,
+        });
     },
     {
         name: "fetch_web_pages",
@@ -385,6 +461,12 @@ export const fetchWebPagesTool = tool(
                 .max(500)
                 .optional()
                 .describe("The factual question the pages should answer (guides extraction)."),
+            ttl: z
+                .number()
+                .int()
+                .min(0)
+                .optional()
+                .describe("Cache freshness in seconds; 0 forces a live fetch (use when verifying breaking news). Omit to accept cached entries."),
         }),
     }
 );

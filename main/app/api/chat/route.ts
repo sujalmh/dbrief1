@@ -1009,12 +1009,15 @@ export async function POST(request: NextRequest) {
                                 const raw = await tools["fetch_web_pages"].invoke({
                                     urls,
                                     question: message.slice(0, 500),
+                                    // Live fetch: recency verification must
+                                    // not read a stale cached results page.
+                                    ttl: 0,
                                 });
                                 const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
                                 executionContext.results.push({
                                     step: fetchStep,
                                     tool: "fetch_web_pages",
-                                    args: { urls },
+                                    args: { urls, ttl: 0 },
                                     success: true,
                                     data: parsed,
                                     durationMs: Date.now() - fetchStart,
@@ -1026,7 +1029,7 @@ export async function POST(request: NextRequest) {
                                 executionContext.results.push({
                                     step: fetchStep,
                                     tool: "fetch_web_pages",
-                                    args: { urls },
+                                    args: { urls, ttl: 0 },
                                     success: false,
                                     error: err,
                                     durationMs: Date.now() - fetchStart,

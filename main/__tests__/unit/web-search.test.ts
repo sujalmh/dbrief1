@@ -236,6 +236,76 @@ describe("fetchWebPagesTool", () => {
         expect(data.note).toMatch(/skipping/);
         expect(fetchMock).not.toHaveBeenCalled();
     });
+
+    it("moves thin extractions to errors instead of pages", async () => {
+        process.env.TINYFISH_API_KEY = "test-key";
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                results: [
+                    { url: "https://example.com/thin", title: "Thin", text: "x".repeat(14) },
+                    { url: "https://example.com/full", title: "Full", text: "y".repeat(500) },
+                ],
+                errors: [],
+            }),
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const raw = await fetchWebPagesTool.invoke({ urls: ["https://example.com/thin", "https://example.com/full"] });
+        const data = JSON.parse(raw as string);
+        expect(data.pages).toHaveLength(1);
+        expect(data.pages[0].url).toBe("https://example.com/full");
+        expect(data.errors).toHaveLength(1);
+        expect(data.errors[0].url).toBe("https://example.com/thin");
+        expect(data.errors[0].error).toMatch(/too thin/);
+    });
+
+    it("retries once on 500 then succeeds", async () => {
+        process.env.TINYFISH_API_KEY = "test-key";
+        const fetchMock = vi.fn()
+            .mockResolvedValueOnce({ ok: false, status: 500 })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    results: [{ url: "https://example.com/a", title: "A", text: "z".repeat(300) }],
+                }),
+            });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const raw = await fetchWebPagesTool.invoke({ urls: ["https://example.com/a"] });
+        const data = JSON.parse(raw as string);
+        expect(data.pages).toHaveLength(1);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("maps quota/auth statuses to actionable messages without retrying", async () => {
+        process.env.TINYFISH_API_KEY = "test-key";
+        for (const [status, pattern] of [[402, /quota/i], [401, /API key/i]] as const) {
+            const fetchMock = vi.fn().mockResolvedValue({ ok: false, status });
+            vi.stubGlobal("fetch", fetchMock);
+
+            const raw = await fetchWebPagesTool.invoke({ urls: ["https://example.com/a"] });
+            const data = JSON.parse(raw as string);
+            expect(data.error).toBe(true);
+            expect(data.message).toMatch(pattern);
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+        }
+    });
+
+    it("passes ttl through to the fetch API", async () => {
+        process.env.TINYFISH_API_KEY = "test-key";
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                results: [{ url: "https://example.com/a", title: "A", text: "z".repeat(300) }],
+            }),
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        await fetchWebPagesTool.invoke({ urls: ["https://example.com/a"], ttl: 0 });
+        const [, init] = fetchMock.mock.calls[0];
+        expect(JSON.parse(init.body as string).ttl).toBe(0);
+    });
 });
 
 describe("extractResultUrls", () => {

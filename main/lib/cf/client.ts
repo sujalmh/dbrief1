@@ -189,6 +189,85 @@ export async function loadQuota(byok: boolean): Promise<QuotaState | null> {
 }
 
 // ---------------------------------------------------------------------------
+// Feedback + contact (Cloudflare D1)
+// ---------------------------------------------------------------------------
+
+export interface FeedbackPayload {
+    kind: "first_response" | "message" | "contact";
+    rating?: number | null;
+    subject?: string | null;
+    message?: string | null;
+    sessionId?: string | null;
+    messageId?: string | null;
+}
+
+export interface FeedbackItem extends FeedbackPayload {
+    id: string;
+    userId: string;
+    displayName: string | null;
+    email: string | null;
+    rating: number | null;
+    subject: string | null;
+    message: string | null;
+    sessionId: string | null;
+    messageId: string | null;
+    createdAt: number;
+}
+
+export interface FeedbackStats {
+    total: number;
+    byKind: Record<string, number>;
+    avgRating: number | null;
+    ratedCount: number;
+    ratingCounts: Record<string, number>;
+    byDay: Array<{ day: string; count: number }>;
+}
+
+/** Save a rating or contact message. Null when the cloud store is down. */
+export function saveFeedback(payload: FeedbackPayload): Promise<{ id: string } | null> {
+    return swallow(
+        cfFetch<{ id: string }>("/api/cf/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        }),
+        "[cf] saveFeedback failed:"
+    );
+}
+
+export class CfForbiddenError extends Error {
+    constructor() {
+        super("Not authorized.");
+        this.name = "CfForbiddenError";
+    }
+}
+
+/**
+ * Admin analysis data. Throws CfForbiddenError for non-admins, returns
+ * null when the cloud store is unreachable/unconfigured.
+ */
+export async function loadFeedback(kind?: string): Promise<{ stats: FeedbackStats; items: FeedbackItem[] } | null> {
+    const qs = kind === "first_response" || kind === "message" || kind === "contact"
+        ? `?kind=${encodeURIComponent(kind)}`
+        : "";
+    let res: Response;
+    try {
+        res = await fetch(`/api/cf/feedback${qs}`, { credentials: "same-origin" });
+    } catch (e) {
+        console.error("[cf] loadFeedback failed:", e instanceof Error ? e.message : String(e));
+        return null;
+    }
+    if (res.status === 503) return null;
+    if (res.status === 403) throw new CfForbiddenError();
+    if (!res.ok) {
+        console.error("[cf] loadFeedback failed:", res.status);
+        return null;
+    }
+    const data = (await res.json()) as { stats: FeedbackStats; items: FeedbackItem[] };
+    return { stats: data.stats, items: data.items ?? [] };
+}
+
+// ---------------------------------------------------------------------------
 // Share links (read-only public links for a session)
 // ---------------------------------------------------------------------------
 

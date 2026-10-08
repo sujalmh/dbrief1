@@ -6,6 +6,7 @@ import { useChatStore, type Message, type ResearchIteration } from "@/lib/store"
 import { useSession } from "@/lib/cf/session-context"
 import { createSession, saveMessage, patchSessionMeta } from "@/lib/cf/client"
 import { sanitizeCitations } from "@/lib/utils"
+import { shouldPromptFirstFeedback } from "@/lib/feedback"
 
 /** Minimal shape of SSE payload steps/tasks — fields are unknown until validated. */
 interface SsePlanStep {
@@ -142,6 +143,27 @@ export function useChatHandler() {
                 };
                 const sid = effectiveSessionId;
                 saveMessage(sid, fullMsg);
+            }
+            // First-response feedback popup: exactly once per browser, only
+            // for a genuine first answer (completed, non-error, non-empty).
+            // Runs for local sessions too — the dialog best-effort saves.
+            {
+                const s = useChatStore.getState();
+                const storeMsg = s.messages.find((m) => m.id === assistantMsgId);
+                const assistantCount = s.messages.filter(
+                    (m) => m.role === "assistant" && m.content && m.content.trim()
+                ).length;
+                if (
+                    shouldPromptFirstFeedback({
+                        prompted: s.feedbackPrompted,
+                        assistantCount,
+                        isError: storeMsg?.isError === true,
+                        hasContent: assistantContent.trim().length > 0,
+                    })
+                ) {
+                    s.markFeedbackPrompted();
+                    s.setFeedbackOpen(true);
+                }
             }
         };
         state.addMessage({

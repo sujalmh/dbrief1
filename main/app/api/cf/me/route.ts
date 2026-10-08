@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cfIdentity, withUidCookie, cfError, cfLimited } from "@/lib/cf/route-util";
 import { checkProvisionVelocity } from "@/lib/cf/quotas";
+import { isAdmin } from "@/lib/cf/quotas";
 import { getUserProfile } from "@/lib/cf/store";
 import { googleOAuthConfigured } from "@/lib/auth/google";
 
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
                     uid: ctx.uid,
                     displayName: profile?.displayName ?? ctx.displayName,
                     google: profile?.google ?? null,
+                    isAdmin: isAdmin(ctx.uid),
                 },
                 googleLoginAvailable: googleOAuthConfigured(),
             }),

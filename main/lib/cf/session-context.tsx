@@ -6,6 +6,8 @@ export interface CfUser {
     uid: string;
     displayName: string;
     google?: { email: string; name: string | null; avatarUrl: string | null } | null;
+    /** True when the uid is in ADMIN_UIDS (sees /admin). */
+    isAdmin?: boolean;
 }
 
 interface SessionContextType {

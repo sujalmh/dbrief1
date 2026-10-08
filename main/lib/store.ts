@@ -290,6 +290,13 @@ interface ChatStore {
     isSettingsOpen: boolean
     setSettingsOpen: (isOpen: boolean) => void
 
+    /** First-response feedback popup (once per browser, after Q1 answer). */
+    isFeedbackOpen: boolean
+    setFeedbackOpen: (isOpen: boolean) => void
+    /** True once the first-response popup has been shown. Persisted. */
+    feedbackPrompted: boolean
+    markFeedbackPrompted: () => void
+
     isSidebarOpen: boolean
     setSidebarOpen: (isOpen: boolean) => void
 
@@ -402,6 +409,10 @@ export const useChatStore = create<ChatStore>()(
             messageCounter: Date.now(),
 
             setSettingsOpen: (isOpen) => set({ isSettingsOpen: isOpen }),
+            isFeedbackOpen: false,
+            setFeedbackOpen: (isOpen) => set({ isFeedbackOpen: isOpen }),
+            feedbackPrompted: false,
+            markFeedbackPrompted: () => set({ feedbackPrompted: true }),
             isSidebarOpen: true,
             setSidebarOpen: (isOpen) => set({ isSidebarOpen: isOpen }),
             setCurrentSessionId: (id) => set({ currentSessionId: id }),
@@ -618,10 +629,11 @@ export const useChatStore = create<ChatStore>()(
             // httpOnly cookie — so nothing sensitive is persisted here.)
             partialize: (state) => ({
                 settings: state.settings,
+                feedbackPrompted: state.feedbackPrompted,
             }),
             // Bump the version when the persisted shape changes so old
             // clients drop stale data instead of crashing on load.
-            version: 9,
+            version: 10,
             // v2 -> v3: Settings gained a `customModels: string[]` field.
             // v3 -> v4: Settings gained a `plannerModel: string` field.
             // v4 -> v5: `settings.apiKey` is no longer persisted (keys
@@ -644,6 +656,8 @@ export const useChatStore = create<ChatStore>()(
             // v8 -> v9: visualization toggle removed — inline charts always
             //   render. Drop the legacy `visualizeEnabled` flag (migrate
             //   rebuilds settings from known fields, so it falls away).
+            // v9 -> v10: first-response feedback popup state
+            //   (`feedbackPrompted`, exactly-once per browser) is persisted.
             migrate: (persistedState) => {
                 const state = (persistedState ?? {}) as Partial<{
                     settings: Partial<Settings> & Record<string, unknown>

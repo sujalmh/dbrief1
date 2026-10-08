@@ -29,6 +29,10 @@ const ErrorModal = dynamic(
     () => import("@/components/ui/error-modal").then((m) => m.ErrorModal),
     { ssr: false }
 );
+const FeedbackDialog = dynamic(
+    () => import("@/components/chat/feedback-dialog").then((m) => m.FeedbackDialog),
+    { ssr: false }
+);
 
 const AUTH_ERRORS: Record<string, string> = {
     denied: "Google sign-in was cancelled before completing.",
@@ -170,6 +174,7 @@ export function ChatShell({ routeSessionId }: { routeSessionId: string | null })
 
             <SettingsModal />
             <ErrorModal />
+            <FeedbackDialog />
         </div>
     );
 }

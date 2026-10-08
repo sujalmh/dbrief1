@@ -96,6 +96,8 @@ export interface ChartSpec {
     | 'box_plot'
     | 'telemetry_multi'
     | 'kpi'
+    | 'swarm'
+    | 'bump'
     title: string
     subtitle?: string
     dataSource: string
@@ -257,7 +259,6 @@ interface Settings {
     byokModelName: string;
     deepResearchMode: boolean
     webSearchEnabled: boolean
-    visualizeEnabled: boolean
 }
 
 /**
@@ -280,10 +281,6 @@ interface ChatStore {
     isLoading: boolean
     input: string
     settings: Settings
-    visualizationData: unknown
-
-    activeMessageId: string | null
-    setActiveMessageId: (id: string | null) => void
 
     currentSessionId: string | null
     setCurrentSessionId: (id: string | null) => void
@@ -292,11 +289,7 @@ interface ChatStore {
 
     isSettingsOpen: boolean
     setSettingsOpen: (isOpen: boolean) => void
-    visualizationWidth: number
-    updateVisualizationWidth: (width: number) => void
-    isVisualizationCollapsed: boolean
 
-    toggleVisualizationCollapse: (collapsed?: boolean) => void
     isSidebarOpen: boolean
     setSidebarOpen: (isOpen: boolean) => void
 
@@ -361,7 +354,6 @@ interface ChatStore {
         id: string,
         feedback: MessageFeedback | null
     ) => void
-    setVisualizationData: (data: unknown) => void
     clearMessages: () => void
     deleteMessage: (id: string) => void
 
@@ -392,7 +384,6 @@ const defaultSettings: Settings = {
     byokModelName: '',
     deepResearchMode: false,
     webSearchEnabled: false,
-    visualizeEnabled: false,
 }
 
 export const useChatStore = create<ChatStore>()(
@@ -403,10 +394,6 @@ export const useChatStore = create<ChatStore>()(
             input: '',
             settings: defaultSettings,
             isSettingsOpen: false,
-            visualizationData: null,
-            visualizationWidth: 500,
-            isVisualizationCollapsed: false,
-            activeMessageId: null,
             error: null,
             currentSessionId: null,
             sessions: [],
@@ -415,12 +402,8 @@ export const useChatStore = create<ChatStore>()(
             messageCounter: Date.now(),
 
             setSettingsOpen: (isOpen) => set({ isSettingsOpen: isOpen }),
-            updateVisualizationWidth: (width) => set({ visualizationWidth: width }),
-            toggleVisualizationCollapse: (collapsed) =>
-                set((state) => ({ isVisualizationCollapsed: collapsed ?? !state.isVisualizationCollapsed })),
             isSidebarOpen: true,
             setSidebarOpen: (isOpen) => set({ isSidebarOpen: isOpen }),
-            setActiveMessageId: (id) => set({ activeMessageId: id }),
             setCurrentSessionId: (id) => set({ currentSessionId: id }),
             setSessions: (sessions) => set({ sessions }),
             setInput: (input) => set({ input }),
@@ -549,8 +532,7 @@ export const useChatStore = create<ChatStore>()(
                         return { ...msg, feedback };
                     }),
                 })),
-            setVisualizationData: (data) => set({ visualizationData: data }),
-            clearMessages: () => set({ messages: [], visualizationData: null, activeMessageId: null }),
+            clearMessages: () => set({ messages: [] }),
             deleteMessage: (id) => set((state) => ({
                 messages: state.messages.filter(msg => msg.id !== id)
             })),
@@ -620,8 +602,8 @@ export const useChatStore = create<ChatStore>()(
         {
             name: 'dbrief1-storage',
             storage: createJSONStorage(() => idbStorage),
-            // Persist ONLY lightweight UI prefs. Chat data (messages,
-            // visualizationData, activeMessageId) lives in the cloud
+            // Persist ONLY lightweight UI prefs. Chat data (messages with
+            // per-message visualizationData/chartSpecs) lives in the cloud
             // store (D1 + R2) and is loaded per-session on demand —
             // persisting it here caused two problems:
             //   1. Stale chat on reopen: messages were rehydrated from
@@ -636,12 +618,10 @@ export const useChatStore = create<ChatStore>()(
             // httpOnly cookie — so nothing sensitive is persisted here.)
             partialize: (state) => ({
                 settings: state.settings,
-                isVisualizationCollapsed: state.isVisualizationCollapsed,
-                visualizationWidth: state.visualizationWidth,
             }),
             // Bump the version when the persisted shape changes so old
             // clients drop stale data instead of crashing on load.
-            version: 7,
+            version: 9,
             // v2 -> v3: Settings gained a `customModels: string[]` field.
             // v3 -> v4: Settings gained a `plannerModel: string` field.
             // v4 -> v5: `settings.apiKey` is no longer persisted (keys
@@ -657,6 +637,13 @@ export const useChatStore = create<ChatStore>()(
             //   so reopening starts with a fresh chat. (graphHistory
             //   itself was removed entirely — the delete below only
             //   cleans up legacy snapshots that still contain it.)
+            // v7 -> v8: side visualization panel removed — charts render
+            //   inline per message (t3code-style). Drop the panel UI
+            //   state (isVisualizationCollapsed, visualizationWidth) and
+            //   any lingering global visualizationData/activeMessageId.
+            // v8 -> v9: visualization toggle removed — inline charts always
+            //   render. Drop the legacy `visualizeEnabled` flag (migrate
+            //   rebuilds settings from known fields, so it falls away).
             migrate: (persistedState) => {
                 const state = (persistedState ?? {}) as Partial<{
                     settings: Partial<Settings> & Record<string, unknown>
@@ -673,7 +660,6 @@ export const useChatStore = create<ChatStore>()(
                         byokModelName: typeof s.byokModelName === "string" ? s.byokModelName : "",
                         deepResearchMode: s.deepResearchMode === true,
                         webSearchEnabled: s.webSearchEnabled === true,
-                        visualizeEnabled: s.visualizeEnabled === true,
                     };
                 }
                 // Strip legacy persisted chat data (see v6 -> v7 above).
@@ -683,6 +669,9 @@ export const useChatStore = create<ChatStore>()(
                 delete state.activeMessageId
                 delete state.currentSessionId
                 delete state.sessions
+                // Strip legacy side-panel UI state (see v7 -> v8 above).
+                delete state.isVisualizationCollapsed
+                delete state.visualizationWidth
                 return state as { settings?: Partial<Settings> }
             },
         }

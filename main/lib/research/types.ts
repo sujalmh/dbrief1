@@ -233,6 +233,8 @@ export const ChartType = {
     BOX_PLOT: "box_plot",
     TELEMETRY_MULTI: "telemetry_multi",
     KPI: "kpi",
+    SWARM: "swarm",
+    BUMP: "bump",
 } as const;
 
 export type ChartType = (typeof ChartType)[keyof typeof ChartType];
@@ -252,6 +254,8 @@ export const ChartSpecSchema = z.object({
         "box_plot",
         "telemetry_multi",
         "kpi",
+        "swarm",
+        "bump",
     ]),
     title: z.string(),
     subtitle: z.string().optional().describe("Secondary line that adds context (e.g. drivers, season)"),

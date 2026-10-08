@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3, Brain, Send, Server } from "lucide-react";
+import { Brain, Send, Server } from "lucide-react";
 
 /**
  * Sign-in gate shaped like the chat composer.
@@ -41,8 +41,8 @@ export function LandingComposer() {
                             <span className="btn-wheel btn-wheel-purple h-8 w-8">
                                 <Brain className="h-4 w-4" />
                             </span>
-                            <span className="btn-wheel btn-wheel-yellow h-8 w-8">
-                                <BarChart3 className="h-4 w-4" />
+                            <span className="h-8 px-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/40">
+                                Deep off
                             </span>
                         </div>
                         <span

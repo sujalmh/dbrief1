@@ -1,8 +1,9 @@
 "use client"
 
 import * as React from "react"
-import { Brain, BarChart3, Server, KeyRound } from "lucide-react"
+import { Brain, Server, KeyRound } from "lucide-react"
 import { useChatStore } from "@/lib/store"
+import { cn } from "@/lib/utils"
 import {
     Tooltip,
     TooltipContent,
@@ -48,9 +49,8 @@ export function ControlPanel() {
     const deepResearchPress = pressToggle(() =>
         updateSettings({ deepResearchMode: !settings.deepResearchMode })
     )
-    const visualizePress = pressToggle(() =>
-        updateSettings({ visualizeEnabled: !settings.visualizeEnabled })
-    )
+
+    const deepOn = settings.deepResearchMode === true
 
     return (
         <div className="flex items-center justify-between w-full pt-2">
@@ -73,23 +73,21 @@ export function ControlPanel() {
                     </TooltipContent>
                 </Tooltip>
 
-                {/* Visualization Toggle - Always visible */}
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            {...visualizePress}
-                            className="btn-wheel btn-wheel-yellow h-8 w-8"
-                            data-active={settings.visualizeEnabled}
-                        >
-                            <BarChart3 className="h-4 w-4" />
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                        <p>Visualization</p>
-                    </TooltipContent>
-                </Tooltip>
+                {/* Deep status text: dim while off, highlighted when on.
+                    Same toggle as the Brain button (charts always render
+                    inline now — there is no visualization toggle). */}
+                <button
+                    type="button"
+                    {...deepResearchPress}
+                    aria-pressed={deepOn}
+                    aria-label={deepOn ? "Deep research on - turn off" : "Deep research off - turn on"}
+                    className={cn(
+                        "h-8 shrink-0 px-1 text-[11px] font-bold uppercase tracking-wider transition-colors",
+                        deepOn ? "text-purple-300" : "text-muted-foreground/40 hover:text-muted-foreground/70"
+                    )}
+                >
+                    {deepOn ? "Deep on" : "Deep off"}
+                </button>
             </div>
 
             {/* Right side: inline usage (hover for details) + AI mode badge. */}

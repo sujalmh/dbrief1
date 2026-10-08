@@ -50,7 +50,7 @@ export const DEMO_SLIDES: DemoSlide[] = [
         mode: "Telemetry",
         context: "Singapore GP · Race · Lap 38",
         question: "Singapore, lap 38 — where is Verstappen losing time to Norris?",
-        answer: "Mostly the final sector. Through Turns 13–16 Norris carries **6 km/h** more apex speed and gets on the throttle **8 m** earlier — about **0.2s per lap**. VER's rears run 4° hotter, so he's sliding on exit.",
+        answer: "The deficit is mostly in the final sector, where through Turns 13–16 Norris carries **6 km/h** more apex speed and gets on the throttle **8 m** earlier, which is worth about **0.2s per lap**. VER's rears run 4° hotter, so he's sliding on exit.",
         steps: [
             { description: "Load VER / NOR telemetry — Singapore, laps 36–38", tool: "get_telemetry" },
             { description: "Compare speed traces through Turns 13–16", tool: "get_telemetry_summary" },
@@ -62,8 +62,8 @@ export const DEMO_SLIDES: DemoSlide[] = [
         mode: "Comparison",
         context: "Suzuka · Last 10 laps · RUS vs HAM",
         question: "Russell vs Hamilton over the last 10 laps — who's got the pace?",
-        answer: "Russell, clearly. On fresher mediums he's **0.3s a lap** quicker since lap 42 and closing at **0.4s per lap** — at this rate he's on Hamilton's gearbox by lap 52.",
-        chart: { title: "Gap to HAM (s)", caption: "RUS closing 0.4s / lap · overtake ~lap 52" },
+        answer: "Russell clearly has the pace, since on fresher mediums he's been **0.3s a lap** quicker since lap 42 and is closing at **0.4s per lap**, which puts him on Hamilton's gearbox by lap 52.",
+        chart: { title: "Gap to HAM (s)", caption: "RUS closing 0.4s per lap, overtake around lap 52" },
         steps: [
             { description: "Load the last 10 laps for RUS and HAM — Suzuka", tool: "get_laps" },
             { description: "Compare pace and gap evolution", tool: "get_fastest_lap" },
@@ -74,7 +74,7 @@ export const DEMO_SLIDES: DemoSlide[] = [
         mode: "Strategy",
         context: "Singapore · P4 on softs · Pit window",
         question: "Starting P4 on softs in Singapore — one-stop or two?",
-        answer: "Two-stop: soft → medium on **lap 18**, then medium to the flag. The undercut opens at lap 18 — staying out past lap 24 costs ~2 places. Keep a soft in hand: safety-car chance is **68%** here.",
+        answer: "Run a two-stop strategy, switching from soft to medium on **lap 18** and then taking the medium to the flag. The undercut opens at lap 18, and staying out past lap 24 costs ~2 places. Keep a soft in hand because the safety-car chance here is **68%**.",
         steps: [
             { description: "Load stint and degradation data — top four", tool: "get_tyres" },
             { description: "Model one-stop vs two-stop windows", tool: "get_race" },
@@ -86,7 +86,7 @@ export const DEMO_SLIDES: DemoSlide[] = [
         mode: "Insights",
         context: "After Monza · Round 14 · Standings",
         question: "Who leads the championship after Monza?",
-        answer: "Verstappen, on **302 points** — 66 clear of Norris with 8 wins from 14. Norris needs back-to-back wins to reopen it before Austin.",
+        answer: "Verstappen leads on **302 points**, 66 clear of Norris with 8 wins from 14. Norris needs back-to-back wins to reopen it before Austin.",
         table: "| Driver | Points | Gap |\n| --- | --- | --- |\n| VER | 302 | — |\n| NOR | 236 | −66 |\n| LEC | 199 | −103 |",
         steps: [
             { description: "Load the drivers' standings after Monza", tool: "get_driver_standings" },

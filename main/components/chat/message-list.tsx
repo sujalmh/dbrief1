@@ -13,6 +13,11 @@ import { MessageBubble } from "@/components/chat/message-bubble"
  * tokens never auto-scroll; the view jumps to the bottom once when
  * loading flips true -> false.
  *
+ * In-chat charts (t3code-style): each assistant bubble owns its charts.
+ * The list derives the preceding user query per assistant message so
+ * `InlineCharts` can focus smart-aggregator titles/highlights without
+ * any global `activeMessageId` panel state.
+ *
  * @returns The rendered message list element
  */
 export function MessageList() {
@@ -50,16 +55,33 @@ export function MessageList() {
         .filter(m => m.role === 'assistant')
         .pop()?.id;
 
+    // Preceding user query per message (for inline chart focus). Walk once:
+    // every assistant message inherits the latest user content before it.
+    let lastUserQuery = ""
+    const userQueryById = new Map<string, string>()
+    for (const msg of messages) {
+        if (msg.role === "user") {
+            lastUserQuery = msg.content
+        } else {
+            userQueryById.set(msg.id, lastUserQuery)
+        }
+    }
+
     return (
         <div className="h-full w-full min-w-0 max-w-full p-3 sm:p-4">
             <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-6 pb-32">
-                {messages.map((msg) => (
-                    <MessageBubble 
-                        key={msg.id} 
-                        message={msg} 
-                        isLastAssistant={msg.role === 'assistant' && msg.id === lastAssistantMessageId}
-                    />
-                ))}
+                {messages.map((msg) => {
+                    const isLastAssistant = msg.role === 'assistant' && msg.id === lastAssistantMessageId
+                    return (
+                        <MessageBubble
+                            key={msg.id}
+                            message={msg}
+                            isLastAssistant={isLastAssistant}
+                            userQuery={userQueryById.get(msg.id) ?? ""}
+                            isStreaming={isLoading && isLastAssistant}
+                        />
+                    )
+                })}
                 {/* Loading indicator removed in favor of MessageBubble internal state */}
                 <div ref={bottomRef} />
             </div>

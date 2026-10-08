@@ -7,7 +7,6 @@ import { Header } from "@/components/layout/header";
 import { MessageList } from "@/components/chat/message-list";
 import { ChatInput } from "@/components/chat/chat-input";
 import { useChatStore } from "@/lib/store";
-import { useMediaQuery } from "@/lib/hooks/use-media-query";
 import { useSession } from "@/lib/cf/session-context";
 import { LandingPage } from "@/components/landing/landing-page";
 import { Button } from "@/components/ui/button";
@@ -17,14 +16,11 @@ import { loadSessionIntoStore, resetToFreshChat } from "@/lib/cf/session-loader"
 
 // Heavy, non-critical UI is code-split out of the initial bundle so
 // first paint only downloads the chat shell:
-// - VisualizationPanel pulls in recharts (~hundreds of KB) via
-//   ChartDispatcher → intelligent-charts.
 // - SettingsModal pulls in Radix Dialog + form controls.
 // - ErrorModal pulls in framer-motion.
-const VisualizationPanel = dynamic(
-    () => import("@/components/visualization/visualization-panel").then((m) => m.VisualizationPanel),
-    { ssr: false }
-);
+// Charts (recharts via InlineCharts → ChartDispatcher) split at the
+// message bubble instead — see message-bubble.tsx. There is no side
+// panel anymore: charts render inline in each assistant message.
 const SettingsModal = dynamic(
     () => import("@/components/chat/settings-modal").then((m) => m.SettingsModal),
     { ssr: false }
@@ -87,7 +83,6 @@ function useRouteSession(routeSessionId: string | null) {
             setRouteLoading(true);
             useChatStore.getState().setCurrentSessionId(routeSessionId);
             useChatStore.getState().setMessages([]);
-            useChatStore.setState({ visualizationData: null, activeMessageId: null });
             loadSessionIntoStore(routeSessionId, isCurrent)
                 .catch((err: unknown) => {
                     if (!isCurrent()) return;
@@ -109,22 +104,10 @@ function useRouteSession(routeSessionId: string | null) {
 }
 
 export function ChatShell({ routeSessionId }: { routeSessionId: string | null }) {
-    // Selector subscriptions (not a full-store spread) so streamed tokens
-    // updating `messages` don't re-render the whole page shell.
-    const settings = useChatStore((s) => s.settings);
-    const visualizationWidth = useChatStore((s) => s.visualizationWidth);
-    const isVisualizationCollapsed = useChatStore((s) => s.isVisualizationCollapsed);
     const { user, loading } = useSession();
-    const isDesktop = useMediaQuery("(min-width: 768px)");
     const router = useRouter();
     useAuthErrorBanner();
     const { routeLoading, routeError } = useRouteSession(routeSessionId);
-
-    // Calculate dynamic padding based on visualization state - ONLY on Desktop
-    const prValue =
-        isDesktop && settings.visualizeEnabled && !isVisualizationCollapsed
-            ? `${visualizationWidth}px`
-            : "0px";
 
     if (loading) {
         return (
@@ -147,11 +130,9 @@ export function ChatShell({ routeSessionId }: { routeSessionId: string | null })
                 <Header />
 
                 <main className="relative flex h-full w-full overflow-hidden bg-carbon">
-                    {/* Full width message area */}
-                    <div
-                        className="flex-1 overflow-y-auto w-full transition-[padding] duration-300 relative z-10 overscroll-contain"
-                        style={{ paddingRight: prValue }}
-                    >
+                    {/* Full width message area — charts render inline in
+                        each assistant bubble (no side panel reserve). */}
+                    <div className="flex-1 overflow-y-auto w-full relative z-10 overscroll-contain">
                         {routeError ? (
                             <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
                                 <p className="text-sm font-bold uppercase tracking-wider text-muted-foreground">
@@ -179,17 +160,11 @@ export function ChatShell({ routeSessionId }: { routeSessionId: string | null })
                     </div>
 
                     {/* Floating Input Layer — clears the iPhone home bar */}
-                    <div
-                        className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] left-0 w-full z-20 transition-[padding] duration-300 pointer-events-none"
-                        style={{ paddingRight: prValue }}
-                    >
+                    <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] left-0 w-full z-20 pointer-events-none">
                         <div className="mx-auto max-w-3xl px-4 pointer-events-auto">
                             <ChatInput />
                         </div>
                     </div>
-
-                    {/* Visualization Panel (Fixed Right on Desktop, Overlay on Mobile) */}
-                    <VisualizationPanel />
                 </main>
             </div>
 

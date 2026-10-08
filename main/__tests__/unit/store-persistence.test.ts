@@ -1,13 +1,12 @@
 /**
- * Tests for store persistence behavior
- * =====================================
+ * Tests for store persistence behavior (inline-charts build)
+ * ==========================================================
  *
- * Regression tests for the "visualization not saved across sessions"
- * issue. The store must persist:
- *   - visualizationData (the raw tool result payload the panel reads)
- *   - isVisualizationCollapsed / visualizationWidth (panel UI state)
- *
- * We do NOT persist ephemeral state (loading flag, current input text).
+ * Charts render inline per message (t3code-style) — there is no side
+ * panel, no global panel state, and no visualization toggle. The store
+ * persists ONLY lightweight UI prefs (`settings`). Per-message
+ * `visualizationData` / `chartSpecs` live on the message and in the
+ * cloud store, never as globals.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -17,45 +16,58 @@ import { useChatStore } from "@/lib/store";
 
 const storeSource = readFileSync(join(process.cwd(), "lib/store.ts"), "utf8");
 
-describe("store persistence", () => {
+describe("store persistence (inline charts)", () => {
     beforeEach(() => {
-        // Reset to defaults so each test starts clean
-        useChatStore.setState({
-            visualizationData: null,
-            isVisualizationCollapsed: false,
-            visualizationWidth: 500,
-        });
+        useChatStore.setState({ messages: [] });
     });
 
-    it("persists visualizationData via the partialize list", async () => {
-        // The partialize config is in the store; we can't directly
-        // inspect it from outside, but we can verify the fields
-        // are wired to the persistence middleware by writing then
-        // reading them.
-        useChatStore.getState().setVisualizationData([
-            { tool: "get_laps", args: { year: 2024, gp: "Monaco" }, success: true, data: { laps: [] } },
-        ]);
-        expect(useChatStore.getState().visualizationData).toHaveLength(1);
+    it("has no global panel state", () => {
+        const state = useChatStore.getState() as unknown as Record<string, unknown>;
+        expect("visualizationData" in state).toBe(false);
+        expect("activeMessageId" in state).toBe(false);
+        expect("isVisualizationCollapsed" in state).toBe(false);
+        expect("visualizationWidth" in state).toBe(false);
+        expect(typeof (state as { setVisualizationData?: unknown }).setVisualizationData).toBe("undefined");
+        expect(typeof (state as { setActiveMessageId?: unknown }).setActiveMessageId).toBe("undefined");
+        expect(typeof (state as { toggleVisualizationCollapse?: unknown }).toggleVisualizationCollapse).toBe("undefined");
+        expect(typeof (state as { updateVisualizationWidth?: unknown }).updateVisualizationWidth).toBe("undefined");
     });
 
-    it("persists isVisualizationCollapsed toggles", () => {
-        useChatStore.getState().toggleVisualizationCollapse(true);
-        expect(useChatStore.getState().isVisualizationCollapsed).toBe(true);
-        useChatStore.getState().toggleVisualizationCollapse(false);
-        expect(useChatStore.getState().isVisualizationCollapsed).toBe(false);
+    it("does not reference the old panel in source", () => {
+        // Live panel state/actions must be gone. Legacy key mentions
+        // inside migrate() deletes + comments are expected (they clean
+        // up snapshots saved by the old side-panel build). Per-message
+        // `visualizationData?` / `updateMessageVisualization` stay —
+        // charts live on their message.
+        expect(storeSource).not.toMatch(/setVisualizationData/);
+        expect(storeSource).not.toMatch(/setActiveMessageId/);
+        expect(storeSource).not.toMatch(/toggleVisualizationCollapse\(/);
+        expect(storeSource).not.toMatch(/updateVisualizationWidth\(/);
+        // Global (non-optional) field declarations must be gone.
+        expect(storeSource).not.toMatch(/^\s+visualizationData: unknown/m);
+        expect(storeSource).not.toMatch(/^\s+activeMessageId: string/m);
+        expect(storeSource).not.toMatch(/^\s+visualizationWidth: number/m);
+        expect(storeSource).not.toMatch(/^\s+isVisualizationCollapsed: boolean/m);
     });
 
-    it("persists visualizationWidth changes", () => {
-        useChatStore.getState().updateVisualizationWidth(720);
-        expect(useChatStore.getState().visualizationWidth).toBe(720);
+    it("keeps per-message visualization updaters", () => {
+        const state = useChatStore.getState();
+        expect(typeof state.updateMessageVisualization).toBe("function");
+        expect(typeof state.setResearchChartSpecs).toBe("function");
     });
 
-    it("clearMessages also clears visualizationData", () => {
-        useChatStore.getState().setVisualizationData([
-            { tool: "get_laps", args: {}, success: true, data: {} },
+    it("clearMessages only clears messages", () => {
+        useChatStore.getState().setMessages([
+            {
+                id: "m_1",
+                role: "assistant",
+                content: "hi",
+                timestamp: 1,
+                visualizationData: [{ tool: "get_laps", args: {}, success: true, data: {} }],
+            },
         ]);
         useChatStore.getState().clearMessages();
-        expect(useChatStore.getState().visualizationData).toBeNull();
+        expect(useChatStore.getState().messages).toEqual([]);
     });
 
     it("dedupes identical degraded warnings (one outage = one badge)", () => {
@@ -73,16 +85,17 @@ describe("store persistence", () => {
         // A genuinely different warning still appends.
         useChatStore.getState().addMessageDegradedWarning("m_deg", { ...warning, kind: "rate_limit" });
         expect(useChatStore.getState().messages.find((m) => m.id === "m_deg")?.degradedWarnings).toHaveLength(2);
+
         useChatStore.getState().clearMessages();
     });
 });
 
-describe("visualization off by default", () => {
-    it("defaults visualizeEnabled to false for fresh state", () => {
-        expect(storeSource).toMatch(/visualizeEnabled: false,/);
-    });
-
-    it("migrates a missing flag to false (never on unless explicitly enabled)", () => {
-        expect(storeSource).toMatch(/visualizeEnabled: s\.visualizeEnabled === true/);
+describe("no visualization toggle (charts always render)", () => {
+    it("has no visualizeEnabled in settings, defaults, or migrate", () => {
+        // The v8 -> v9 migrate comment names the dropped legacy flag —
+        // assert no LIVE declaration instead of no mention.
+        expect(storeSource).not.toMatch(/^\s+visualizeEnabled: boolean/m);
+        expect(storeSource).not.toMatch(/visualizeEnabled: false,/);
+        expect(storeSource).not.toMatch(/visualizeEnabled: s\.visualizeEnabled/);
     });
 });

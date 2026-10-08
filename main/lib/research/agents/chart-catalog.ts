@@ -22,6 +22,9 @@ export const CHART_TYPES = new Set<string>([
     "box_plot",
     "telemetry_multi",
     "kpi",
+    // Distribution / rank-flow types
+    "swarm",
+    "bump",
 ]);
 
 

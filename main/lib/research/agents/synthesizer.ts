@@ -19,6 +19,12 @@ import type { EvidenceStore } from "../evidence-store";
 import type { ResearchMemory } from "../memory";
 import type { ConfidenceScore, ChartSpec, ResearchType } from "../types";
 import { LLM_TIMEOUT_MS, chatContentToText } from "@/lib/llm";
+import {
+    ANSWER_STYLE_PROMPT,
+    CHART_GUIDANCE_DEEP_PROMPT,
+    describeChartsForPrompt,
+    sanitizeAnswerText,
+} from "@/lib/synthesis/answer-style";
 
 // =============================================================================
 // Synthesizer
@@ -37,6 +43,8 @@ export class Synthesizer {
      *   2. Citation validation: buffer the full response, validate all
      *      [E#] references exist in the evidence store, and re-prompt once
      *      if invalid citations are found. Then stream the validated text.
+     *   3. House style: the buffered answer passes through
+     *      sanitizeAnswerText (no emojis, no em dashes) before streaming.
      */
     async *generate(params: {
         objective: string;
@@ -65,10 +73,8 @@ export class Synthesizer {
         const evidenceContext = evidenceStore.toContextString();
         const memoryContext = memory.toContextString();
 
-        // Build chart list with EXACT names — the LLM must use these exact references
-        const chartList = chartSpecs.length > 0
-            ? chartSpecs.map((c, i) => `Chart ${i + 1}: "${c.title}" (type: ${c.type}, evidence: ${c.dataSource})`).join("\n")
-            : "No charts available for this response.";
+        // Chart list with EXACT names — the LLM must use these exact references
+        const chartList = describeChartsForPrompt(chartSpecs);
 
         const systemPrompt = `You are the Synthesizer in an F1 research agent. Your job is to produce the final answer from the collected evidence.
 
@@ -94,8 +100,12 @@ export class Synthesizer {
    - trend: chronological progression with supporting data points
    - Other types: use a logical structure with clear sections
 5. Include tables where data supports it (e.g., standings, lap times).
-6. ONLY reference charts from the "Available Charts" list below. Use the EXACT chart name, e.g., "See Chart 1: Lap Times — Monaco 2024". Do NOT reference charts that are not in the list. If no charts are available, do not mention charts at all.
+6. ONLY reference charts from the "Available Charts" list below. Use the EXACT chart name, e.g., "See Chart 1: Pace Distribution - Suzuka 2024". Do NOT reference charts that are not in the list. If no charts are available, do not mention charts at all.
 7. State the confidence level and note any missing data.
+
+${CHART_GUIDANCE_DEEP_PROMPT}
+
+${ANSWER_STYLE_PROMPT}
 
 ## Research Type
 ${researchType}
@@ -167,6 +177,12 @@ Produce a comprehensive, evidence-backed answer. Use markdown formatting.`;
                     );
                 }
             }
+
+            // Deterministic house-style enforcement on the complete answer
+            // (safe here because the full text is buffered — never applied
+            // to streaming chunks, where split multi-byte sequences could
+            // corrupt output).
+            fullText = sanitizeAnswerText(fullText);
 
             // Stream the validated text token-by-token
             // Split into reasonable chunks to preserve streaming UX

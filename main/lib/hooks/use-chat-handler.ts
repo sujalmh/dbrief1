@@ -4,9 +4,8 @@ import * as React from "react"
 import { useRouter } from "next/navigation"
 import { useChatStore, type Message, type ResearchIteration } from "@/lib/store"
 import { useSession } from "@/lib/cf/session-context"
-import { createSession, saveMessage, saveContext, patchSessionMeta } from "@/lib/cf/client"
+import { createSession, saveMessage, patchSessionMeta } from "@/lib/cf/client"
 import { sanitizeCitations } from "@/lib/utils"
-import { isChartablePayload } from "@/lib/visualization/data-parser"
 
 /** Minimal shape of SSE payload steps/tasks — fields are unknown until validated. */
 interface SsePlanStep {
@@ -142,13 +141,7 @@ export function useChatHandler() {
                     ...(storeMsg?.feedback ? { feedback: storeMsg.feedback } : {}),
                 };
                 const sid = effectiveSessionId;
-                const s = useChatStore.getState();
-                saveMessage(sid, fullMsg).then(() =>
-                    saveContext(sid, {
-                        visualizationData: s.visualizationData ?? undefined,
-                        activeMessageId: s.activeMessageId,
-                    })
-                );
+                saveMessage(sid, fullMsg);
             }
         };
         state.addMessage({
@@ -436,7 +429,9 @@ export function useChatHandler() {
                                         scheduleUpdate()
                                         break
                                     case "visualization":
-                                        useChatStore.getState().setVisualizationData(data.data)
+                                        // Per-message payload only — charts render
+                                        // inline in this bubble, always (no
+                                        // toggle, no side panel).
                                         useChatStore.getState().updateMessageVisualization(assistantMsgId, data.data)
                                         // Learn driver→team→color mappings from the live
                                         // payload (results rows carry TeamName/TeamColor
@@ -447,17 +442,6 @@ export function useChatHandler() {
                                             learnColorsFromPayload(data.data);
                                         } catch {
                                             // Best-effort: colors fall back to the static grid.
-                                        }
-                                        // Make the new message the active one so the
-                                        // visualization panel reflects the latest reply.
-                                        useChatStore.getState().setActiveMessageId(assistantMsgId)
-                                        // Auto-decide the visualization toggle: turn
-                                        // the panel on when this turn actually
-                                        // produced chartable series. Never force
-                                        // it open (collapsed state untouched) and
-                                        // never auto-disable an explicit choice.
-                                        if (isChartablePayload(data.data) && !useChatStore.getState().settings.visualizeEnabled) {
-                                            useChatStore.getState().updateSettings({ visualizeEnabled: true })
                                         }
                                         break
                                     case "metadata":
@@ -584,18 +568,6 @@ export function useChatHandler() {
                                         break
                                     case "chart_specs":
                                         useChatStore.getState().setResearchChartSpecs(assistantMsgId, data.specs || [])
-                                        // Also set visualization data for the panel
-                                        if (data.specs && data.specs.length > 0) {
-                                            useChatStore.getState().setVisualizationData(data.specs)
-                                            // Deep-research chart specs are an explicit
-                                            // chart decision — same auto-decide as above.
-                                            if (!useChatStore.getState().settings.visualizeEnabled) {
-                                                useChatStore.getState().updateSettings({ visualizeEnabled: true })
-                                            }
-                                        }
-                                        // Make the new message the active one so the
-                                        // visualization panel renders the new specs.
-                                        useChatStore.getState().setActiveMessageId(assistantMsgId)
                                         break
                                     case "done":
                                         // In deep research mode, done carries result summary

@@ -89,19 +89,76 @@ export function synthesizeChartSpecs(
         const intent = inferIntentFromTool(result.tool, rows);
         const spec = synthesizeOne(result, rows, intent, focus);
         if (spec) specs.push(spec);
+
+        if (intent === "lap_progression") {
+            // Multi-driver lap data also gets a pace-distribution swarm
+            // (one dot per lap, f1pace-style) so the full-race comparison
+            // reads at a glance — plus a position bump when the payload
+            // carries per-lap positions.
+            const swarm = synthesizeSwarm(result, rows);
+            if (swarm) specs.push(swarm);
+            const bump = synthesizeBump(result, rows);
+            if (bump) specs.push(bump);
+        }
     }
 
     return specs;
 }
 
+/** Round/lap + position + driver shape → rank-flow data. */
+interface RoundPosShape {
+    round: string;
+    pos: string;
+    driver: string;
+    /** True when the x key is lap-like (in-race) vs round-like (season). */
+    lapLike: boolean;
+}
+
+const ROUND_KEYS = ["round", "round_number", "Round", "RoundNumber"];
+const LAP_X_KEYS = ["lap", "lap_number", "Lap", "LapNumber"];
+const POS_KEYS = ["position", "Position", "pos", "Pos", "finish", "Finish", "finish_position", "FinishPosition"];
+const DRIVER_KEYS = ["driver", "Driver", "Abbreviation"];
+const LAP_TIME_KEYS = ["lap_time", "LapTime", "time", "Time"];
+
+function detectRoundPosShape(rows: Array<Record<string, unknown>>): RoundPosShape | null {
+    const keys = new Set<string>();
+    for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
+    const round = ROUND_KEYS.find((k) => keys.has(k));
+    const lapLikeKey = round ? null : LAP_X_KEYS.find((k) => keys.has(k));
+    const roundKey = round ?? lapLikeKey;
+    const pos = POS_KEYS.find((k) => keys.has(k));
+    const driver = DRIVER_KEYS.find((k) => keys.has(k));
+    if (!roundKey || !pos || !driver) return null;
+    const xs = new Set<unknown>();
+    for (const r of rows) {
+        const v = toNumberSafe(r[roundKey]);
+        if (v != null) xs.add(v);
+    }
+    // A single x value is a snapshot (standings/grid), not a progression.
+    if (xs.size < 2) return null;
+    return { round: roundKey, pos, driver, lapLike: lapLikeKey !== null };
+}
+
+function hasLapTimeColumn(rows: Array<Record<string, unknown>>): boolean {
+    return rows.some((r) => LAP_TIME_KEYS.some((k) => r[k] !== undefined && r[k] !== null && r[k] !== ""));
+}
+
 function inferIntentFromTool(tool: string, rows: Array<Record<string, unknown>>): string {
+    // Round/lap + position + driver without lap times is rank-flow data
+    // (season standings progression, in-race position trace) — detect it
+    // by shape first so season-long get_race payloads don't collapse into
+    // the single-GP grid-vs-finish scatter. Payloads that ALSO carry lap
+    // times stay on their tool path (the bump is appended alongside).
+    const shape = detectRoundPosShape(rows);
+    if (shape && !hasLapTimeColumn(rows)) return "position_progression";
+
     const text = tool.toLowerCase();
     if (text.includes("telemetry")) return "telemetry_single";
     if (text.includes("laps")) return "lap_progression";
     if (text.includes("standings")) return "standings_breakdown";
     if (text.includes("qualifying")) return "qualifying_pace";
     if (text.includes("race")) return "qualifying_vs_result";
-    if (text.includes("tyres")) return "strategy_breakdown";
+    if (text.includes("tyres") || text.includes("stints") || text.includes("stint")) return "strategy_breakdown";
     if (text.includes("weather")) return "weather_conditions";
 
     // Heuristic from data shape
@@ -255,6 +312,10 @@ function synthesizeOne(
             };
         }
 
+        case "position_progression": {
+            return synthesizeBump(result, rows);
+        }
+
         case "strategy_breakdown": {
             // tyre compound usage: { driver: { SOFT: n, MEDIUM: n, HARD: n } }
             const driver = pick("driver", "Driver") ?? "driver";
@@ -322,6 +383,123 @@ function synthesizeOne(
             };
         }
     }
+}
+
+/**
+ * Pace-distribution swarm (one dot per lap) for multi-driver lap data.
+ * Returns null unless at least two drivers share lap-time rows — single
+ * stints stay a plain progression line.
+ */
+function synthesizeSwarm(
+    result: RawResult,
+    rows: Array<Record<string, unknown>>
+): ChartSpec | null {
+    const keys = new Set<string>();
+    for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
+    const has = (k: string) => keys.has(k);
+    const driver = DRIVER_KEYS.find(has);
+    const lap = LAP_X_KEYS.find(has);
+    const time = LAP_TIME_KEYS.find(has);
+    if (!driver || !lap || !time) return null;
+
+    const dots: Array<{ driver: string; lap: number; value: number }> = [];
+    for (const r of rows) {
+        const d = String(r[driver] ?? "?");
+        const l = toNumberSafe(r[lap]);
+        const v = toNumberSafe(r[time]);
+        if (l == null || v == null || v <= 0) continue;
+        dots.push({ driver: d, lap: l, value: v });
+    }
+    const drivers = Array.from(new Set(dots.map((d) => d.driver)));
+    if (drivers.length < 2 || dots.length < 4) return null;
+
+    // Full races render thousands of dots — stride-sample past the cap.
+    const MAX_SWARM_DOTS = 1500;
+    let shown = dots;
+    let stride = 1;
+    if (dots.length > MAX_SWARM_DOTS) {
+        stride = Math.ceil(dots.length / MAX_SWARM_DOTS);
+        shown = dots.filter((_, i) => i % stride === 0);
+    }
+    return {
+        id: `swarm_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
+        type: "swarm",
+        title: `Pace Distribution: ${argsSummary(result.args)}`,
+        subtitle: stride > 1
+            ? `${drivers.length} drivers • showing every ${stride}th lap (${shown.length} of ${dots.length} laps)`
+            : `${drivers.join(", ")} • every lap plotted`,
+        dataSource: result.tool,
+        xField: "driver",
+        yField: time,
+        config: {
+            data: shown,
+            xAxisLabel: "Driver",
+            yAxisLabel: "Lap time",
+            unit: "s",
+            intent: "lap_time_distribution",
+        },
+    };
+}
+
+/**
+ * Rank-flow bump chart from round/lap + position + driver rows.
+ * Null when the shape doesn't fit (snapshots, missing columns).
+ */
+function synthesizeBump(
+    result: RawResult,
+    rows: Array<Record<string, unknown>>
+): ChartSpec | null {
+    const shape = detectRoundPosShape(rows);
+    if (!shape) return null;
+    const byDriver = new Map<string, Map<number, number>>();
+    for (const r of rows) {
+        const d = String(r[shape.driver] ?? "?");
+        const x = toNumberSafe(r[shape.round]);
+        const p = toNumberSafe(r[shape.pos]);
+        if (x == null || p == null || p <= 0) continue;
+        if (!byDriver.has(d)) byDriver.set(d, new Map());
+        // Keep the best (lowest) position when a driver has several rows
+        // for the same x (e.g. sprint + GP sharing a round number).
+        const prev = byDriver.get(d)!.get(x);
+        if (prev == null || p < prev) byDriver.get(d)!.set(x, p);
+    }
+    if (byDriver.size === 0) return null;
+    const avg = (m: Map<number, number>) =>
+        Array.from(m.values()).reduce((a, b) => a + b, 0) / m.size;
+    const series = Array.from(byDriver.keys())
+        .sort((a, b) => avg(byDriver.get(a)!) - avg(byDriver.get(b)!))
+        .slice(0, 20);
+    const xs = Array.from(
+        new Set(series.flatMap((d) => Array.from(byDriver.get(d)!.keys())))
+    ).sort((a, b) => a - b);
+    if (xs.length < 2 || series.length === 0) return null;
+    const data = xs.map((x) => {
+        const row: Record<string, number | string> = { x };
+        for (const d of series) {
+            const v = byDriver.get(d)!.get(x);
+            if (v != null) row[d] = v;
+        }
+        return row;
+    });
+    return {
+        id: `bump_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
+        type: "bump",
+        title: `Position Progression: ${argsSummary(result.args)}`,
+        subtitle: shape.lapLike
+            ? "Track position every lap (P1 at top)"
+            : "Championship position by round (P1 at top)",
+        dataSource: result.tool,
+        xField: "x",
+        yField: series[0] ?? shape.pos,
+        config: {
+            data,
+            series,
+            xAxisLabel: shape.lapLike ? "Lap" : "Round",
+            yAxisLabel: "Position",
+            unit: "pos",
+            intent: "position_progression",
+        },
+    };
 }
 
 function toNumberSafe(v: unknown): number | null {

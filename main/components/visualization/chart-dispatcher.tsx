@@ -21,6 +21,8 @@ import {
     LineOrAreaChart,
     ScatterPlot,
     StackedBarChart,
+    SwarmPlot,
+    BumpChart,
     DumbbellChart,
     BoxPlot,
     Histogram,
@@ -49,6 +51,9 @@ interface SpecConfig {
     highlight?: { key: string; value: number };
     intent?: string;
     aggregation?: string;
+    /** Dumbbell endpoint labels (e.g., seasons); fall back to "A"/"B". */
+    leftLabel?: string;
+    rightLabel?: string;
 }
 
 /**
@@ -108,10 +113,15 @@ export function ChartDispatcher({ spec }: { spec: ChartSpec }) {
 
         case "line":
         case "area":
+        case "telemetry_multi":
             return (
                 <LineOrAreaChart
                     spec={{
-                        type: spec.type,
+                        // Deep-research telemetry plans emit
+                        // `telemetry_multi`; the renderer has no dedicated
+                        // multi-channel component, so it shares the
+                        // line/area renderer (series resolved from config).
+                        type: spec.type === "area" ? "area" : "line",
                         title: spec.title,
                         subtitle: spec.subtitle,
                         insight,
@@ -164,6 +174,42 @@ export function ChartDispatcher({ spec }: { spec: ChartSpec }) {
                 />
             );
 
+        case "swarm":
+            return (
+                <SwarmPlot
+                    spec={{
+                        type: "swarm",
+                        title: spec.title,
+                        subtitle: spec.subtitle,
+                        insight,
+                        question,
+                        data: data as unknown as Array<{ driver: string; lap: number; value: number }>,
+                        xAxisLabel,
+                        yAxisLabel,
+                        unit,
+                    }}
+                />
+            );
+
+        case "bump":
+            return (
+                <BumpChart
+                    spec={{
+                        type: "bump",
+                        title: spec.title,
+                        subtitle: spec.subtitle,
+                        insight,
+                        question,
+                        data: data as unknown as Array<Record<string, number | string>>,
+                        xField: cfg.xField ?? spec.xField ?? "x",
+                        series: resolveSeries(cfg, data),
+                        xAxisLabel,
+                        yAxisLabel,
+                        unit,
+                    }}
+                />
+            );
+
         case "dumbbell":
             return (
                 <DumbbellChart
@@ -177,8 +223,8 @@ export function ChartDispatcher({ spec }: { spec: ChartSpec }) {
                         xAxisLabel,
                         yAxisLabel,
                         unit,
-                        leftLabel: "A",
-                        rightLabel: "B",
+                        leftLabel: cfg.leftLabel ?? "A",
+                        rightLabel: cfg.rightLabel ?? "B",
                     }}
                 />
             );

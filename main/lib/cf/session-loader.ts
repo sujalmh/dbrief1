@@ -4,19 +4,23 @@
  * Session resume loader (browser).
  * ================================
  * Single place that hydrates the client store from the cloud for a given
- * session id: messages (with steps/visualization/evidence/usage) plus
- * session-level UI (panel data, active message). Used both by the route
- * shell (URL-driven session changes) and any direct session picker.
- * Throws on failure so callers can render an error state.
+ * session id: messages (with steps/visualization/evidence/usage). Each
+ * message owns its charts inline (t3code-style) — there is no panel UI
+ * state to restore. Used both by the route shell (URL-driven session
+ * changes) and any direct session picker. Throws on failure so callers
+ * can render an error state.
  */
 
 import { useChatStore } from "@/lib/store";
 import { loadMessages, loadContext } from "@/lib/cf/client";
 
 export async function loadSessionIntoStore(sessionId: string, shouldApply?: () => boolean): Promise<void> {
-    const [messages, ui] = await Promise.all([
+    const [messages] = await Promise.all([
         loadMessages(sessionId),
-        loadContext(sessionId),
+        // Load (and ignore) legacy session context for backward compat
+        // with sessions saved by the old side-panel build. New sessions
+        // carry no panel state — charts live on their messages.
+        loadContext(sessionId).catch(() => ({})),
     ]);
     // A newer navigation may have superseded this load — never paint
     // stale messages over the current route's session.
@@ -33,25 +37,10 @@ export async function loadSessionIntoStore(sessionId: string, shouldApply?: () =
     } catch {
         // Best-effort: static grid fallback still applies.
     }
-    // Restore panel + active message. Fall back to the latest message's
-    // visualization when no UI state was ever saved (pre-existing sessions).
-    type StoreState = ReturnType<typeof useChatStore.getState>;
-    const activeId =
-        ui.activeMessageId ??
-        messages.filter((m) => m.role === "assistant").slice(-1)[0]?.id ??
-        null;
-    const activeMsg = messages.find((m) => m.id === activeId);
-    const panelData =
-        ui.visualizationData ?? activeMsg?.chartSpecs ?? activeMsg?.visualizationData ?? null;
-    useChatStore.setState({
-        visualizationData: (panelData ?? null) as StoreState["visualizationData"],
-        activeMessageId: activeId,
-    });
 }
 
 /** Reset the store to a fresh composer (new chat). */
 export function resetToFreshChat(): void {
     useChatStore.getState().setCurrentSessionId(null);
     useChatStore.getState().setMessages([]);
-    useChatStore.setState({ visualizationData: null, activeMessageId: null });
 }

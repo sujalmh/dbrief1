@@ -2,7 +2,8 @@
 
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { BrainCircuit, AlertTriangle, Copy, Check, RotateCcw, Trash2, FileText, ShieldCheck, AlertOctagon, ThumbsUp, ThumbsDown } from "lucide-react"
+import dynamic from "next/dynamic"
+import { AlertTriangle, Copy, Check, RotateCcw, Trash2, FileText, ShieldCheck, AlertOctagon, ThumbsUp, ThumbsDown } from "lucide-react"
 import { Message, useChatStore } from "@/lib/store"
 import { cn, citationHref } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -17,18 +18,31 @@ import { EvidencePanel } from "@/components/chat/evidence-panel"
 import { ReflectionTrace } from "@/components/chat/reflection-trace"
 import { RadioWave } from "@/components/chat/radio-wave"
 import { UsageFooter } from "@/components/chat/usage-footer"
-import { useEffect, useRef, memo, useCallback, useState, useMemo } from "react"
+import { useRef, memo, useCallback, useState, useMemo } from "react"
 import { useChatHandler } from "@/lib/hooks/use-chat-handler"
 import { getDriverColor, getDriverPattern, seasonFromPayload } from "@/lib/f1-colors"
 import type { Components } from "react-markdown"
 
 import rehypeSanitize from "rehype-sanitize"
 
+// Recharts (via InlineCharts → ChartDispatcher) is the heaviest dependency
+// in the app — load it only when a chart actually needs to render, not with
+// the initial chat bundle. t3code-style: charts live inside the message,
+// so the split point moves here from the old side panel.
+const InlineCharts = dynamic(
+    () => import("@/components/visualization/inline-charts").then((m) => m.InlineCharts),
+    { ssr: false, loading: () => null }
+);
+
 interface MessageBubbleProps {
     message: Message
     isLastAssistant?: boolean
     /** Public shared view: hide action toolbars and skip store writes. */
     readOnly?: boolean
+    /** Preceding user query — focuses inline chart titles/highlights. */
+    userQuery?: string
+    /** True while this assistant message is still streaming. */
+    isStreaming?: boolean
 }
 
 // --- HELPER: Highlights driver names in text ---
@@ -176,14 +190,21 @@ export const MessageContent = memo(function MessageContent({
  * Render a chat message bubble with avatar, formatted content, and contextual action controls.
  *
  * Displays a user or assistant message with avatar, Markdown-rendered content, optional planning steps,
- * citations, visualization trigger, and an action toolbar (copy, retry, delete). For assistant messages,
- * entering view marks the message as active. The retry action regenerates the assistant response using
- * the preceding user message; the copy action places the message content on the clipboard.
+ * citations, inline charts, and an action toolbar (copy, retry, delete). The retry action regenerates
+ * the assistant response using the preceding user message; the copy action places the message content
+ * on the clipboard.
  *
- * @param message - The message to render, including role, content, optional steps, reasoning, citations, visualizationData, and error flag.
+ * Charts render inline below the text (t3code-style) via `InlineCharts`,
+ * which resolves `message.chartSpecs` (deep research) or synthesizes
+ * specs from `message.visualizationData` (standard mode). There is no
+ * side panel and no `activeMessageId` — every message owns its charts.
+ *
+ * @param message - The message to render, including role, content, optional steps, reasoning, citations, visualizationData, chartSpecs, and error flag.
+ * @param userQuery - Preceding user query used to focus chart titles/highlights.
+ * @param isStreaming - True while this assistant message is still streaming.
  * @returns A JSX element representing the message bubble ready for rendering in the chat UI.
  */
-function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = false }: MessageBubbleProps) {
+function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = false, userQuery = "", isStreaming = false }: MessageBubbleProps) {
     const isUser = message.role === "user"
     const isError = message.isError
     const containerRef = useRef<HTMLDivElement>(null)
@@ -205,11 +226,6 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
             })
         }
     }, [deleteMessage])
-
-    // Use stable selector to avoid re-renders from unrelated store changes
-    const setActiveMessageId = useChatStore(
-        useCallback((state) => state.setActiveMessageId, [])
-    )
 
     const handleCopy = useCallback(() => {
         navigator.clipboard.writeText(message.content)
@@ -250,60 +266,6 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
         // Regenerate
         await handleSend(prevUserMsg.content)
     }, [message.id, deleteEverywhere, handleSend])
-
-    // Memoize the intersection observer callback
-    const handleIntersection = useCallback((entries: IntersectionObserverEntry[]) => {
-        if (entries[0]?.isIntersecting) {
-            setActiveMessageId(message.id)
-        }
-    }, [message.id, setActiveMessageId])
-
-    useEffect(() => {
-        if (isUser || readOnly) return;
-
-        const observer = new IntersectionObserver(handleIntersection, {
-            rootMargin: '-40% 0px -40% 0px',
-            threshold: 0
-        })
-
-        if (containerRef.current) {
-            observer.observe(containerRef.current)
-        }
-
-        return () => observer.disconnect()
-    }, [isUser, handleIntersection, readOnly])
-
-    // Memoize the visualization button click handler
-    //
-    // The visualization panel renders whichever assistant message is
-    // currently "active" (tracked via `activeMessageId`). For "Show Chart"
-    // to actually do something we must:
-    //   1. Make this message the active one (otherwise the panel may
-    //      show stale data from a previous message, or be empty).
-    //   2. Expand the panel if it's collapsed.
-    //   3. Auto-enable visualization if the user hasn't already
-    //      (otherwise the panel renders nothing).
-    //   4. Push the data so the standard-mode panel has something to
-    //      synthesize from.
-    //
-    // We read all current state via getState() to avoid re-rendering the
-    // message bubble whenever the panel state changes.
-    const handleShowChart = useCallback(() => {
-        const store = useChatStore.getState();
-        // Prefer chartSpecs from the message (deep research) when present;
-        // fall back to raw visualizationData (standard mode).
-        const payload = message.chartSpecs && message.chartSpecs.length > 0
-            ? message.chartSpecs
-            : message.visualizationData;
-        store.setActiveMessageId(message.id);
-        if (!store.settings.visualizeEnabled) {
-            store.updateSettings({ visualizeEnabled: true });
-        }
-        if (store.isVisualizationCollapsed) {
-            store.toggleVisualizationCollapse(false);
-        }
-        store.setVisualizationData(payload);
-    }, [message.id, message.visualizationData, message.chartSpecs])
 
     const ActionsToolbar = (
         <div className={cn(
@@ -551,17 +513,19 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                     </div>
                 )}
 
-                {(message.visualizationData ||
-                    (message.chartSpecs && message.chartSpecs.length > 0)) && (
-                    <div className="mt-3 pt-3 border-t border-border/50">
-                        <button
-                            onClick={handleShowChart}
-                            className="flex items-center gap-2 text-xs font-medium text-[var(--f1-red)] hover:text-[var(--f1-red)]/80 transition-colors"
-                        >
-                            <BrainCircuit className="h-3.5 w-3.5" />
-                            Show Chart
-                        </button>
-                    </div>
+                {/* In-chat visualizations (t3code-style): charts render inline
+                    below the answer for THIS message only. Deep research
+                    uses pre-planned `chartSpecs`; standard mode synthesizes
+                    specs from raw `visualizationData` + the user query.
+                    Charts always render; empty → nothing. */}
+                {!isUser && !isError && (
+                    <InlineCharts
+                        messageId={message.id}
+                        chartSpecs={message.chartSpecs}
+                        visualizationData={message.visualizationData}
+                        query={userQuery}
+                        isStreaming={isStreaming}
+                    />
                 )}
 
                 {/* Citations Section — only LLM-picked, reranked sources.
@@ -641,6 +605,7 @@ export const MessageBubble = memo(MessageBubbleComponent, (prevProps, nextProps)
         prev.reasoning === next.reasoning &&
         prev.feedback === next.feedback &&
         prev.visualizationData === next.visualizationData &&
+        prev.chartSpecs === next.chartSpecs &&
         prev.researchType === next.researchType &&
         prev.confidence === next.confidence &&
         // Usage is a single object set once per message via
@@ -653,9 +618,12 @@ export const MessageBubble = memo(MessageBubbleComponent, (prevProps, nextProps)
         prev.durationMs === next.durationMs &&
         prevProps.isLastAssistant === nextProps.isLastAssistant &&
         prevProps.readOnly === nextProps.readOnly &&
+        prevProps.userQuery === nextProps.userQuery &&
+        prevProps.isStreaming === nextProps.isStreaming &&
         JSON.stringify(prev.steps) === JSON.stringify(next.steps) &&
         JSON.stringify(prev.iterations) === JSON.stringify(next.iterations) &&
         JSON.stringify(prev.evidence) === JSON.stringify(next.evidence) &&
-        JSON.stringify(prev.reflections) === JSON.stringify(next.reflections)
+        JSON.stringify(prev.reflections) === JSON.stringify(next.reflections) &&
+        JSON.stringify(prev.chartSpecs) === JSON.stringify(next.chartSpecs)
     );
 });

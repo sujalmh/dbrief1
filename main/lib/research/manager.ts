@@ -433,8 +433,9 @@ export class ResearchManager {
             );
             yield { type: "chart_specs", specs: chartSpecs };
 
-            // Also emit visualization data in the format the VisualizationPanel expects
-            // (array of {tool, args, success, data}) so charts actually render
+            // Also emit raw tool payloads (array of {tool, args, success,
+            // data}) alongside the planned specs so standard-mode
+            // synthesis and color learning keep working per message.
             const vizData = this.evidenceStore.getAll().map((e) => ({
                 tool: e.source.tool,
                 args: e.source.args,

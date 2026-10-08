@@ -44,6 +44,7 @@ import {
     type JevClassification,
 } from "@/lib/jev";
 import { executeSteps, aggregateContext, buildRefusalMessage } from "@/lib/executor";
+import { ANSWER_STYLE_PROMPT, CHART_GUIDANCE_STANDARD_PROMPT } from "@/lib/synthesis/answer-style";
 import { UsageAccumulator, getModelId, type UsageTotals } from "@/lib/llm-usage";
 import { f1Tools } from "@/lib/tools/fastf1";
 import { getSearchTools } from "@/lib/tools/search";
@@ -244,7 +245,11 @@ const RESPONDER_SYSTEM_PROMPT = `You are an expert Formula 1 AI assistant with d
 - When the context contains \`run_simulation\` output, check \`parameters_used.grounding\`. If it is "defaults" or "defaults-despite-reference", present the numbers as an ILLUSTRATIVE estimate only: give ranges, never precise percentiles, and state in one sentence that no real session data grounded the run. Never invent the race the user didn't name.
 
 ## Race-Result Grounding
-- Every race answer MUST name the Grand Prix and year the data came from (it is in the tool payload). "The most recent race" is never an acceptable substitute for the event name.`;
+- Every race answer MUST name the Grand Prix and year the data came from (it is in the tool payload). "The most recent race" is never an acceptable substitute for the event name.
+
+${ANSWER_STYLE_PROMPT}
+
+${CHART_GUIDANCE_STANDARD_PROMPT}`;
 
 // =============================================================================
 // Main API Handler

@@ -35,7 +35,7 @@ export function LandingHero() {
                 className="mx-auto mt-1.5 hidden max-w-md text-pretty text-[12.5px] leading-snug text-muted-foreground min-[480px]:block sm:text-[13.5px]"
             >
                 Telemetry, tyre strategy, timing and regulations —
-                asked in chat, answered with the data on screen.
+                ask in chat and get answers backed by the data on screen.
             </motion.p>
             {/* crawlable summary for search indexers */}
             <p className="sr-only">

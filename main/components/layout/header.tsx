@@ -24,26 +24,28 @@ const ShareDialog = dynamic(
 
 export function Header() {
     // Slice subscriptions: `messages` changes on every streamed token, so
-    // this component selects only the active message's visualization ref
-    // (stable across token frames). Download lives inside the share
-    // dialog, so this header never subscribes to the message list.
+    // this component selects only the derived mode signal (stable across
+    // token frames). Download lives inside the share dialog, so this
+    // header never subscribes to the full message list.
     const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
-    const activeVisualizationData = useChatStore((s) =>
-        s.activeMessageId
-            ? (s.messages.find((m) => m.id === s.activeMessageId)?.visualizationData ?? null)
-            : null
-    )
+    const lastVizPayload = useChatStore((s) => {
+        for (let i = s.messages.length - 1; i >= 0; i--) {
+            const viz = s.messages[i]?.visualizationData
+            if (viz !== undefined && viz !== null) return viz
+        }
+        return null
+    })
     const sessions = useChatStore((s) => s.sessions)
     const currentSessionId = useChatStore((s) => s.currentSessionId)
     const [isInfoOpen, setInfoOpen] = useState(false)
     const [isShareOpen, setShareOpen] = useState(false)
 
-    // Derive context from the active message
+    // Derive context from the latest message carrying visualization data
     const context = useMemo(() => {
         // visualizationData is untyped at the store boundary (tool-result
         // array in standard mode, ChartSpec[] in deep-research mode).
         // Only the tool-result shape carries success/tool for mode detection.
-        const rawData: unknown = activeVisualizationData
+        const rawData: unknown = lastVizPayload
         const results = Array.isArray(rawData) ? rawData : []
         const currentSession = sessions.find(s => s.id === currentSessionId)
 
@@ -82,7 +84,7 @@ export function Header() {
         }
 
         return { sessionString, mode }
-    }, [activeVisualizationData, sessions, currentSessionId])
+    }, [lastVizPayload, sessions, currentSessionId])
 
 
     return (

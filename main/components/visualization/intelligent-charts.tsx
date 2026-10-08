@@ -40,6 +40,7 @@ import {
     Scatter,
     ZAxis,
     ComposedChart,
+    ReferenceArea,
 } from "recharts";
 import { F1_PALETTE, CHART_TOKENS, colorForDriver, colorForSeries, STEERING_COLORS } from "./chart-palette";
 
@@ -207,6 +208,10 @@ export function HorizontalBarChart({ spec }: { spec: HorizontalBarSpec }) {
                         dataKey="value"
                         radius={[0, 6, 6, 0]}
                         name={spec.yAxisLabel}
+                        // No mount animation: charts must render their final
+                        // state immediately (background tabs/screenshots never
+                        // tick rAF, and chat shouldn't jank while scrolling).
+                        isAnimationActive={false}
                     >
                         {data.map((entry, i) => (
                             <Cell
@@ -285,6 +290,7 @@ export function LineOrAreaChart({ spec }: { spec: LineSpec }) {
                                 fill={colorForSeries(s, i)}
                                 fillOpacity={0.25}
                                 strokeWidth={2}
+                                isAnimationActive={false}
                             />
                         ))}
                     </AreaChart>
@@ -316,6 +322,7 @@ export function LineOrAreaChart({ spec }: { spec: LineSpec }) {
                                 strokeWidth={2}
                                 dot={spec.data.length < 30 ? { r: 3 } : false}
                                 connectNulls
+                                isAnimationActive={false}
                             />
                         ))}
                     </LineChart>
@@ -346,6 +353,13 @@ interface ScatterSpec {
 export function ScatterPlot({ spec }: { spec: ScatterSpec }) {
     const groups = Array.from(new Set(spec.data.map((d) => d.group).filter(Boolean) as string[]));
     const single = groups.length === 0;
+    // Diagonal y=x segment clipped to the data domain so it always
+    // renders inside the plot (a hardcoded 1→22 segment vanishes when
+    // the axes zoom to the data).
+    const xs = spec.data.map((d) => d.x);
+    const ys = spec.data.map((d) => d.y);
+    const diagLo = Math.min(...xs, ...ys);
+    const diagHi = Math.max(...xs, ...ys);
 
     return (
         <div className="space-y-2">
@@ -377,11 +391,11 @@ export function ScatterPlot({ spec }: { spec: ScatterSpec }) {
                     <ZAxis range={[60, 60]} />
                     <Tooltip content={<SmartTooltip unit={spec.unit} />} cursor={{ strokeDasharray: "3 3" }} />
                     <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: 10, fontSize: 11 }} />
-                    {spec.diagonal && (
+                    {spec.diagonal && Number.isFinite(diagLo) && Number.isFinite(diagHi) && (
                         <ReferenceLine
                             segment={[
-                                { x: 1, y: 1 },
-                                { x: 22, y: 22 },
+                                { x: diagLo, y: diagLo },
+                                { x: diagHi, y: diagHi },
                             ]}
                             stroke={CHART_TOKENS.axis}
                             strokeDasharray="4 4"
@@ -390,7 +404,7 @@ export function ScatterPlot({ spec }: { spec: ScatterSpec }) {
                         />
                     )}
                     {single ? (
-                        <Scatter name={spec.yAxisLabel} data={spec.data} fill={CHART_TOKENS.highlight} />
+                        <Scatter name={spec.yAxisLabel} data={spec.data} fill={CHART_TOKENS.highlight} isAnimationActive={false} />
                     ) : (
                         groups.map((g, i) => {
                             const points = spec.data.filter((d) => d.group === g);
@@ -400,6 +414,7 @@ export function ScatterPlot({ spec }: { spec: ScatterSpec }) {
                                     name={g}
                                     data={points}
                                     fill={colorForDriver(g, i)}
+                                    isAnimationActive={false}
                                 />
                             );
                         })
@@ -462,6 +477,7 @@ export function StackedBarChart({ spec }: { spec: StackedBarSpec }) {
                             stackId="a"
                             name={s}
                             fill={CHART_TOKENS.compound[(s as keyof typeof CHART_TOKENS.compound)] ?? F1_PALETTE[i % F1_PALETTE.length]}
+                            isAnimationActive={false}
                         />
                     ))}
                 </BarChart>
@@ -507,6 +523,9 @@ export function DumbbellChart({ spec }: { spec: DumbbellSpec }) {
                     <XAxis
                         minTickGap={28}
                         type="number"
+                        // Zoom to the data range — season deltas of ~0.5s are
+                        // invisible on a zero-based axis.
+                        domain={["auto", "auto"]}
                         stroke={CHART_TOKENS.axis}
                         tick={{ fontSize: 11 }}
                         tickFormatter={(v) => formatTick(v, spec.unit)}
@@ -522,9 +541,9 @@ export function DumbbellChart({ spec }: { spec: DumbbellSpec }) {
                     <Tooltip content={<SmartTooltip unit={spec.unit} />} />
                     <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: 10, fontSize: 11 }} />
                     {/* Connecting bar */}
-                    <Bar dataKey="left" fill="transparent" />
-                    <Scatter dataKey="left" fill={STEERING_COLORS.yellow} name={spec.leftLabel} />
-                    <Scatter dataKey="right" fill={STEERING_COLORS.blue} name={spec.rightLabel} />
+                    <Bar dataKey="left" fill="transparent" isAnimationActive={false} />
+                    <Scatter dataKey="left" fill={STEERING_COLORS.yellow} name={spec.leftLabel} isAnimationActive={false} />
+                    <Scatter dataKey="right" fill={STEERING_COLORS.blue} name={spec.rightLabel} isAnimationActive={false} />
                 </ComposedChart>
             </ResponsiveContainer>
         </div>
@@ -603,6 +622,21 @@ export function computeBoxPlotData(
 }
 
 export function BoxPlot({ spec }: { spec: BoxPlotSpec }) {
+    // Self-scaled: percentages of the data domain, so boxes, whiskers
+    // and the median always line up with each other (no chart-scale
+    // dependency — the old Scatter-shape version plotted raw data
+    // values as pixel coordinates and drifted off-axis).
+    const rows = spec.data;
+    if (rows.length === 0) {
+        return <EmptyChart title={spec.title} />;
+    }
+    const all = rows.flatMap((r) => [r.min, r.q1, r.median, r.q3, r.max, ...(r.outliers ?? [])]);
+    const lo = Math.min(...all);
+    const hi = Math.max(...all);
+    const span = hi - lo || 1;
+    const min = lo - span * 0.05;
+    const max = hi + span * 0.05;
+    const pct = (v: number) => ((v - min) / (max - min)) * 100;
     return (
         <div className="space-y-2">
             <ChartHeader
@@ -611,51 +645,341 @@ export function BoxPlot({ spec }: { spec: BoxPlotSpec }) {
                 insight={spec.insight}
                 question={spec.question}
             />
-            <ResponsiveContainer width="100%" height={Math.max(280, spec.data.length * 38 + 60)}>
-                <ComposedChart
-                    data={spec.data}
-                    layout="vertical"
-                    margin={{ top: 10, right: 50, left: 80, bottom: 25 }}
-                >
-                    <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} horizontal={false} />
+            <div className="space-y-2.5 pt-1">
+                {rows.map((r, i) => {
+                    const color = colorForDriver(r.category, i);
+                    const stats = `min ${formatValue(r.min, spec.unit)} · Q1 ${formatValue(r.q1, spec.unit)} · median ${formatValue(r.median, spec.unit)} · Q3 ${formatValue(r.q3, spec.unit)} · max ${formatValue(r.max, spec.unit)}${r.outliers?.length ? ` · outliers ${r.outliers.map((o) => formatValue(o, spec.unit)).join(", ")}` : ""}`;
+                    return (
+                        <div key={r.category} className="flex items-center gap-3">
+                            <span className="w-14 shrink-0 truncate text-right text-[11px] font-semibold">
+                                {r.category}
+                            </span>
+                            <div
+                                className="relative h-9 min-w-0 flex-1 rounded bg-muted/20"
+                                title={`${r.category}: ${stats}`}
+                            >
+                                {/* Whisker (min–max) */}
+                                <div
+                                    className="absolute top-1/2 h-px -translate-y-1/2 opacity-60"
+                                    style={{
+                                        left: `${pct(r.min)}%`,
+                                        width: `${Math.max(pct(r.max) - pct(r.min), 0.5)}%`,
+                                        backgroundColor: CHART_TOKENS.axis,
+                                    }}
+                                />
+                                {/* Min / max caps */}
+                                <div
+                                    className="absolute top-1/2 h-3 w-px -translate-y-1/2 opacity-60"
+                                    style={{ left: `${pct(r.min)}%`, backgroundColor: CHART_TOKENS.axis }}
+                                />
+                                <div
+                                    className="absolute top-1/2 h-3 w-px -translate-y-1/2 opacity-60"
+                                    style={{ left: `${pct(r.max)}%`, backgroundColor: CHART_TOKENS.axis }}
+                                />
+                                {/* IQR box */}
+                                <div
+                                    className="absolute top-1/2 h-4 -translate-y-1/2 rounded-sm border"
+                                    style={{
+                                        left: `${pct(r.q1)}%`,
+                                        width: `${Math.max(pct(r.q3) - pct(r.q1), 1)}%`,
+                                        backgroundColor: `${color}33`,
+                                        borderColor: `${color}88`,
+                                    }}
+                                />
+                                {/* Median */}
+                                <div
+                                    className="absolute top-1/2 h-6 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded bg-white shadow"
+                                    style={{ left: `${pct(r.median)}%` }}
+                                />
+                                {/* Outliers */}
+                                {(r.outliers ?? []).map((o, oi) => (
+                                    <div
+                                        key={oi}
+                                        className="absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full"
+                                        style={{
+                                            left: `${pct(o)}%`,
+                                            marginTop: `${-10 + (oi % 3) * 8}px`,
+                                            backgroundColor: color,
+                                        }}
+                                        title={`${r.category} outlier: ${formatValue(o, spec.unit)}`}
+                                    />
+                                ))}
+                            </div>
+                            <span className="w-16 shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                                {formatValue(r.median, spec.unit)}
+                            </span>
+                        </div>
+                    );
+                })}
+            </div>
+            <p className="text-[10px] text-muted-foreground/70">
+                Box = IQR (Q1–Q3) · white tick = median · line = full range
+            </p>
+        </div>
+    );
+}
+
+// =============================================================================
+// Swarm / strip plot (pace distribution: one dot per lap, IQR band per driver)
+// =============================================================================
+
+interface SwarmSpec {
+    type: "swarm";
+    title: string;
+    subtitle?: string;
+    insight?: string;
+    question?: string;
+    /** One dot per lap: driver category, lap number, lap-time value */
+    data: Array<{ driver: string; lap: number; value: number }>;
+    xAxisLabel: string;
+    yAxisLabel: string;
+    unit: string;
+}
+
+/**
+ * Deterministic lateral jitter in [-0.31, +0.31] of a category slot so
+ * dots spread without overlapping. Hash-based (not Math.random) so the
+ * plot is stable across renders and SSR.
+ */
+function swarmJitter(driverIndex: number, lap: number): number {
+    const h = Math.abs(Math.sin(driverIndex * 127.1 + lap * 311.7) * 43758.5453) % 1;
+    return (h - 0.5) * 0.62;
+}
+
+function SwarmPointTooltip({ active, payload, unit }: {
+    active?: boolean;
+    payload?: Array<{ payload?: { driver?: string; lap?: number; value?: number } }>;
+    unit?: string;
+}) {
+    if (!active || !payload || payload.length === 0) return null;
+    const point = payload[0]?.payload;
+    if (!point || point.value == null) return null;
+    return (
+        <div className="rounded-lg border border-border bg-background/95 p-3 shadow-lg backdrop-blur text-xs">
+            <p className="font-semibold text-sm mb-1 text-foreground">
+                {point.driver}{point.lap != null ? ` · Lap ${point.lap}` : ""}
+            </p>
+            <span className="font-medium text-foreground">
+                {formatValue(point.value, unit ?? "")}
+            </span>
+        </div>
+    );
+}
+
+export function SwarmPlot({ spec }: { spec: SwarmSpec }) {
+    const drivers = Array.from(new Set(spec.data.map((d) => d.driver)));
+    if (drivers.length === 0 || spec.data.length === 0) {
+        return <EmptyChart title={spec.title} />;
+    }
+    const stats = computeBoxPlotData(
+        spec.data as unknown as Array<Record<string, unknown>>,
+        "driver",
+        "value"
+    );
+    const points = spec.data.map((d) => {
+        const i = Math.max(drivers.indexOf(d.driver), 0);
+        return { x: i + swarmJitter(i, d.lap), y: d.value, driver: d.driver, lap: d.lap };
+    });
+    return (
+        <div className="space-y-2">
+            <ChartHeader
+                title={spec.title}
+                subtitle={spec.subtitle}
+                insight={spec.insight}
+                question={spec.question}
+            />
+            <ResponsiveContainer width="100%" height={Math.max(340, 200 + drivers.length * 6)}>
+                <ScatterChart margin={{ top: 10, right: 30, left: 20, bottom: 40 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} />
                     <XAxis
-                        minTickGap={28}
                         type="number"
+                        dataKey="x"
+                        domain={[-0.5, drivers.length - 0.5]}
+                        ticks={drivers.map((_, i) => i)}
+                        tickFormatter={(i: number) => drivers[i] ?? ""}
+                        tick={{ fontSize: 11, fontWeight: 500 }}
+                        interval={0}
+                        stroke={CHART_TOKENS.axis}
+                        label={{ value: spec.xAxisLabel, position: "insideBottom", offset: -15, fontSize: 11, fill: CHART_TOKENS.axis }}
+                    />
+                    <YAxis
+                        type="number"
+                        dataKey="y"
+                        // Zoom to the data range — lap times cluster around
+                        // ~90s and a zero-based axis would flatten every
+                        // swarm into a line at the top.
+                        domain={["auto", "auto"]}
                         stroke={CHART_TOKENS.axis}
                         tick={{ fontSize: 11 }}
                         tickFormatter={(v) => formatTick(v, spec.unit)}
-                        label={{ value: spec.xAxisLabel, position: "insideBottom", offset: -10, fontSize: 11, fill: CHART_TOKENS.axis }}
+                        label={{ value: spec.yAxisLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_TOKENS.axis }}
                     />
-                    <YAxis
-                        type="category"
-                        dataKey="category"
-                        stroke={CHART_TOKENS.axis}
-                        tick={{ fontSize: 11, fontWeight: 500 }}
-                        width={80}
-                    />
-                    <Tooltip content={<SmartTooltip unit={spec.unit} />} />
-                    <Bar dataKey="q3" fill="transparent" />
+                    <Tooltip content={<SwarmPointTooltip unit={spec.unit} />} cursor={{ strokeDasharray: "3 3" }} />
+                    {stats.map((s) => {
+                        const i = Math.max(drivers.indexOf(s.category), 0);
+                        const c = colorForDriver(s.category, i);
+                        return (
+                            <React.Fragment key={s.category}>
+                                <ReferenceArea
+                                    x1={i - 0.42}
+                                    x2={i + 0.42}
+                                    y1={s.q1}
+                                    y2={s.q3}
+                                    fill={c}
+                                    fillOpacity={0.14}
+                                    stroke="none"
+                                />
+                                <ReferenceLine
+                                    segment={[{ x: i, y: s.min }, { x: i, y: s.max }]}
+                                    stroke={CHART_TOKENS.axis}
+                                    strokeWidth={1}
+                                    opacity={0.6}
+                                />
+                                <ReferenceLine
+                                    segment={[{ x: i - 0.42, y: s.median }, { x: i + 0.42, y: s.median }]}
+                                    stroke={c}
+                                    strokeWidth={2}
+                                />
+                            </React.Fragment>
+                        );
+                    })}
                     <Scatter
-                        dataKey="median"
-                        fill={CHART_TOKENS.highlight}
-                        shape={(props: { cx?: number; cy?: number; payload?: { min: number; q1: number; median: number; q3: number; max: number } }) => {
+                        name="Lap"
+                        data={points}
+                        isAnimationActive={false}
+                        shape={(props: { cx?: number; cy?: number; payload?: { driver?: string } }) => {
                             const { cx, cy, payload } = props;
-                            if (!payload || cx == null || cy == null) return <g />;
-                            const range = payload.q3 - payload.q1;
+                            if (cx == null || cy == null) return <g />;
+                            const i = Math.max(drivers.indexOf(payload?.driver ?? ""), 0);
                             return (
-                                <g>
-                                    <line x1={payload.q1} x2={payload.q3} y1={cy} y2={cy} stroke={CHART_TOKENS.highlight} strokeWidth={6} />
-                                    <line x1={payload.min} x2={payload.max} y1={cy} y2={cy} stroke={CHART_TOKENS.axis} strokeWidth={1} />
-                                    <line x1={payload.min} x2={payload.min} y1={cy - 5} y2={cy + 5} stroke={CHART_TOKENS.axis} strokeWidth={1} />
-                                    <line x1={payload.max} x2={payload.max} y1={cy - 5} y2={cy + 5} stroke={CHART_TOKENS.axis} strokeWidth={1} />
-                                    <circle cx={payload.median} cy={cy} r={4} fill="#fff" stroke={CHART_TOKENS.highlight} strokeWidth={2} />
-                                    {/* Suppress unused warning */}
-                                    <desc>{`range ${range}`}</desc>
-                                </g>
+                                <circle
+                                    cx={cx}
+                                    cy={cy}
+                                    r={2.6}
+                                    fill={colorForDriver(payload?.driver, i)}
+                                    fillOpacity={0.75}
+                                />
                             );
                         }}
                     />
-                </ComposedChart>
+                </ScatterChart>
+            </ResponsiveContainer>
+            <p className="text-[10px] text-muted-foreground/70">
+                Each dot is one lap · shaded band = IQR · colored tick = median
+            </p>
+        </div>
+    );
+}
+
+// =============================================================================
+// Bump / rank-flow chart (position across laps or rounds, P1 on top)
+// =============================================================================
+
+interface BumpSpec {
+    type: "bump";
+    title: string;
+    subtitle?: string;
+    insight?: string;
+    question?: string;
+    data: Array<Record<string, number | string>>;
+    xField: string;
+    series: string[];
+    xAxisLabel: string;
+    yAxisLabel: string;
+    unit: string;
+}
+
+/** Light text on dark dots, dark text on light dots. */
+function bumpTextFill(hex: string): string {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+    if (!m) return "#fff";
+    const n = parseInt(m[1], 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.6 ? "#111" : "#fff";
+}
+
+function BumpDot(props: { cx?: number; cy?: number; value?: number | string; color?: string }) {
+    const { cx, cy, value, color = "#888" } = props;
+    if (cx == null || cy == null || value == null) return <g />;
+    return (
+        <g>
+            <circle cx={cx} cy={cy} r={10} fill={color} stroke="var(--background)" strokeWidth={1.5} />
+            <text
+                x={cx}
+                y={cy}
+                textAnchor="middle"
+                dy={3.5}
+                fontSize={9.5}
+                fontWeight={800}
+                fill={bumpTextFill(color)}
+            >
+                {value}
+            </text>
+        </g>
+    );
+}
+
+export function BumpChart({ spec }: { spec: BumpSpec }) {
+    if (spec.series.length === 0 || spec.data.length === 0) {
+        return <EmptyChart title={spec.title} />;
+    }
+    let maxPos = 1;
+    for (const row of spec.data) {
+        for (const s of spec.series) {
+            const raw = row[s];
+            const v = typeof raw === "number" ? raw : parseFloat(String(raw));
+            if (Number.isFinite(v)) maxPos = Math.max(maxPos, v);
+        }
+    }
+    return (
+        <div className="space-y-2">
+            <ChartHeader
+                title={spec.title}
+                subtitle={spec.subtitle}
+                insight={spec.insight}
+                question={spec.question}
+            />
+            <ResponsiveContainer width="100%" height={Math.max(340, spec.series.length * 30 + 160)}>
+                <LineChart data={spec.data} margin={{ top: 10, right: 40, left: 10, bottom: 25 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} />
+                    <XAxis
+                        dataKey={spec.xField}
+                        stroke={CHART_TOKENS.axis}
+                        tick={{ fontSize: 11 }}
+                        label={{ value: spec.xAxisLabel, position: "insideBottom", offset: -15, fontSize: 11, fill: CHART_TOKENS.axis }}
+                    />
+                    <YAxis
+                        domain={[1, maxPos]}
+                        reversed
+                        allowDecimals={false}
+                        stroke={CHART_TOKENS.axis}
+                        tick={{ fontSize: 11 }}
+                        tickFormatter={(v: number) => `P${v}`}
+                        label={{ value: spec.yAxisLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_TOKENS.axis }}
+                    />
+                    <Tooltip content={<SmartTooltip unit={spec.unit || "pos"} />} />
+                    <Legend verticalAlign="top" wrapperStyle={{ paddingBottom: 10, fontSize: 11 }} />
+                    {spec.series.map((s, i) => {
+                        const c = colorForSeries(s, i);
+                        return (
+                            <Line
+                                key={s}
+                                type="monotone"
+                                dataKey={s}
+                                name={s}
+                                stroke={c}
+                                strokeWidth={2.5}
+                                connectNulls
+                                dot={(p) => <BumpDot {...p} color={c} />}
+                                activeDot={{ r: 4, strokeWidth: 0 }}
+                                isAnimationActive={false}
+                            />
+                        );
+                    })}
+                </LineChart>
             </ResponsiveContainer>
         </div>
     );
@@ -702,7 +1026,7 @@ export function Histogram({ spec }: { spec: HistogramSpec }) {
                         label={{ value: spec.yAxisLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CHART_TOKENS.axis }}
                     />
                     <Tooltip content={<SmartTooltip unit="" />} />
-                    <Bar dataKey="count" fill={CHART_TOKENS.highlight} radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="count" fill={CHART_TOKENS.highlight} radius={[4, 4, 0, 0]} isAnimationActive={false} />
                 </BarChart>
             </ResponsiveContainer>
         </div>

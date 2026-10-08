@@ -386,6 +386,22 @@ const CHART_TYPE_DESCRIPTORS: ChartTypeDescriptor[] = [
         aggregation: "none",
         multiSeries: true,
     },
+    {
+        // Appended last so first-match selection (buildChartSpec) and
+        // multi-series preference (selectChartType) keep returning the
+        // pre-existing types — the LLM planner can still choose these
+        // via the CHART_TYPES catalog.
+        type: "swarm",
+        intents: ["lap_time_distribution"],
+        aggregation: "none",
+        multiSeries: true,
+    },
+    {
+        type: "bump",
+        intents: ["championship_progression"],
+        aggregation: "none",
+        multiSeries: true,
+    },
 ];
 
 export function selectChartType(
@@ -618,10 +634,12 @@ export function validateChartSpec(spec: ChartSpec): { ok: boolean; reasons: stri
     if (!spec.xField) reasons.push("Missing x field");
     if (!spec.yField) reasons.push("Missing y field");
 
-    // Reject duplicate keys (caused by upstream double-counting)
+    // Reject duplicate keys (caused by upstream double-counting).
+    // Series-style data (swarm dots, bump rows) carries no `key` at
+    // all — only run the check when keys are actually present.
     if (Array.isArray(data)) {
-        const keys = data.map((d) => d.key);
-        if (new Set(keys).size !== keys.length) {
+        const keys = data.map((d) => d.key).filter((k) => k !== undefined);
+        if (keys.length > 0 && new Set(keys).size !== keys.length) {
             reasons.push("Duplicate categories in data");
         }
     }

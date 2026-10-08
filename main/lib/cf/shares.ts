@@ -160,6 +160,21 @@ export function toSharedMessage(row: {
     };
 }
 
+/**
+ * Count Q&A exchanges for the snapshot footer. One user question plus
+ * its assistant reply counts as one — a trailing unanswered question
+ * counts as one as well. Raw bubble counts ("2 messages" for a single
+ * exchange) mislead readers.
+ */
+export function countSharedExchanges(messages: { role: string }[]): number {
+    let n = 0;
+    for (const m of messages) {
+        if (m.role === "assistant") n++;
+    }
+    if (messages.length > 0 && messages[messages.length - 1].role !== "assistant") n++;
+    return n;
+}
+
 /** Resolve a token to its public snapshot (no auth — possession is access). */
 export async function resolveSharedSnapshot(token: string): Promise<SharedSnapshot> {
     if (!isShareToken(token)) {
@@ -181,6 +196,10 @@ export async function resolveSharedSnapshot(token: string): Promise<SharedSnapsh
         await d1Exec(`DELETE FROM shares WHERE token = ?`, [token]).catch(() => undefined);
         throw Object.assign(new Error("This chat no longer exists"), { status: 404 });
     }
+    // Insertion order is the conversation order: each user turn is
+    // saved at send time, its assistant reply only at completion.
+    // (timestamp ASC misorders when rows are re-saved or clocks skew —
+    // observed live: assistant reply sorting above its question.)
     const rows = await d1Query<{
         id: string;
         role: string;
@@ -188,13 +207,14 @@ export async function resolveSharedSnapshot(token: string): Promise<SharedSnapsh
         timestamp: number;
         data_json: string;
     }>(
-        `SELECT id, role, content, timestamp, data_json FROM messages WHERE session_id = ? ORDER BY timestamp ASC LIMIT ${SHARED_MESSAGE_LIMIT}`,
+        `SELECT id, role, content, timestamp, data_json FROM messages WHERE session_id = ? ORDER BY rowid ASC LIMIT ${SHARED_MESSAGE_LIMIT}`,
         [sessionId]
     );
+    const messages = rows.map(toSharedMessage);
     return {
         title: session.title || "Shared chat",
         createdAt: session.created_at,
-        messageCount: rows.length,
-        messages: rows.map(toSharedMessage),
+        messageCount: countSharedExchanges(messages),
+        messages,
     };
 }

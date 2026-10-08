@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { isShareToken, toSharedMessage, MAX_LINKS_PER_SESSION } from "@/lib/cf/shares";
+import { isShareToken, toSharedMessage, countSharedExchanges, MAX_LINKS_PER_SESSION } from "@/lib/cf/shares";
 
 describe("isShareToken", () => {
     it("accepts well-formed tokens", () => {
@@ -98,5 +98,22 @@ describe("share limits", () => {
     it("bounds links per session", () => {
         expect(MAX_LINKS_PER_SESSION).toBeGreaterThan(0);
         expect(MAX_LINKS_PER_SESSION).toBeLessThanOrEqual(20);
+    });
+});
+
+describe("countSharedExchanges", () => {
+    it("counts one Q&A pair as one, not two", () => {
+        expect(countSharedExchanges([{ role: "user" }, { role: "assistant" }])).toBe(1);
+    });
+
+    it("counts a trailing unanswered question", () => {
+        expect(
+            countSharedExchanges([{ role: "user" }, { role: "assistant" }, { role: "user" }])
+        ).toBe(2);
+        expect(countSharedExchanges([{ role: "user" }])).toBe(1);
+    });
+
+    it("counts zero for empty snapshots", () => {
+        expect(countSharedExchanges([])).toBe(0);
     });
 });

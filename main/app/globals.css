@@ -308,6 +308,27 @@
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
+/* Transparent wheel variant for dark surfaces (collapsed-rail expand).
+   No dark fill; the icon draws in white lines for contrast. Plain CSS
+   (unlayered) so it wins over the .btn-wheel gradient fill. */
+.btn-wheel-ghost {
+  background: transparent;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  color: inherit;
+  box-shadow: none;
+  transition: background-color 100ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 150ms ease;
+}
+.btn-wheel-ghost:hover {
+  background-color: rgba(128, 128, 128, 0.12);
+}
+.dark .btn-wheel-ghost {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+.dark .btn-wheel-ghost:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
 /* Rectangular physical buttons (settings cards, segmented controls).
    Same hardware physics as .btn-wheel (bevel + drop shadow, depressed
    latch when [data-active="true"] or :active) but with a rounded-xl

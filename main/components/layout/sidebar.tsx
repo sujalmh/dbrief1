@@ -34,7 +34,7 @@ export function Sidebar() {
     // The store defaults the sidebar to open (desktop-first). On a
     // phone that would cover the whole chat on first paint, so park
     // it closed on mobile mounts and whenever the viewport shrinks
-    // below md. The header hamburger re-opens it as a drawer.
+    // below md.
     // (Mount check reads window directly so desktop SSR hydration
     // doesn't collapse the rail.)
     React.useEffect(() => {
@@ -192,7 +192,7 @@ export function Sidebar() {
                 {isSidebarOpen ? (
                     <>
                         <div className="flex min-w-0 flex-1 items-center gap-2">
-                            <LogoBadge />
+                            <LogoBadge onBackground className="shrink-0" />
                             <span className="font-orbitron font-bold text-sm tracking-wider text-f1-red whitespace-nowrap">
                                 DBRIEF1
                             </span>
@@ -209,14 +209,30 @@ export function Sidebar() {
                 ) : (
                     <button
                         onClick={() => setSidebarOpen(true)}
-                        className="group relative flex h-9 w-9 shrink-0 items-center justify-center"
+                        className="group relative h-9 w-9 shrink-0"
                         title="Expand sidebar"
                         aria-label="Expand sidebar"
                     >
-                        <span className="transition-opacity duration-150 group-hover:opacity-0">
-                            <LogoBadge />
+                        {/* Logo: transparent ground, white lines on dark.
+                            Fixed h-5 so the wide mark fits the 36px rail
+                            without flex-shrinking (no squish). */}
+                        <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover:opacity-0">
+                            {/* eslint-disable-next-line @next/next/no-img-element -- local static logo */}
+                            <img
+                                src="/logo.svg"
+                                alt="Dbrief1"
+                                className="h-5 w-auto shrink-0 dark:hidden"
+                            />
+                            {/* eslint-disable-next-line @next/next/no-img-element -- local static logo */}
+                            <img
+                                src="/logo-on-dark.svg"
+                                alt="Dbrief1"
+                                className="hidden h-5 w-auto shrink-0 dark:block"
+                            />
                         </span>
-                        <span className="btn-wheel absolute inset-0 h-9 w-9 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                        {/* Expand: proper circle, transparent on dark with
+                            a white icon for contrast. */}
+                        <span className="btn-wheel-ghost absolute inset-0 flex h-9 w-9 items-center justify-center rounded-full opacity-0 transition-opacity duration-150 group-hover:opacity-100">
                             <PanelLeftOpen className="h-4 w-4" />
                         </span>
                     </button>

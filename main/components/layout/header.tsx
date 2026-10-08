@@ -1,6 +1,6 @@
 "use client"
 
-import { Settings, Share2, Info, PanelLeft } from "lucide-react"
+import { Settings, Share2, Info } from "lucide-react"
 import dynamic from "next/dynamic"
 import { Button } from "@/components/ui/button"
 import { useChatStore } from "@/lib/store"
@@ -35,8 +35,6 @@ export function Header() {
     )
     const sessions = useChatStore((s) => s.sessions)
     const currentSessionId = useChatStore((s) => s.currentSessionId)
-    const setSidebarOpen = useChatStore((s) => s.setSidebarOpen)
-    const isSidebarOpen = useChatStore((s) => s.isSidebarOpen)
     const [isInfoOpen, setInfoOpen] = useState(false)
     const [isShareOpen, setShareOpen] = useState(false)
 
@@ -89,24 +87,9 @@ export function Header() {
 
     return (
         <AppHeaderShell>
-            {/* Left: mobile drawer opener + session context. Desktop
-                collapse lives inside the sidebar header, and the logo
-                lives in the sidebar, so the app header shows no toggle
-                or logo on md+. */}
+            {/* Left: session context. The sidebar owns its collapse
+                toggle and logo, so the navbar has neither. */}
             <div className="flex items-center gap-2 md:gap-6 min-w-0">
-                {/* Mobile only: opens the session drawer. Hidden on
-                    desktop where the sidebar rail owns its toggle. */}
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setSidebarOpen(!isSidebarOpen)}
-                    className="btn-wheel h-9 w-9 shrink-0 md:hidden"
-                    title={isSidebarOpen ? "Close sessions" : "Open sessions"}
-                >
-                    <PanelLeft className="h-5 w-5" />
-                    <span className="sr-only">Toggle sidebar</span>
-                </Button>
-
                 {/* Dynamic Session Badge — compact + truncated on phones */}
                 <SessionBadge label={context.sessionString} />
             </div>

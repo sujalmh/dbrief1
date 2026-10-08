@@ -12,14 +12,12 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import { validateByokConfig } from "@/lib/providers"
 import { saveByokKeyAction, hasByokKeyAction, clearByokKeyAction } from "@/app/actions/settings"
-import { saveFeedback } from "@/lib/cf/client"
 import { useSession } from "@/lib/cf/session-context"
 import { useState, useEffect } from "react"
 import { useTheme } from "next-themes"
-import { Loader2, Server, KeyRound, Sun, Moon, Monitor, Mail, ShieldCheck } from "lucide-react"
+import { Loader2, Server, KeyRound, Sun, Moon, Monitor, ShieldCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export function SettingsModal() {
@@ -37,38 +35,6 @@ export function SettingsModal() {
     const { theme, setTheme } = useTheme()
     const activeTheme = theme ?? "system"
     const { user } = useSession()
-
-    // Contact form state (saved to the cloud store for the team).
-    const [contactSubject, setContactSubject] = useState("")
-    const [contactMessage, setContactMessage] = useState("")
-    const [contactSending, setContactSending] = useState(false)
-    const [contactSent, setContactSent] = useState(false)
-    const [contactError, setContactError] = useState("")
-
-    async function handleContactSend() {
-        if (contactSending) return
-        const message = contactMessage.trim()
-        if (!message) {
-            setContactError("Write a message first.")
-            return
-        }
-        setContactSending(true)
-        setContactError("")
-        const saved = await saveFeedback({
-            kind: "contact",
-            subject: contactSubject.trim() ? contactSubject.trim() : null,
-            message,
-            sessionId: useChatStore.getState().currentSessionId,
-        })
-        setContactSending(false)
-        if (!saved) {
-            setContactError("Could not send — check your connection and try again.")
-            return
-        }
-        setContactSent(true)
-        setContactSubject("")
-        setContactMessage("")
-    }
 
     // Draft state: the modal edits a local copy and only writes back to
     // the store on CONFIRM. Closing via X / overlay / Escape discards the
@@ -450,53 +416,7 @@ export function SettingsModal() {
                         </div>
                     )}
 
-                    {/* Contact — message the team (stored in the cloud store). */}
-                    <div className="space-y-2 rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 p-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
-                        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">
-                            Contact
-                        </Label>
-                        {contactSent ? (
-                            <p className="text-xs font-bold text-green-500 px-1 py-1">
-                                Message sent — the team will read it.
-                            </p>
-                        ) : (
-                            <>
-                                <div className="flex items-center gap-2 px-1 text-[11px] text-muted-foreground">
-                                    <Mail className="h-3.5 w-3.5 shrink-0" />
-                                    <span>Bug, question, or feature idea — goes straight to the team.</span>
-                                </div>
-                                <Input
-                                    value={contactSubject}
-                                    onChange={(e) => {
-                                        setContactSubject(e.target.value.slice(0, 120))
-                                        if (contactError) setContactError("")
-                                    }}
-                                    placeholder="Subject (optional)"
-                                    className="text-sm bg-background/60 border-white/10"
-                                />
-                                <Textarea
-                                    value={contactMessage}
-                                    onChange={(e) => {
-                                        setContactMessage(e.target.value.slice(0, 2000))
-                                        if (contactError) setContactError("")
-                                    }}
-                                    placeholder="What's on your mind?"
-                                    className="min-h-[80px] text-sm bg-background/60 border-white/10"
-                                />
-                                {contactError && <p className="text-xs text-red-500">{contactError}</p>}
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => void handleContactSend()}
-                                    disabled={contactSending}
-                                    className="btn-wheel h-8 px-4 text-xs"
-                                >
-                                    {contactSending ? "Sending..." : "Send message"}
-                                </Button>
-                            </>
-                        )}
-                    </div>
+                    {/* Contact lives in the profile modal (phone + desktop). */}
 
                 </div>
 

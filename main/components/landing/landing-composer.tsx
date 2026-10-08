@@ -42,7 +42,7 @@ export function LandingComposer() {
                                 <Brain className="h-4 w-4" />
                             </span>
                             <span className="h-8 px-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/40">
-                                Deep off
+                                Off
                             </span>
                         </div>
                         <span

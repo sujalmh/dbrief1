@@ -4,6 +4,7 @@ import { Settings, Share2, Info } from "lucide-react"
 import dynamic from "next/dynamic"
 import { Button } from "@/components/ui/button"
 import { useChatStore } from "@/lib/store"
+import { useSession } from "@/lib/cf/session-context"
 import { InfoModal } from "@/components/layout/info-modal"
 import {
     AppHeaderShell,
@@ -22,6 +23,11 @@ const ShareDialog = dynamic(
     { ssr: false }
 )
 
+const ProfileModal = dynamic(
+    () => import("@/components/profile/profile-modal").then((m) => m.ProfileModal),
+    { ssr: false }
+)
+
 export function Header() {
     // Slice subscriptions: `messages` changes on every streamed token, so
     // this component selects only the derived mode signal (stable across
@@ -37,8 +43,10 @@ export function Header() {
     })
     const sessions = useChatStore((s) => s.sessions)
     const currentSessionId = useChatStore((s) => s.currentSessionId)
+    const { user } = useSession()
     const [isInfoOpen, setInfoOpen] = useState(false)
     const [isShareOpen, setShareOpen] = useState(false)
+    const [isProfileOpen, setProfileOpen] = useState(false)
 
     // Derive context from the latest message carrying visualization data
     const context = useMemo(() => {
@@ -157,9 +165,42 @@ export function Header() {
                         <p>Settings</p>
                     </TooltipContent>
                 </Tooltip>
+
+                {/* Profile — avatar opens settings/contact/logout (phone + desktop) */}
+                {user && (
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-9 w-9 rounded-full border border-white/20 p-0.5 md:h-10 md:w-10"
+                                onClick={() => setProfileOpen(true)}
+                            >
+                                {user.google?.avatarUrl ? (
+                                    // eslint-disable-next-line @next/next/no-img-element -- Google avatar from verified ID-token claim
+                                    <img
+                                        src={user.google.avatarUrl}
+                                        alt="Profile"
+                                        referrerPolicy="no-referrer"
+                                        className="h-full w-full rounded-full object-cover"
+                                    />
+                                ) : (
+                                    <span className="text-[10px] font-bold">
+                                        {(user.displayName || "DRV").slice(0, 3).toUpperCase()}
+                                    </span>
+                                )}
+                                <span className="sr-only">Profile</span>
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                            <p>Profile</p>
+                        </TooltipContent>
+                    </Tooltip>
+                )}
             </div>
 
             <InfoModal open={isInfoOpen} onOpenChange={setInfoOpen} />
+            <ProfileModal open={isProfileOpen} onOpenChange={setProfileOpen} />
             {isShareOpen && currentSessionId && (
                 <ShareDialog
                     open={isShareOpen}

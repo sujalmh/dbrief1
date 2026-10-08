@@ -899,12 +899,14 @@ describe("inline wiring", () => {
         expect(source).not.toMatch(/setActiveMessageId/);
     });
 
-    it("control-panel has no visualization button, shows Deep on/off status", () => {
+    it("control-panel has a combined Deep pill with On/Off status", () => {
         const source = readSource("components/chat/control-panel.tsx");
         expect(source).not.toMatch(/visualizeEnabled/);
         expect(source).not.toMatch(/BarChart3/);
-        expect(source).toMatch(/Deep on/);
-        expect(source).toMatch(/Deep off/);
+        expect(source).toMatch(/\? "On" : "Off"/);
+        expect(source).not.toMatch(/Deep on/);
+        expect(source).not.toMatch(/Deep off/);
+        expect(source).toMatch(/shadow-\[inset/);
         expect(source).toMatch(/deepResearchMode/);
     });
 });

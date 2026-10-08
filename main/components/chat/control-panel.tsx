@@ -55,39 +55,39 @@ export function ControlPanel() {
     return (
         <div className="flex items-center justify-between w-full pt-2">
             <div className="flex items-center gap-1">
-                {/* Deep Research Mode Toggle */}
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            {...deepResearchPress}
-                            className="btn-wheel btn-wheel-purple h-8 w-8"
-                            data-active={settings.deepResearchMode}
-                        >
-                            <Brain className="h-4 w-4" />
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                        <p>{settings.deepResearchMode ? "Deep Research Mode" : "Normal Mode"}</p>
-                    </TooltipContent>
-                </Tooltip>
-
-                {/* Deep status text: dim while off, highlighted when on.
-                    Same toggle as the Brain button (charts always render
-                    inline now — there is no visualization toggle). */}
-                <button
-                    type="button"
-                    {...deepResearchPress}
-                    aria-pressed={deepOn}
-                    aria-label={deepOn ? "Deep research on - turn off" : "Deep research off - turn on"}
-                    className={cn(
-                        "h-8 shrink-0 px-1 text-[11px] font-bold uppercase tracking-wider transition-colors",
-                        deepOn ? "text-purple-300" : "text-muted-foreground/40 hover:text-muted-foreground/70"
-                    )}
-                >
-                    {deepOn ? "Deep on" : "Deep off"}
-                </button>
+                {/* Deep Research Mode — combined section: toggle + status.
+                    The pill is recessed (indent effect); the status reads
+                    On/Off, dim while off and highlighted when on. */}
+                <div className="flex h-8 items-center gap-1 rounded-full border border-white/10 bg-black/30 py-1 pl-1 pr-2.5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.5)]">
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                {...deepResearchPress}
+                                className="btn-wheel btn-wheel-purple h-6 w-6"
+                                data-active={settings.deepResearchMode}
+                            >
+                                <Brain className="h-3.5 w-3.5" />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                            <p>{settings.deepResearchMode ? "Deep Research Mode" : "Normal Mode"}</p>
+                        </TooltipContent>
+                    </Tooltip>
+                    <button
+                        type="button"
+                        {...deepResearchPress}
+                        aria-pressed={deepOn}
+                        aria-label={deepOn ? "Deep research on - turn off" : "Deep research off - turn on"}
+                        className={cn(
+                            "text-[11px] font-bold uppercase tracking-wider transition-colors",
+                            deepOn ? "text-purple-300" : "text-muted-foreground/40 hover:text-muted-foreground/70"
+                        )}
+                    >
+                        {deepOn ? "On" : "Off"}
+                    </button>
+                </div>
             </div>
 
             {/* Right side: inline usage (hover for details) + AI mode badge. */}

@@ -126,14 +126,33 @@ describe("feedback popup store flags", () => {
 // =============================================================================
 
 describe("feedback + contact + admin wiring", () => {
-    it("settings modal has a Contact section saving to the cloud", () => {
-        const source = readSource("components/chat/settings-modal.tsx");
-        expect(source).toMatch(/Contact/);
-        expect(source).toMatch(/contactMessage/);
-        expect(source).toMatch(/saveFeedback\(\{/);
-        expect(source).toMatch(/kind: "contact"/);
-        expect(source).toMatch(/\/admin/);
-        expect(source).toMatch(/user\?\.isAdmin/);
+    it("contact lives in the profile modal (not settings), saving to the cloud", () => {
+        const profile = readSource("components/profile/profile-modal.tsx");
+        expect(profile).toMatch(/Contact/);
+        expect(profile).toMatch(/ContactForm/);
+        expect(profile).toMatch(/Settings/);
+        expect(profile).toMatch(/Logout/);
+        expect(profile).toMatch(/signOut\(\)/);
+        const contact = readSource("components/profile/contact-form.tsx");
+        expect(contact).toMatch(/saveFeedback\(\{/);
+        expect(contact).toMatch(/kind: "contact"/);
+        const settings = readSource("components/chat/settings-modal.tsx");
+        expect(settings).not.toMatch(/contactMessage/);
+        expect(settings).not.toMatch(/ContactForm/);
+    });
+
+    it("settings modal keeps the admin-gated analysis link", () => {
+        const settings = readSource("components/chat/settings-modal.tsx");
+        expect(settings).toMatch(/\/admin/);
+        expect(settings).toMatch(/user\?\.isAdmin/);
+    });
+
+    it("navbar avatar opens the profile modal", () => {
+        const header = readSource("components/layout/header.tsx");
+        expect(header).toMatch(/ProfileModal/);
+        expect(header).toMatch(/profile-modal/);
+        expect(header).toMatch(/setProfileOpen\(true\)/);
+        expect(header).toMatch(/avatarUrl/);
     });
 
     it("feedback dialog collects stars + comment and saves first_response", () => {

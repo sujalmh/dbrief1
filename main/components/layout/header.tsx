@@ -1,6 +1,6 @@
 "use client"
 
-import { Settings, Share2, Info } from "lucide-react"
+import { Settings, Share2, Info, Menu } from "lucide-react"
 import dynamic from "next/dynamic"
 import { Button } from "@/components/ui/button"
 import { useChatStore } from "@/lib/store"
@@ -8,6 +8,7 @@ import { useSession } from "@/lib/cf/session-context"
 import { InfoModal } from "@/components/layout/info-modal"
 import {
     AppHeaderShell,
+    LogoBadge,
     ModePill,
     SessionBadge,
 } from "@/components/layout/header-shell"
@@ -43,6 +44,8 @@ export function Header() {
     })
     const sessions = useChatStore((s) => s.sessions)
     const currentSessionId = useChatStore((s) => s.currentSessionId)
+    const isSidebarOpen = useChatStore((s) => s.isSidebarOpen)
+    const setSidebarOpen = useChatStore((s) => s.setSidebarOpen)
     const { user } = useSession()
     const [isInfoOpen, setInfoOpen] = useState(false)
     const [isShareOpen, setShareOpen] = useState(false)
@@ -97,9 +100,23 @@ export function Header() {
 
     return (
         <AppHeaderShell>
-            {/* Left: session context. The sidebar owns its collapse
-                toggle and logo, so the navbar has neither. */}
+            {/* Left: session context. On phones the sidebar is an
+                off-canvas drawer, so the navbar carries its toggle and
+                logo; on desktop the sidebar owns them. */}
             <div className="flex items-center gap-2 md:gap-6 min-w-0">
+                <div className="flex shrink-0 items-center gap-1.5 md:hidden">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9"
+                        onClick={() => setSidebarOpen(!isSidebarOpen)}
+                        aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
+                    >
+                        <Menu className="h-5 w-5" />
+                        <span className="sr-only">Toggle sidebar</span>
+                    </Button>
+                    <LogoBadge />
+                </div>
                 {/* Dynamic Session Badge — compact + truncated on phones */}
                 <SessionBadge label={context.sessionString} />
             </div>
@@ -107,8 +124,10 @@ export function Header() {
             {/* Center: Mode / View Selector (Dynamic) */}
             <ModePill active={context.mode} />
 
-            {/* Right: Controls Cluster */}
-            <div className="flex items-center gap-2 md:gap-3 shrink-0">
+            {/* Right: Controls Cluster. Icon buttons are desktop-only —
+                on phones everything lives in the profile modal, keeping
+                the navbar to badge + avatar. */}
+            <div className="hidden items-center gap-2 md:gap-3 shrink-0 md:flex">
 
                 {/* Share Session — read-only public link + download */}
                 <Tooltip>
@@ -165,9 +184,12 @@ export function Header() {
                         <p>Settings</p>
                     </TooltipContent>
                 </Tooltip>
+            </div>
 
-                {/* Profile — avatar opens settings/contact/logout (phone + desktop) */}
-                {user && (
+            {/* Profile — always visible (phones included): avatar opens
+                settings/share/about/contact/logout. */}
+            {user && (
+                <div className="flex shrink-0 items-center">
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <Button
@@ -196,8 +218,8 @@ export function Header() {
                             <p>Profile</p>
                         </TooltipContent>
                     </Tooltip>
-                )}
-            </div>
+                </div>
+            )}
 
             <InfoModal open={isInfoOpen} onOpenChange={setInfoOpen} />
             <ProfileModal open={isProfileOpen} onOpenChange={setProfileOpen} />

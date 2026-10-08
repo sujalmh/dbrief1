@@ -1,7 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import { Settings, Mail, LogOut, ChevronDown } from "lucide-react"
+import dynamic from "next/dynamic"
+import { Settings, Mail, LogOut, ChevronDown, Info, Share2 } from "lucide-react"
 import { useChatStore } from "@/lib/store"
 import { useSession } from "@/lib/cf/session-context"
 import { Button } from "@/components/ui/button"
@@ -11,8 +12,14 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
+import { InfoModal } from "@/components/layout/info-modal"
 import { cn } from "@/lib/utils"
 import { ContactForm } from "./contact-form"
+
+const ShareDialog = dynamic(
+    () => import("@/components/chat/share-dialog").then((m) => m.ShareDialog),
+    { ssr: false }
+)
 
 /**
  * Profile modal (phone + desktop).
@@ -31,7 +38,11 @@ export function ProfileModal({
 }) {
     const { user, signOut } = useSession()
     const setSettingsOpen = useChatStore((s) => s.setSettingsOpen)
+    const sessions = useChatStore((s) => s.sessions)
+    const currentSessionId = useChatStore((s) => s.currentSessionId)
     const [showContact, setShowContact] = useState(false)
+    const [isInfoOpen, setInfoOpen] = useState(false)
+    const [isShareOpen, setShareOpen] = useState(false)
 
     if (!user) return null
 
@@ -90,6 +101,27 @@ export function ProfileModal({
                             Settings
                         </Button>
 
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => setShareOpen(true)}
+                            disabled={!currentSessionId}
+                            className="btn-wheel h-10 justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide"
+                        >
+                            <Share2 className="h-4 w-4" />
+                            Share session
+                        </Button>
+
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => setInfoOpen(true)}
+                            className="btn-wheel h-10 justify-start gap-3 px-3 text-xs font-bold uppercase tracking-wide"
+                        >
+                            <Info className="h-4 w-4" />
+                            About
+                        </Button>
+
                         <div className="rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 backdrop-blur-md">
                             <Button
                                 type="button"
@@ -126,6 +158,18 @@ export function ProfileModal({
                     </div>
                 </div>
             </DialogContent>
+
+            <InfoModal open={isInfoOpen} onOpenChange={setInfoOpen} />
+            {isShareOpen && currentSessionId && (
+                <ShareDialog
+                    open={isShareOpen}
+                    onOpenChange={setShareOpen}
+                    sessionId={currentSessionId}
+                    sessionTitle={
+                        sessions.find((s) => s.id === currentSessionId)?.title
+                    }
+                />
+            )}
         </Dialog>
     )
 }

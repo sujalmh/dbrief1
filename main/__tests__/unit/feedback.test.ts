@@ -147,12 +147,30 @@ describe("feedback + contact + admin wiring", () => {
         expect(settings).toMatch(/user\?\.isAdmin/);
     });
 
-    it("navbar avatar opens the profile modal", () => {
+    it("navbar avatar opens the profile modal (all sizes)", () => {
         const header = readSource("components/layout/header.tsx");
         expect(header).toMatch(/ProfileModal/);
         expect(header).toMatch(/profile-modal/);
         expect(header).toMatch(/setProfileOpen\(true\)/);
         expect(header).toMatch(/avatarUrl/);
+    });
+
+    it("phone navbar: logo + sidebar toggle, icon buttons desktop-only", () => {
+        const header = readSource("components/layout/header.tsx");
+        expect(header).toMatch(/LogoBadge/);
+        expect(header).toMatch(/setSidebarOpen\(!isSidebarOpen\)/);
+        expect(header).toMatch(/md:hidden/);
+        expect(header).toMatch(/hidden items-center.*md:flex/);
+    });
+
+    it("profile modal holds settings, share, about, contact, logout", () => {
+        const profile = readSource("components/profile/profile-modal.tsx");
+        expect(profile).toMatch(/Settings/);
+        expect(profile).toMatch(/Share session/);
+        expect(profile).toMatch(/About/);
+        expect(profile).toMatch(/InfoModal/);
+        expect(profile).toMatch(/ShareDialog/);
+        expect(profile).toMatch(/Logout/);
     });
 
     it("feedback dialog collects stars + comment and saves first_response", () => {

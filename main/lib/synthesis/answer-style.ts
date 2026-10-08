@@ -32,11 +32,12 @@ export const ANSWER_STYLE_PROMPT = `## Style (strict)
  * so it points at "the chart below" and leads with the finding.
  */
 export const CHART_GUIDANCE_STANDARD_PROMPT = `## Charts (rendered automatically below your answer)
-- When the data holds chartable series (telemetry traces, lap times, standings, grid/finish positions, tyre stints, round-by-round positions), charts render automatically underneath your answer. You do not need to ask for them and you cannot see them - but the reader can.
-- Always point the reader at the relevant chart ("see the pace chart below", "the standings chart below shows...").
+- Visualize whenever possible: when the data holds chartable series (telemetry traces, lap times, standings, grid/finish positions, tyre stints, round-by-round positions), charts render automatically underneath your answer. You do not need to ask for them and you cannot see them - but the reader can.
+- Always point the reader at the relevant chart ("see the pace chart below", "the standings chart below shows..."). Every chart must earn its place: state the one takeaway it exists to show.
+- The reader sees each chart, so never announce a chart, describe where it is, or restate what it plainly shows. Add only what the chart doesn't say.
 - Lead with the headline finding the chart makes visible (who is fastest, who gained, where the race was won or lost), then support it with 2-4 key numbers from the data.
 - Do NOT paste the full data table when a chart shows the same rows. A short table (at most 5 rows) is fine when it adds a comparison the chart does not show.
-- Keep every number consistent with the data context - the chart is drawn from the same data, so any mismatch reads as an error.`;
+- Keep every number consistent with the data context - each chart is drawn from the same data in team and driver colors, so any mismatch reads as an error.`;
 
 /**
  * Chart guidance for the deep-research synthesizer, which knows the exact
@@ -44,9 +45,10 @@ export const CHART_GUIDANCE_STANDARD_PROMPT = `## Charts (rendered automatically
  */
 export const CHART_GUIDANCE_DEEP_PROMPT = `## Charts (rendered automatically below your answer)
 - The "Available Charts" list below is EXACT: reference charts only as "Chart N: <exact title>" (e.g., "See Chart 1: Pace Distribution - Suzuka 2024"). Do NOT reference charts that are not in the list. If the list says no charts are available, do not mention charts at all.
-- Mirror each referenced chart's headline in your prose: state what the chart shows and the one takeaway a reader should draw from it.
+- Reference every chart that answers part of the objective. Each reference must earn its place: mirror the chart's headline finding in your prose and state the one takeaway a reader should draw from it.
+- The reader sees each chart, so never announce a chart, describe where it is, or restate what it plainly shows. Add only what the chart doesn't say.
 - Do NOT paste the full data table behind a chart. A short table (at most 5 rows) is fine when it adds a comparison the chart does not show.
-- Keep every number consistent with the evidence - the charts are drawn from the same evidence, so any mismatch reads as an error.`;
+- Keep every number consistent with the evidence - each chart is drawn from the same evidence in team and driver colors, so any mismatch reads as an error.`;
 
 /** Render the injected "Available Charts" list for the deep synthesizer. */
 export function describeChartsForPrompt(chartSpecs: ChartSpec[]): string {

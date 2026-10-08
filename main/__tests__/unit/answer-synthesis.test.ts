@@ -113,15 +113,22 @@ describe("shared style blocks", () => {
         expect(ANSWER_STYLE_PROMPT).toMatch(/NEVER use em dashes/);
     });
 
-    it("standard guidance points at auto-rendered charts without dumping tables", () => {
+    it("standard guidance visualizes by default with a relevance bar", () => {
         expect(CHART_GUIDANCE_STANDARD_PROMPT).toMatch(/render automatically/);
+        expect(CHART_GUIDANCE_STANDARD_PROMPT).toMatch(/Visualize whenever possible/);
+        expect(CHART_GUIDANCE_STANDARD_PROMPT).toMatch(/earn its place/);
+        expect(CHART_GUIDANCE_STANDARD_PROMPT).toMatch(/Add only what the chart doesn't say/);
         expect(CHART_GUIDANCE_STANDARD_PROMPT).toMatch(/Do NOT paste the full data table/);
         expect(CHART_GUIDANCE_STANDARD_PROMPT).toMatch(/headline finding/);
+        expect(CHART_GUIDANCE_STANDARD_PROMPT).toMatch(/team and driver colors/);
     });
 
-    it("deep guidance demands exact chart references", () => {
+    it("deep guidance demands exact, earned chart references", () => {
         expect(CHART_GUIDANCE_DEEP_PROMPT).toMatch(/"Chart N: <exact title>"/);
-        expect(CHART_GUIDANCE_DEEP_PROMPT).toMatch(/Do NOT paste the full data table/);
+        expect(CHART_GUIDANCE_DEEP_PROMPT).toMatch(/Reference every chart/);
+        expect(CHART_GUIDANCE_DEEP_PROMPT).toMatch(/earn its place/);
+        expect(CHART_GUIDANCE_DEEP_PROMPT).toMatch(/Add only what the chart doesn't say/);
+        expect(CHART_GUIDANCE_DEEP_PROMPT).toMatch(/team and driver colors/);
     });
 });
 

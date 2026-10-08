@@ -1,17 +1,20 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
+import { ArrowDown } from "lucide-react"
 import { useChatStore } from "@/lib/store"
 import { MessageBubble } from "@/components/chat/message-bubble"
+import { computeIsAtEnd, shouldAutoFollow, resolveJumpBehavior } from "@/lib/chat/scroll-follow"
 
 /**
- * Render the chat message list and scroll to the newest message only
- * when the final generation finishes.
+ * Render the chat message list with live-edge follow.
+ * ====================================================
+ * Follows the live edge only while the reader is already at the bottom
+ * (40px band): streaming tokens never yank a reader who scrolled up.
+ * A pill button appears off-bottom to jump back with smooth motion.
  *
  * When there are no messages, renders a centered placeholder prompting to connect telemetry.
- * When messages exist, renders each message as a MessageBubble. Streaming
- * tokens never auto-scroll; the view jumps to the bottom once when
- * loading flips true -> false.
+ * When messages exist, renders each message as a MessageBubble.
  *
  * In-chat charts (t3code-style): each assistant bubble owns its charts.
  * The list derives the preceding user query per assistant message so
@@ -26,16 +29,90 @@ export function MessageList() {
     const messages = useChatStore((s) => s.messages)
     const isLoading = useChatStore((s) => s.isLoading)
     const bottomRef = useRef<HTMLDivElement>(null)
-    const prevLoadingRef = useRef(isLoading)
+    const scrollerRef = useRef<HTMLElement | null>(null)
+    const isAtEndRef = useRef(true)
+    const [showPill, setShowPill] = useState(false)
 
-    // Only auto-scroll when the final generation finishes (loading
-    // true -> false). Streaming tokens must not yank the viewport.
-    useEffect(() => {
-        if (prevLoadingRef.current && !isLoading) {
-            bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+    function readScroller(): HTMLElement | null {
+        if (scrollerRef.current) return scrollerRef.current;
+        const el = bottomRef.current?.closest("[data-chat-scroll]") as HTMLElement | null;
+        scrollerRef.current = el;
+        return el;
+    }
+
+    function measureAtEnd(): boolean {
+        const el = readScroller();
+        if (!el) return true;
+        return computeIsAtEnd({
+            scrollTop: el.scrollTop,
+            scrollHeight: el.scrollHeight,
+            clientHeight: el.clientHeight,
+        });
+    }
+
+    function scrollToBottom(behavior: ScrollBehavior) {
+        const el = readScroller();
+        if (el) {
+            el.scrollTo({ top: el.scrollHeight, behavior });
+        } else {
+            bottomRef.current?.scrollIntoView({ behavior, block: "end" });
         }
-        prevLoadingRef.current = isLoading
-    }, [isLoading])
+        isAtEndRef.current = true;
+    }
+
+    // Track the reader's position (rAF-throttled, passive). Scrolling up
+    // breaks follow implicitly — the stream below never forces it back.
+    // All pill writes happen in the async update, never synchronously in
+    // the effect body.
+    useEffect(() => {
+        const el = readScroller();
+        if (!el) return;
+        let frame = 0;
+        const update = () => {
+            frame = 0;
+            const atEnd = measureAtEnd();
+            isAtEndRef.current = atEnd;
+            setShowPill((prev) => {
+                const next = !atEnd && messages.length > 0;
+                return prev === next ? prev : next;
+            });
+        };
+        const onScroll = () => {
+            if (frame) return;
+            frame = requestAnimationFrame(update);
+        };
+        // Sync once after mount / session switch via rAF (measure only,
+        // never jump — restored sessions open where they are).
+        frame = requestAnimationFrame(update);
+        el.addEventListener("scroll", onScroll, { passive: true });
+        return () => {
+            el.removeEventListener("scroll", onScroll);
+            if (frame) cancelAnimationFrame(frame);
+        };
+        // messages.length in deps re-syncs the pill after session loads.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [messages.length])
+
+    // Follow the live edge while streaming (instant, so tokens track
+    // tightly) and settle to the bottom when a turn completes — but only
+    // when the reader is already at the end. Session loads never jump:
+    // they replace the list while isLoading is false and the reader is
+    // wherever the last measure says. No state writes here by design.
+    useEffect(() => {
+        if (shouldAutoFollow(isLoading, isAtEndRef.current)) {
+            scrollToBottom("auto");
+        } else if (!isLoading && isAtEndRef.current && messages.length > 0) {
+            scrollToBottom("auto");
+        }
+        // Intentionally token-driven: every streamed update re-checks.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [messages, isLoading])
+
+    function jumpToEnd() {
+        const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        setShowPill(false);
+        scrollToBottom(resolveJumpBehavior(isLoading, reduced));
+    }
 
     if (messages.length === 0) {
         return (
@@ -82,9 +159,22 @@ export function MessageList() {
                         />
                     )
                 })}
-                {/* Loading indicator removed in favor of MessageBubble internal state */}
                 <div ref={bottomRef} />
             </div>
+            {/* Live-edge pill — sticky within the scroll container so it
+                floats above the newest message without extra layout. */}
+            {showPill && (
+                <div className="sticky bottom-24 z-10 -mt-10 flex justify-center pb-2 pointer-events-none">
+                    <button
+                        type="button"
+                        onClick={jumpToEnd}
+                        aria-label="Jump to latest message"
+                        className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full border border-border/60 bg-background/90 shadow-lg backdrop-blur transition-colors hover:text-foreground text-muted-foreground"
+                    >
+                        <ArrowDown className="h-4 w-4" />
+                    </button>
+                </div>
+            )}
         </div>
     )
 }

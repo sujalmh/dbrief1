@@ -136,7 +136,10 @@ export function ChatShell({ routeSessionId }: { routeSessionId: string | null })
                 <main className="relative flex h-full w-full overflow-hidden bg-carbon">
                     {/* Full width message area — charts render inline in
                         each assistant bubble (no side panel reserve). */}
-                    <div className="flex-1 overflow-y-auto w-full relative z-10 overscroll-contain">
+                    <div
+                        data-chat-scroll
+                        className="flex-1 overflow-y-auto w-full relative z-10 overscroll-contain"
+                    >
                         {routeError ? (
                             <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
                                 <p className="text-sm font-bold uppercase tracking-wider text-muted-foreground">

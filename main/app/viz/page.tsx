@@ -555,6 +555,21 @@ const DEMOS: Demo[] = [
         ],
     },
     {
+        label: "markdown rendering — alert, table",
+        userQuery: "Show me the markdown renderers",
+        content: [
+            "> [!NOTE]",
+            "> Tables carry copy buttons for Markdown and CSV.",
+            "",
+            "| Driver | Gap |",
+            "| --- | --- |",
+            "| VER | — |",
+            "| NOR | +0.4s |",
+            "",
+            "Read more on [formula1.com](https://www.formula1.com).",
+        ].join("\n"),
+    },
+    {
         label: "multi-chart message — standings + grid vs finish stacked",
         userQuery: "Monza 2024 recap with standings context",
         content: "Two charts stack in one message, newest context first.",

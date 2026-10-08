@@ -1,7 +1,8 @@
 "use client"
 
-import ReactMarkdown from "react-markdown"
+import ReactMarkdown, { type Options as ReactMarkdownOptions } from "react-markdown"
 import remarkGfm from "remark-gfm"
+import remarkBreaks from "remark-breaks"
 import dynamic from "next/dynamic"
 import { AlertTriangle, Copy, Check, RotateCcw, Trash2, FileText, ShieldCheck, AlertOctagon, ThumbsUp, ThumbsDown } from "lucide-react"
 import { Message, useChatStore } from "@/lib/store"
@@ -22,8 +23,12 @@ import { useRef, memo, useCallback, useState, useMemo } from "react"
 import { useChatHandler } from "@/lib/hooks/use-chat-handler"
 import { getDriverColor, getDriverPattern, seasonFromPayload } from "@/lib/f1-colors"
 import type { Components } from "react-markdown"
+import type { PluggableList } from "unified"
 
-import rehypeSanitize from "rehype-sanitize"
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize"
+import { createIncrementalMarkdownPlugin } from "@/lib/markdown/incremental"
+import { remarkGithubAlerts, type GithubAlertKind } from "@/lib/markdown/alerts"
+import { serializeTableElementToMarkdown, serializeTableElementToCsv } from "@/lib/markdown/tables"
 
 // Recharts (via InlineCharts → ChartDispatcher) is the heaviest dependency
 // in the app — load it only when a chart actually needs to render, not with
@@ -95,27 +100,218 @@ const HighlightedText = memo(function HighlightedText({ children, season }: { ch
 // Memoized markdown components - defined outside component to avoid recreation
 const createMarkdownComponents = (season?: number): Components => ({
     // Long URLs never push the 360px layout wider — break anywhere.
-    a: ({ ...props }) => <a className="break-all underline underline-offset-2" {...props} />,
-    img: ({ ...props }) => <img className="h-auto max-w-full rounded-lg" {...props} />,
-    table: ({ ...props }) => <div className="my-4 w-full max-w-full overflow-x-auto"><table className="w-full min-w-[420px] sm:min-w-[520px] text-sm border-collapse" {...props} /></div>,
-    thead: ({ ...props }) => <thead className="bg-muted/50 text-left font-medium" {...props} />,
-    th: ({ ...props }) => <th className="px-4 py-3 font-bold border-b border-border/70 text-left whitespace-nowrap" {...props} />,
-    // Long code/JSON dumps scroll internally instead of pushing the
-    // bubble (and the whole 390px layout) wider than the viewport.
-    pre: ({ ...props }) => <pre className="max-w-full overflow-x-auto rounded-lg bg-muted/50 p-3 text-xs leading-relaxed" {...props} />,
-    hr: ({ ...props }) => <hr className="my-8 border-muted" {...props} />,
-    h1: ({ ...props }) => <h1 className="mt-6 mb-4 text-2xl font-black uppercase italic tracking-widest text-foreground border-b border-[var(--f1-red)] pb-2" {...props} />,
-    h2: ({ ...props }) => <h2 className="mt-5 mb-3 text-lg font-bold uppercase italic tracking-wider text-foreground" {...props} />,
-    h3: ({ ...props }) => <h3 className="mt-4 mb-2 text-base font-bold uppercase italic tracking-wide text-muted-foreground" {...props} />,
+    // External links get a favicon + open in a new tab.
+    a: ({ node: _node, href, children }) => {
+        void _node;
+        let host: string | null = null;
+        if (typeof href === "string" && /^https?:\/\//i.test(href)) {
+            try {
+                host = new URL(href).hostname;
+            } catch {
+                host = null;
+            }
+        }
+        return (
+            <a
+                className="break-all underline underline-offset-2"
+                href={href}
+                target={host ? "_blank" : undefined}
+                rel={host ? "noopener noreferrer" : undefined}
+            >
+                {host && (
+                    <img
+                        src={`https://www.google.com/s2/favicons?domain=${host}&sz=32`}
+                        alt=""
+                        aria-hidden
+                        loading="lazy"
+                        // Inline margins: the prose stylesheet gives images
+                        // 2em vertical margins (unlayered, beats utilities),
+                        // which would push the icon off its line.
+                        style={{ marginTop: 0, marginBottom: 0 }}
+                        className="mr-1 inline h-3 w-3 rounded-sm align-baseline"
+                        onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = "none";
+                        }}
+                    />
+                )}
+                {children}
+            </a>
+        );
+    },
+    img: ({ node: _node, ...props }) => {
+        void _node;
+        return <img className="h-auto max-w-full rounded-lg" {...props} />;
+    },
+    table: ({ node: _node, children }) => {
+        void _node;
+        return <TableBlock>{children}</TableBlock>;
+    },
+    thead: ({ node: _node, ...props }) => {
+        void _node;
+        return <thead className="bg-muted/50 text-left font-medium" {...props} />;
+    },
+    th: ({ node: _node, ...props }) => {
+        void _node;
+        return <th className="px-4 py-3 font-bold border-b border-border/70 text-left whitespace-nowrap" {...props} />;
+    },
+    pre: ({ node: _node, ...props }) => {
+        void _node;
+        // Long code/JSON dumps scroll internally instead of pushing the
+        // bubble (and the whole 390px layout) wider than the viewport.
+        return <pre className="max-w-full overflow-x-auto rounded-lg bg-muted/50 p-3 text-xs leading-relaxed" {...props} />;
+    },
+    hr: ({ node: _node, ...props }) => {
+        void _node;
+        return <hr className="my-8 border-muted" {...props} />;
+    },
+    h1: ({ node: _node, ...props }) => {
+        void _node;
+        return <h1 aria-level={2} className="mt-6 mb-4 text-2xl font-black uppercase italic tracking-widest text-foreground border-b border-[var(--f1-red)] pb-2" {...props} />;
+    },
+    h2: ({ node: _node, ...props }) => {
+        void _node;
+        return <h2 aria-level={3} className="mt-5 mb-3 text-lg font-bold uppercase italic tracking-wider text-foreground" {...props} />;
+    },
+    h3: ({ node: _node, ...props }) => {
+        void _node;
+        return <h3 aria-level={4} className="mt-4 mb-2 text-base font-bold uppercase italic tracking-wide text-muted-foreground" {...props} />;
+    },
+    // GitHub alert callouts (`> [!NOTE]` …) render as colored notes.
+    blockquote: ({ node, children }) => {
+        const alert = (node?.properties as Record<string, unknown> | undefined)?.dataAlert;
+        if (typeof alert !== "string" || !(alert in GITHUB_ALERT_STYLES)) {
+            return <blockquote>{children}</blockquote>;
+        }
+        const style = GITHUB_ALERT_STYLES[alert as GithubAlertKind]!;
+        return (
+            <div role="note" className={`my-3 border-l-2 pl-3 ${style.className}`}>
+                <p className={`flex items-center gap-1.5 font-medium ${style.titleClassName}`}>
+                    <AlertTriangle aria-hidden className="size-3.5 shrink-0" />
+                    {style.label}
+                </p>
+                {children}
+            </div>
+        );
+    },
+    // Native collapsibles, styled. Zero deps.
+    details: ({ node: _node, children }) => {
+        void _node;
+        return (
+            <details className="my-2 rounded-lg border border-border/60 px-3 py-2 [&>summary]:cursor-pointer [&>summary]:text-sm [&>summary]:font-medium">
+                {children}
+            </details>
+        );
+    },
+    summary: ({ node: _node, children }) => {
+        void _node;
+        return <summary>{children}</summary>;
+    },
     p: ({ children }) => <p className="mb-4 last:mb-0"><HighlightedText season={season}>{children}</HighlightedText></p>,
     li: ({ children, ...props }) => <li {...props}><HighlightedText season={season}>{children}</HighlightedText></li>,
     td: ({ children, ...props }) => <td className="px-4 py-3 border-b border-border/70" {...props}><HighlightedText season={season}>{children}</HighlightedText></td>,
     strong: ({ children, ...props }) => <strong {...props}><HighlightedText season={season}>{children}</HighlightedText></strong>
 });
 
-// Memoized remark plugins array
-const remarkPlugins = [remarkGfm];
-const rehypePlugins = [rehypeSanitize];
+// Base remark plugins shared by user + assistant content (user content
+// additionally treats single newlines as hard breaks).
+
+// rehype-sanitize strips unknown hast properties by default, which would
+// drop the alert kind (`dataAlert`) our blockquote renderer reads.
+const rehypeSanitizeSchema = {
+    ...defaultSchema,
+    attributes: {
+        ...defaultSchema.attributes,
+        blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
+    },
+};
+const rehypePlugins = [[rehypeSanitize, rehypeSanitizeSchema]] as ReactMarkdownOptions["rehypePlugins"];
+
+/** GitHub's five alert kinds with the host's urgency colors. */
+const GITHUB_ALERT_STYLES: Record<
+    GithubAlertKind,
+    { label: string; className: string; titleClassName: string }
+> = {
+    note: {
+        label: "Note",
+        className: "border-blue-500/70",
+        titleClassName: "text-blue-600 dark:text-blue-400",
+    },
+    tip: {
+        label: "Tip",
+        className: "border-emerald-500/70",
+        titleClassName: "text-emerald-600 dark:text-emerald-400",
+    },
+    important: {
+        label: "Important",
+        className: "border-purple-500/70",
+        titleClassName: "text-purple-600 dark:text-purple-400",
+    },
+    warning: {
+        label: "Warning",
+        className: "border-amber-500/70",
+        titleClassName: "text-amber-600 dark:text-amber-500",
+    },
+    caution: {
+        label: "Caution",
+        className: "border-red-500/70",
+        titleClassName: "text-red-600 dark:text-red-400",
+    },
+};
+
+
+/**
+ * Table with copy helpers (Markdown + CSV). The table itself keeps the
+ * existing scroll-inside wrapper so wide tables never push the layout.
+ */
+function TableBlock({ children }: { children: React.ReactNode }) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [copied, setCopied] = useState(false);
+    const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const handleCopy = useCallback((format: "markdown" | "csv") => {
+        const table = containerRef.current?.querySelector("table");
+        if (!table || typeof navigator === "undefined" || navigator.clipboard == null) return;
+        const text =
+            format === "markdown"
+                ? serializeTableElementToMarkdown(table)
+                : serializeTableElementToCsv(table);
+        void navigator.clipboard
+            .writeText(text)
+            .then(() => {
+                if (copiedTimerRef.current != null) clearTimeout(copiedTimerRef.current);
+                setCopied(true);
+                copiedTimerRef.current = setTimeout(() => {
+                    setCopied(false);
+                    copiedTimerRef.current = null;
+                }, 1200);
+            })
+            .catch(() => {
+                // Clipboard unavailable — leave the buttons as-is.
+            });
+    }, []);
+
+    return (
+        <div className="my-4 w-full max-w-full">
+            <div ref={containerRef} className="w-full max-w-full overflow-x-auto">
+                <table className="w-full min-w-[420px] sm:min-w-[520px] text-sm border-collapse">
+                    {children}
+                </table>
+            </div>
+            <div className="mt-1 flex items-center justify-end gap-1" role="toolbar" aria-label="Table actions">
+                {(["markdown", "csv"] as const).map((format) => (
+                    <button
+                        key={format}
+                        type="button"
+                        onClick={() => handleCopy(format)}
+                        className="rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                        {copied ? "Copied" : format === "markdown" ? "Copy MD" : "Copy CSV"}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
 
 // Inner component for the message content - heavily memoized.
 // Exported for reuse by the landing capability carousel so the demo
@@ -127,6 +323,8 @@ export const MessageContent = memo(function MessageContent({
     season,
     steps,
     iterations,
+    isStreaming,
+    lineBreaks,
 }: {
     content: string;
     isUser: boolean;
@@ -134,10 +332,25 @@ export const MessageContent = memo(function MessageContent({
     season?: number;
     steps?: Message['steps'];
     iterations?: Message['iterations'];
+    /** True while this message's tokens are still arriving. */
+    isStreaming?: boolean;
+    /** Treat single newlines as hard breaks (chat-style user input). */
+    lineBreaks?: boolean;
 }) {
     // Per-season component set so driver highlights prefer that year's
-    // learned colors. Memoized on season (stable across re-renders).
+    // learned colors. Memoized on season + streaming flag (stable across
+    // re-renders, so component identity never churns mid-stream).
     const components = useMemo(() => createMarkdownComponents(season), [season]);
+    // One incremental-parser instance per renderer (the parse cache lives
+    // in its closure). Only engaged while streaming code-heavy text.
+    const incrementalPlugin = useMemo(() => createIncrementalMarkdownPlugin(), []);
+    const remarkPlugins: PluggableList = useMemo(() => {
+        const plugins: PluggableList = lineBreaks
+            ? [remarkGfm, remarkBreaks, remarkGithubAlerts]
+            : [remarkGfm, remarkGithubAlerts];
+        if (isStreaming && content.includes("```")) plugins.push(incrementalPlugin);
+        return plugins;
+    }, [lineBreaks, isStreaming, content, incrementalPlugin]);
     // Live status line while streaming: show what the pipeline is doing
     // right now (running step/task) instead of a static placeholder.
     const statusLine = useMemo(() => {
@@ -456,7 +669,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                     </Tooltip>
                 )}
 
-                <div className={cn("prose prose-sm break-words dark:prose-invert min-w-0 max-w-full overflow-hidden leading-relaxed [overflow-wrap:anywhere]", isUser ? "text-foreground" : "text-foreground")}>
+                <div data-streaming={isStreaming || undefined} className={cn("prose prose-sm break-words dark:prose-invert min-w-0 max-w-full overflow-hidden leading-relaxed [overflow-wrap:anywhere]", isUser ? "text-foreground" : "text-foreground")}>
                     <MessageContent
                         content={message.content}
                         isUser={isUser}
@@ -464,6 +677,8 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                         season={seasonFromPayload(message.visualizationData)}
                         steps={message.steps}
                         iterations={message.iterations}
+                        isStreaming={isStreaming}
+                        lineBreaks={isUser}
                     />
                 </div>
 

@@ -73,15 +73,19 @@ export function ControlPanel() {
                                     : "border-white/10 hover:outline hover:outline-white/30"
                             )}
                         >
+                            {/* Outer span owns position + slide (plain classes:
+                                btn-wheel sets its own position/transform and
+                                would override them). Inner span is visuals. */}
                             <span
                                 aria-hidden
                                 className={cn(
-                                    "absolute left-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full transition-transform duration-200",
-                                    deepOn ? "translate-x-[44px]" : "translate-x-0",
-                                    "btn-wheel btn-wheel-purple"
+                                    "absolute left-1 top-1/2 -translate-y-1/2 transition-transform duration-200",
+                                    deepOn ? "translate-x-[44px]" : "translate-x-0"
                                 )}
                             >
-                                <Brain className="h-3.5 w-3.5" />
+                                <span className="btn-wheel btn-wheel-purple flex h-6 w-6 items-center justify-center rounded-full">
+                                    <Brain className="h-3.5 w-3.5" />
+                                </span>
                             </span>
                             <span
                                 aria-hidden

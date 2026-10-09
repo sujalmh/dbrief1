@@ -51,16 +51,11 @@ export function ChatInput() {
     }
 
 
-    // Gradient outline: 1px gradient ring wrapping the glass body. The
-    // outer div IS the border (padding 1px, gradient bg); the inner div
-    // is the frosted glass with no white glow.
-    // Ring is lighter on the left/right edges, darker across top/bottom.
+    // Flat liquid glass: single surface, no gradient ring. The blur
+    // reacts to the background; the border stays light and shifts
+    // with the theme (same `.modal-glass` as the modals).
     return (
-        <div className="rounded-[2rem] bg-gradient-to-r from-white/40 via-white/10 to-white/40 p-px shadow-[0_8px_32px_rgba(0,0,0,0.25)] dark:from-white/25 dark:via-white/5 dark:to-white/25 dark:shadow-[0_8px_32px_rgba(0,0,0,0.5)]">
-        <div className="relative rounded-[calc(2rem-1px)] transition-all duration-300 backdrop-blur-xl
-            bg-white/70 hover:bg-white/80
-            dark:bg-black/40 dark:hover:bg-black/50
-            focus-within:bg-white/80 dark:focus-within:bg-black/50">
+        <div className="modal-glass relative rounded-[2rem] transition-all duration-300">
 
             {/* Top Section: Input Area */}
             <div className="flex gap-2 p-3 pb-0">
@@ -119,7 +114,6 @@ export function ChatInput() {
             <div className="px-3 pb-2">
                 <ControlPanel />
             </div>
-        </div>
         </div>
     )
 }

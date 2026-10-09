@@ -60,8 +60,8 @@ export function ProfileModal({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[420px] border-none bg-gradient-to-r from-white/40 via-white/10 to-white/40 dark:from-white/25 dark:via-white/5 dark:to-white/25 p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
-                <div className="rounded-[calc(0.5rem-1px)] bg-white/75 dark:bg-black/45 backdrop-blur-xl p-6">
+            <DialogContent className="sm:max-w-[420px] border-none bg-transparent p-0 shadow-none gap-0">
+                <div className="modal-glass rounded-xl p-6">
                     <DialogHeader className="mb-4">
                         <div className="flex items-center gap-3">
                             {user.google?.avatarUrl ? (

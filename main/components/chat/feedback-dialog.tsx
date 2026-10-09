@@ -63,8 +63,8 @@ export function FeedbackDialog() {
 
     return (
         <Dialog open={isFeedbackOpen} onOpenChange={setFeedbackOpen}>
-            <DialogContent className="sm:max-w-[420px] border-none bg-gradient-to-r from-white/40 via-white/10 to-white/40 dark:from-white/25 dark:via-white/5 dark:to-white/25 p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
-                <div className="rounded-[calc(0.5rem-1px)] bg-white/75 dark:bg-black/45 backdrop-blur-xl p-6">
+            <DialogContent className="sm:max-w-[420px] border-none bg-transparent p-0 shadow-none gap-0">
+                <div className="modal-glass rounded-xl p-6">
                     <DialogHeader className="mb-4 text-center">
                         <div className="mx-auto mb-2 h-1 w-12 rounded-full bg-gradient-to-r from-[var(--f1-red)] to-[var(--f1-red)]/40" />
                         <DialogTitle className="text-lg font-black uppercase italic tracking-widest">
@@ -119,7 +119,7 @@ export function FeedbackDialog() {
                                     variant="ghost"
                                     size="sm"
                                     onClick={close}
-                                    className="h-9 px-4 text-xs uppercase tracking-wide text-muted-foreground"
+                                    className="btn-wheel btn-wheel-ghost h-9 px-4 text-xs uppercase tracking-wide text-muted-foreground"
                                 >
                                     Skip
                                 </Button>

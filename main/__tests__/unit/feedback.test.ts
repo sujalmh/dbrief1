@@ -152,6 +152,30 @@ describe("feedback + contact + admin wiring", () => {
         expect(settings).toMatch(/user\?\.isAdmin/);
     });
 
+    it("AI setup uses production copy (Managed/BYOK, no insider text)", () => {
+        const settings = readSource("components/chat/settings-modal.tsx");
+        expect(settings).toMatch(/>Managed</);
+        expect(settings).toMatch(/>BYOK</);
+        expect(settings).not.toMatch(/Setup by me/);
+        expect(settings).not.toMatch(/BYOK by you/);
+        expect(settings).not.toMatch(/Two options, nothing else/);
+        expect(settings).not.toMatch(/MiMo V2\.5, same model for planning/);
+        expect(settings).toMatch(/btn-wheel-green/);
+        expect(settings).toMatch(/btn-tint-green/);
+        expect(settings).toMatch(/btn-tint-yellow/);
+    });
+
+    it("appearance buttons wear their own theme when active", () => {
+        const settings = readSource("components/chat/settings-modal.tsx");
+        expect(settings).toMatch(/btn-appearance-light/);
+        expect(settings).toMatch(/btn-appearance-dark/);
+        expect(settings).toMatch(/btn-appearance-system/);
+        const css = readSource("app/globals.css");
+        expect(css).toMatch(/\.btn-appearance-light/);
+        expect(css).toMatch(/\.btn-appearance-dark/);
+        expect(css).toMatch(/\.btn-appearance-system/);
+    });
+
     it("navbar avatar is phones-only (desktop uses the sidebar)", () => {
         const header = readSource("components/layout/header.tsx");
         expect(header).toMatch(/ProfileModal/);
@@ -195,10 +219,43 @@ describe("feedback + contact + admin wiring", () => {
         expect(settings).toMatch(/btn-wheel-green/);
     });
 
-    it("shared dialog close button is a colored wheel", () => {
+    it("shared dialog close button is positioned inside the modal", () => {
         const dialog = readSource("components/ui/dialog.tsx");
-        expect(dialog).toMatch(/btn-wheel/);
-        expect(dialog).toMatch(/hover:text-\[var\(--f1-red\)\]/);
+        expect(dialog).toMatch(/absolute top-4 right-4/);
+        expect(dialog).not.toMatch(/btn-wheel/);
+    });
+
+    it("all modals use flat liquid glass (no gradients)", () => {
+        for (const rel of [
+            "components/chat/settings-modal.tsx",
+            "components/chat/feedback-dialog.tsx",
+            "components/chat/share-dialog.tsx",
+            "components/layout/info-modal.tsx",
+            "components/profile/profile-modal.tsx",
+            "components/chat/chat-input.tsx",
+            "components/landing/landing-composer.tsx",
+        ]) {
+            const source = readSource(rel);
+            expect(source, rel).toMatch(/modal-glass/);
+            expect(source, rel).not.toMatch(/bg-gradient-to-r from-white/);
+        }
+        const css = readSource("app/globals.css");
+        expect(css).toMatch(/\.modal-glass/);
+        expect(css).toMatch(/backdrop-filter: blur/);
+        expect(css).toMatch(/\.dark \.modal-glass/);
+    });
+
+    it("share dialog buttons are all colored", () => {
+        const source = readSource("components/chat/share-dialog.tsx");
+        expect(source).toMatch(/btn-wheel-blue/);
+        expect(source).toMatch(/btn-wheel-green/);
+        expect(source).not.toMatch(/btn-physical/);
+    });
+
+    it("info modal body has a fixed height across tabs", () => {
+        const source = readSource("components/layout/info-modal.tsx");
+        expect(source).toMatch(/h-\[420px\]/);
+        expect(source).toMatch(/sm:h-\[460px\]/);
     });
 
     it("feedback dialog collects stars + comment and saves first_response", () => {

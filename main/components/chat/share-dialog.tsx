@@ -19,7 +19,6 @@ import {
 import { exportConversation } from "@/lib/utils/export-conversation";
 import { useChatStore } from "@/lib/store";
 import { Check, Copy, Download, FileJson, FileText, Link2, Loader2, Share2, Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface ShareDialogProps {
     open: boolean;
@@ -111,10 +110,9 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            {/* Liquid glass, matching the composer. Outer ring is lighter
-                on the left/right edges and darker across the top/bottom. */}
-            <DialogContent className="sm:max-w-[440px] border-none bg-gradient-to-r from-white/40 via-white/10 to-white/40 dark:from-white/25 dark:via-white/5 dark:to-white/25 p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
-                <div className="rounded-[calc(0.5rem-1px)] bg-white/75 dark:bg-black/45 backdrop-blur-xl p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            {/* Flat liquid-glass surface; blur picks up the background. */}
+            <DialogContent className="sm:max-w-[440px] border-none bg-transparent p-0 shadow-none gap-0">
+                <div className="modal-glass rounded-xl p-5">
                     <DialogHeader className="mb-4 text-left">
                         <div className="flex items-center gap-3">
                             <span className="btn-wheel btn-wheel-purple h-9 w-9 shrink-0">
@@ -170,7 +168,7 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
                                         size="icon"
                                         onClick={() => handleCopy(l.token)}
                                         disabled={working}
-                                        className="btn-wheel h-8 w-8 shrink-0"
+                                        className="btn-wheel btn-wheel-blue h-8 w-8 shrink-0"
                                         title="Copy link"
                                     >
                                         {copied === l.token ? (
@@ -202,10 +200,7 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
                             type="button"
                             onClick={handleCreate}
                             disabled={working || loading || !sessionId}
-                            className={cn(
-                                "btn-wheel h-9 w-full gap-2 px-4 text-xs font-bold uppercase tracking-wide",
-                                links.length === 0 && "btn-wheel-green"
-                            )}
+                            className="btn-wheel btn-wheel-green h-9 w-full gap-2 px-4 text-xs font-bold uppercase tracking-wide"
                         >
                             {working ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -229,7 +224,7 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
                                     size="sm"
                                     onClick={() => handleDownload("markdown")}
                                     disabled={!hasMessages}
-                                    className="btn-physical h-8 gap-1.5 text-xs"
+                                    className="btn-wheel btn-wheel-blue h-8 gap-1.5 text-xs"
                                 >
                                     <FileText className="h-3.5 w-3.5" />
                                     Markdown
@@ -240,7 +235,7 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
                                     size="sm"
                                     onClick={() => handleDownload("json")}
                                     disabled={!hasMessages}
-                                    className="btn-physical h-8 gap-1.5 text-xs"
+                                    className="btn-wheel btn-wheel-blue h-8 gap-1.5 text-xs"
                                 >
                                     <FileJson className="h-3.5 w-3.5" />
                                     JSON

@@ -125,15 +125,15 @@ export function InfoModal({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[640px] max-h-[85dvh] overflow-hidden border-none bg-gradient-to-r from-white/40 via-white/10 to-white/40 dark:from-white/25 dark:via-white/5 dark:to-white/25 p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
-                <div className="rounded-[calc(0.5rem-1px)] bg-white/75 dark:bg-black/45 backdrop-blur-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] overflow-hidden">
+            <DialogContent className="sm:max-w-[640px] max-h-[85dvh] overflow-hidden border-none bg-transparent p-0 shadow-none gap-0">
+                <div className="modal-glass rounded-xl overflow-hidden">
                 <DialogHeader className="px-6 pt-5 pb-3 text-left border-b border-white/10">
                     <DialogTitle className="text-base font-bold tracking-tight">
                         Information
                     </DialogTitle>
                 </DialogHeader>
 
-                <div className="flex min-h-0 flex-col sm:flex-row">
+                <div className="flex h-[420px] min-h-0 flex-col sm:h-[460px] sm:flex-row">
                     {/* Section nav — top tabs on phones, left rail on desktop */}
                     <nav className="flex shrink-0 flex-row gap-1 overflow-x-auto border-b border-white/10 p-3 sm:w-40 sm:flex-col sm:border-b-0 sm:border-r">
                         {SECTIONS.map(({ id, label, icon: Icon }) => (

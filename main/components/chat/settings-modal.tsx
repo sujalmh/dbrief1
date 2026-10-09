@@ -212,15 +212,14 @@ export function SettingsModal() {
 
     return (
         <Dialog open={isSettingsOpen} onOpenChange={setSettingsOpen}>
-            {/* Liquid glass, matching the composer. Outer ring is lighter
-                on the left/right edges and darker across the top/bottom. */}
-            <DialogContent className="sm:max-w-[520px] max-h-[90dvh] overflow-y-auto border-none bg-gradient-to-r from-white/40 via-white/10 to-white/40 dark:from-white/25 dark:via-white/5 dark:to-white/25 p-px shadow-[0_8px_32px_rgba(0,0,0,0.5)] gap-0">
-                <div className="rounded-[calc(0.5rem-1px)] bg-white/75 dark:bg-black/45 backdrop-blur-xl p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+            {/* Flat liquid-glass surface; blur picks up the background. */}
+            <DialogContent className="sm:max-w-[520px] max-h-[90dvh] overflow-y-auto border-none bg-transparent p-0 shadow-none gap-0">
+                <div className="modal-glass rounded-xl p-6">
                 <DialogHeader className="mb-4 text-center">
                     <div className="mx-auto mb-2 h-1 w-12 rounded-full bg-gradient-to-r from-[var(--f1-red)] to-[var(--f1-red)]/40" />
                     <DialogTitle className="text-xl font-black uppercase italic tracking-widest">AI Setup</DialogTitle>
                     <DialogDescription className="text-muted-foreground/80">
-                        Pick who provides the model. Two options, nothing else.
+                        Pick who provides the model.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -233,15 +232,15 @@ export function SettingsModal() {
                             data-active={!isByok}
                             className={cn(
                                 "btn-physical p-3 text-left",
-                                !isByok && "ring-1 ring-[var(--f1-green)]/60"
+                                !isByok && "btn-tint-green"
                             )}
                         >
                             <div className="flex items-center gap-2 mb-1">
                                 <Server className="h-4 w-4 text-[var(--f1-green)]" />
-                                <span className="text-sm font-bold">Setup by me</span>
+                                <span className="text-sm font-bold">Managed</span>
                             </div>
                             <p className="text-[11px] text-muted-foreground leading-snug">
-                                Managed model (MiMo V2.5), configured by the app owner. No setup needed.
+                                Handled for you. No setup needed.
                             </p>
                         </button>
                         <button
@@ -250,12 +249,12 @@ export function SettingsModal() {
                             data-active={isByok}
                             className={cn(
                                 "btn-physical p-3 text-left",
-                                isByok && "ring-1 ring-[var(--f1-yellow)]/60"
+                                isByok && "btn-tint-yellow"
                             )}
                         >
                             <div className="flex items-center gap-2 mb-1">
                                 <KeyRound className="h-4 w-4 text-[var(--f1-yellow)]" />
-                                <span className="text-sm font-bold">BYOK by you</span>
+                                <span className="text-sm font-bold">BYOK</span>
                             </div>
                             <p className="text-[11px] text-muted-foreground leading-snug">
                                 Bring your own key + any OpenAI-compatible endpoint.
@@ -271,20 +270,25 @@ export function SettingsModal() {
                         <div className="grid grid-cols-3 gap-2">
                             {(
                                 [
-                                    { value: "light", label: "Light", Icon: Sun },
-                                    { value: "dark", label: "Dark", Icon: Moon },
-                                    { value: "system", label: "System", Icon: Monitor },
+                                    { value: "light", label: "Light", Icon: Sun, activeClass: "btn-appearance-light" },
+                                    { value: "dark", label: "Dark", Icon: Moon, activeClass: "btn-appearance-dark" },
+                                    { value: "system", label: "System", Icon: Monitor, activeClass: "btn-appearance-system" },
                                 ] as const
-                            ).map(({ value, label, Icon }) => (
+                            ).map(({ value, label, Icon, activeClass }) => (
                                 <button
                                     key={value}
                                     type="button"
                                     onClick={() => setTheme(value)}
                                     data-active={activeTheme === value}
-                                    className="btn-physical flex items-center justify-center gap-1.5 px-2 py-2 text-xs"
+                                    className={cn(
+                                        "btn-physical flex items-center justify-center gap-1.5 px-2 py-2 text-xs",
+                                        activeTheme === value && activeClass
+                                    )}
                                 >
-                                    <Icon className="h-3.5 w-3.5" />
-                                    <span>{label}</span>
+                                    <span className={cn("flex items-center gap-1.5", value === "system" && "mix-blend-difference")}>
+                                        <Icon className="h-3.5 w-3.5" />
+                                        <span>{label}</span>
+                                    </span>
                                 </button>
                             ))}
                         </div>
@@ -408,9 +412,7 @@ export function SettingsModal() {
                     ) : (
                         <div className="rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 p-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
                             <p className="text-xs text-muted-foreground leading-relaxed">
-                                Managed mode uses the model configured by the app owner
-                                (MiMo V2.5, same model for planning and answering).
-                                Nothing to enter — just confirm and chat.
+                                No setup needed — just confirm and chat.
                             </p>
                             {errorMsg && <p className="text-xs text-red-500 mt-2">{errorMsg}</p>}
                         </div>

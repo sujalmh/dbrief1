@@ -98,6 +98,8 @@ export interface ChartSpec {
     | 'kpi'
     | 'swarm'
     | 'bump'
+    | 'pie'
+    | 'stat_cards'
     title: string
     subtitle?: string
     dataSource: string

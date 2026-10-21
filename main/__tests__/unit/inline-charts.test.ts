@@ -119,8 +119,8 @@ describe("resolveInlineChartSpecs", () => {
             ],
             query: "standings",
         });
-        expect(out).toHaveLength(1);
-        expect(out[0]?.type).toBe("horizontal_bar");
+        expect(out).toHaveLength(3);
+        expect(out.map((s) => s.type)).toEqual(["horizontal_bar", "pie", "stat_cards"]);
     });
 
     it("returns [] for missing / empty / invalid payloads", () => {
@@ -168,6 +168,8 @@ describe("ChartDispatcher coverage", () => {
         "histogram",
         "kpi",
         "heatmap",
+        "pie",
+        "stat_cards",
     ])("handles %s", (type) => {
         expect(source).toContain(`"${type}"`);
     });
@@ -226,6 +228,16 @@ describe("ChartDispatcher coverage", () => {
         expect(dispatcher).toMatch(/case "bump"/);
         expect(dispatcher).toMatch(/SwarmPlot/);
         expect(dispatcher).toMatch(/BumpChart/);
+    });
+
+    it("registers pie + stat_cards in the chart catalog and dispatcher", () => {
+        expect(CHART_TYPES.has("pie")).toBe(true);
+        expect(CHART_TYPES.has("stat_cards")).toBe(true);
+        const dispatcher = readSource("components/visualization/chart-dispatcher.tsx");
+        expect(dispatcher).toMatch(/case "pie"/);
+        expect(dispatcher).toMatch(/case "stat_cards"/);
+        expect(dispatcher).toMatch(/PieDistributionChart/);
+        expect(dispatcher).toMatch(/StatCardGrid/);
     });
 
     it("validates keyless series data (swarm dots, bump rows)", () => {
@@ -396,9 +408,9 @@ describe("F1 standings charts", () => {
             ],
             "2024 final standings"
         );
-        expect(specs).toHaveLength(1);
+        expect(specs).toHaveLength(3);
+        expect(specs.map((s) => s.type)).toEqual(["horizontal_bar", "pie", "stat_cards"]);
         const spec = specs[0]!;
-        expect(spec.type).toBe("horizontal_bar");
         expectWellFormed(spec);
         expect(specConfig(spec).unit).toBe("pts");
         const rows = specConfig(spec).data as Array<{ key: string; value: number }>;
@@ -423,8 +435,8 @@ describe("F1 standings charts", () => {
             ],
             "constructors"
         );
-        expect(specs).toHaveLength(1);
-        expect(specs[0]?.type).toBe("horizontal_bar");
+        expect(specs).toHaveLength(3);
+        expect(specs.map((s) => s.type)).toEqual(["horizontal_bar", "pie", "stat_cards"]);
     });
 });
 
@@ -631,9 +643,9 @@ describe("F1 tyre strategy charts", () => {
             [{ tool, args: { year: 2024, gp: "Bahrain" }, success: true, data: stintData }],
             "tyre strategy"
         );
-        expect(specs).toHaveLength(1);
+        expect(specs).toHaveLength(2);
+        expect(specs.map((s) => s.type)).toEqual(["stacked_bar", "pie"]);
         const spec = specs[0]!;
-        expect(spec.type).toBe("stacked_bar");
         expectWellFormed(spec);
         const cfg = specConfig(spec);
         expect(cfg.unit).toBe("laps");
@@ -700,7 +712,7 @@ describe("F1 driver comparison + fallbacks", () => {
             ],
             "standings"
         );
-        expect(specs).toHaveLength(1);
+        expect(specs).toHaveLength(3);
     });
 
     it("multiple tools → multiple specs in order", () => {
@@ -721,10 +733,10 @@ describe("F1 driver comparison + fallbacks", () => {
             ],
             "telemetry and standings"
         );
-        expect(specs).toHaveLength(2);
-        expect(specs.map((s) => s.type)).toEqual(["line", "horizontal_bar"]);
+        expect(specs).toHaveLength(4);
+        expect(specs.map((s) => s.type)).toEqual(["line", "horizontal_bar", "pie", "stat_cards"]);
         // IDs unique per spec
-        expect(new Set(specs.map((s) => s.id)).size).toBe(2);
+        expect(new Set(specs.map((s) => s.id)).size).toBe(4);
     });
 
     it("skips failed + empty results", () => {
@@ -845,6 +857,14 @@ describe("deep-research passthrough (every chart type renders inline)", () => {
         {
             type: "kpi",
             config: { data: [{ key: "Wins", value: 19 }], unit: "count" },
+        },
+        {
+            type: "pie",
+            config: { data: [{ key: "A", value: 10 }], xAxisLabel: "X", yAxisLabel: "Y", unit: "pts" },
+        },
+        {
+            type: "stat_cards",
+            config: { data: [{ key: "K", value: 1 }], unit: "pts" },
         },
         {
             type: "heatmap",

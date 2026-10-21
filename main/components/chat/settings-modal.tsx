@@ -8,7 +8,6 @@ import {
     DialogDescription,
     DialogHeader,
     DialogTitle,
-    DialogFooter,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -422,7 +421,8 @@ export function SettingsModal() {
 
                 </div>
 
-                <DialogFooter className="sm:justify-between items-center mt-4">
+                {/* Actions stay side by side on every viewport. */}
+                <div className="mt-4 flex flex-row items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                     <Button
                         variant="ghost"
@@ -438,9 +438,9 @@ export function SettingsModal() {
                             }
                         }}
                         type="button"
-                        className="btn-wheel btn-wheel-red h-9 px-4 text-xs uppercase tracking-wide"
+                        className="btn-wheel btn-wheel-red h-9 px-4 text-xs tracking-wide"
                     >
-                        Clear Telemetry
+                        Clear
                     </Button>
                     {user?.isAdmin === true && (
                         <a
@@ -459,9 +459,9 @@ export function SettingsModal() {
                         className="btn-wheel btn-wheel-green h-9 px-5 font-bold tracking-wide"
                     >
                         {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                        CONFIRM SETUP
+                        Confirm
                     </Button>
-                </DialogFooter>
+                </div>
                 </div>
             </DialogContent>
         </Dialog>

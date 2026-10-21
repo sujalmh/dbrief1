@@ -165,6 +165,22 @@ describe("feedback + contact + admin wiring", () => {
         expect(settings).toMatch(/btn-tint-yellow/);
     });
 
+    it("settings actions share one row as Confirm + Clear", () => {
+        const settings = readSource("components/chat/settings-modal.tsx");
+        expect(settings).toMatch(/\bConfirm\b/);
+        expect(settings).toMatch(/>\s*Clear\s*</);
+        expect(settings).not.toMatch(/CONFIRM SETUP/);
+        expect(settings).not.toMatch(/Clear Telemetry/);
+        expect(settings).toMatch(/flex flex-row items-center justify-between/);
+        expect(settings).not.toMatch(/DialogFooter/);
+    });
+
+    it("latched mode cards stay readable in the light theme", () => {
+        const css = readSource("app/globals.css");
+        expect(css).toMatch(/html\.light \.btn-physical\[data-active="true"\]\.btn-tint-green/);
+        expect(css).toMatch(/html\.light \.btn-physical\[data-active="true"\]\.btn-tint-yellow/);
+    });
+
     it("appearance buttons wear their own theme when active", () => {
         const settings = readSource("components/chat/settings-modal.tsx");
         expect(settings).toMatch(/btn-appearance-light/);
@@ -243,6 +259,22 @@ describe("feedback + contact + admin wiring", () => {
         expect(css).toMatch(/\.modal-glass/);
         expect(css).toMatch(/backdrop-filter: blur/);
         expect(css).toMatch(/\.dark \.modal-glass/);
+    });
+
+    it("liquid glass stays see-through instead of a solid panel", () => {
+        const css = readSource("app/globals.css");
+        const light = css.match(
+            /\.modal-glass\s*\{[^}]*background-color:\s*rgb\(244 244 245 \/ ([\d.]+)\)/
+        );
+        const dark = css.match(
+            /\.dark \.modal-glass\s*\{[^}]*background-color:\s*rgb\(12 12 14 \/ ([\d.]+)\)/
+        );
+        expect(light).not.toBeNull();
+        expect(dark).not.toBeNull();
+        // Above ~0.7 the backdrop is effectively erased, which is the
+        // regression this guards (it had crept up to 0.88 / 0.85).
+        expect(Number(light![1])).toBeLessThan(0.7);
+        expect(Number(dark![1])).toBeLessThan(0.7);
     });
 
     it("share dialog buttons are all colored", () => {

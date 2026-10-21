@@ -27,6 +27,8 @@ import {
     BoxPlot,
     Histogram,
     KpiCard,
+    PieDistributionChart,
+    StatCardGrid,
     computeBoxPlotData,
     EmptyChart,
 } from "./intelligent-charts";
@@ -276,6 +278,39 @@ export function ChartDispatcher({ spec }: { spec: ChartSpec }) {
                         insight,
                         question,
                         data,
+                        unit,
+                    }}
+                />
+            );
+
+        case "pie":
+            return (
+                <PieDistributionChart
+                    spec={{
+                        type: "pie",
+                        title: spec.title,
+                        subtitle: spec.subtitle,
+                        insight,
+                        question,
+                        data: data as unknown as Array<{ key: string; value: number; label?: string }>,
+                        xAxisLabel,
+                        yAxisLabel,
+                        unit,
+                        donut: (cfg as { donut?: boolean }).donut === true,
+                    }}
+                />
+            );
+
+        case "stat_cards":
+            return (
+                <StatCardGrid
+                    spec={{
+                        type: "stat_cards",
+                        title: spec.title,
+                        subtitle: spec.subtitle,
+                        insight,
+                        question,
+                        data: data as unknown as Array<{ key: string; value: number; label?: string; color?: string }>,
                         unit,
                     }}
                 />

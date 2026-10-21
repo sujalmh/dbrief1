@@ -25,6 +25,9 @@ export const CHART_TYPES = new Set<string>([
     // Distribution / rank-flow types
     "swarm",
     "bump",
+    // Composition + KPI types
+    "pie",
+    "stat_cards",
 ]);
 
 

@@ -235,6 +235,8 @@ export const ChartType = {
     KPI: "kpi",
     SWARM: "swarm",
     BUMP: "bump",
+    PIE: "pie",
+    STAT_CARDS: "stat_cards",
 } as const;
 
 export type ChartType = (typeof ChartType)[keyof typeof ChartType];
@@ -256,6 +258,8 @@ export const ChartSpecSchema = z.object({
         "kpi",
         "swarm",
         "bump",
+        "pie",
+        "stat_cards",
     ]),
     title: z.string(),
     subtitle: z.string().optional().describe("Secondary line that adds context (e.g. drivers, season)"),

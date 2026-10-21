@@ -95,6 +95,17 @@ export function synthesizeChartSpecs(
         const spec = synthesizeOne(result, rows, intent, focus);
         if (spec && hasChartData(spec)) specs.push(spec);
 
+        if (intent === "standings_breakdown") {
+            const pie = synthesizePointsPie(result, rows);
+            if (pie && hasChartData(pie)) specs.push(pie);
+            const cards = synthesizeTopDriverCards(result, rows);
+            if (cards && hasChartData(cards)) specs.push(cards);
+        }
+        if (intent === "strategy_breakdown") {
+            const pie = synthesizeCompoundPie(result, rows);
+            if (pie && hasChartData(pie)) specs.push(pie);
+        }
+
         if (intent === "lap_progression") {
             // Multi-driver lap data also gets a pace-distribution swarm
             // (one dot per lap, f1pace-style) so the full-race comparison
@@ -590,6 +601,111 @@ function synthesizeBump(
             yAxisLabel: "Position",
             unit: "pos",
             intent: "position_progression",
+        },
+    };
+}
+
+/**
+ * Pie of championship-point share among the top drivers (plus "Others").
+ */
+function synthesizePointsPie(
+    result: RawResult,
+    rows: Array<Record<string, unknown>>
+): ChartSpec | null {
+    const keys = new Set<string>();
+    for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
+    const has = (k: string) => keys.has(k);
+    const driver = ["driver", "Driver", "Abbreviation"].find(has);
+    const points = ["points", "Points"].find(has);
+    if (!driver || !points) return null;
+    const aggregated = aggregateRows(rows, driver, points, "sum", { topN: 6 });
+    if (aggregated.length === 0) return null;
+    const data = aggregated.map((r) => ({ key: r.key, value: r.value }));
+    return {
+        id: `pie_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
+        type: "pie",
+        title: `Points Share: ${argsSummary(result.args)}`,
+        subtitle: "Share of championship points (top drivers)",
+        dataSource: result.tool,
+        xField: driver,
+        yField: points,
+        config: {
+            data,
+            xAxisLabel: driver,
+            yAxisLabel: points,
+            unit: "pts",
+            donut: true,
+        },
+    };
+}
+
+/**
+ * Colored stat cards for the top drivers by points.
+ */
+function synthesizeTopDriverCards(
+    result: RawResult,
+    rows: Array<Record<string, unknown>>
+): ChartSpec | null {
+    const keys = new Set<string>();
+    for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
+    const has = (k: string) => keys.has(k);
+    const driver = ["driver", "Driver", "Abbreviation"].find(has);
+    const points = ["points", "Points"].find(has);
+    if (!driver || !points) return null;
+    const aggregated = aggregateRows(rows, driver, points, "sum", { topN: 3 });
+    if (aggregated.length === 0) return null;
+    const data = aggregated.map((r) => ({ key: r.key, value: r.value, label: r.label }));
+    return {
+        id: `stats_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
+        type: "stat_cards",
+        title: `Top Drivers: ${argsSummary(result.args)}`,
+        subtitle: "Championship leaders",
+        dataSource: result.tool,
+        xField: driver,
+        yField: points,
+        config: {
+            data,
+            xAxisLabel: driver,
+            yAxisLabel: points,
+            unit: "pts",
+        },
+    };
+}
+
+/**
+ * Pie of tyre-compound laps for a strategy breakdown.
+ */
+function synthesizeCompoundPie(
+    result: RawResult,
+    rows: Array<Record<string, unknown>>
+): ChartSpec | null {
+    const keys = new Set<string>();
+    for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
+    const has = (k: string) => keys.has(k);
+    const compound = ["compound", "Compound"].find(has);
+    if (!compound) return null;
+    const lapsKey = ["laps", "Laps", "stint_length"].find(has) ?? "laps";
+    const map = new Map<string, number>();
+    for (const r of rows) {
+        const c = String(r[compound] ?? "?");
+        const l = toNumberSafe(r[lapsKey]) ?? 1;
+        map.set(c, (map.get(c) ?? 0) + l);
+    }
+    const data = Array.from(map, ([k, v]) => ({ key: k, value: v }));
+    if (data.length === 0) return null;
+    return {
+        id: `pie_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
+        type: "pie",
+        title: `Compound Mix: ${argsSummary(result.args)}`,
+        subtitle: "Laps run on each tyre compound",
+        dataSource: result.tool,
+        xField: compound,
+        yField: lapsKey,
+        config: {
+            data,
+            xAxisLabel: compound,
+            yAxisLabel: lapsKey,
+            unit: "laps",
         },
     };
 }

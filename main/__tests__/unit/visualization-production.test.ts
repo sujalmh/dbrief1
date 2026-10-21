@@ -99,7 +99,7 @@ describe("production path produces charts", () => {
                 }],
                 "2024 standings"
             )
-        ).toEqual(["horizontal_bar"]);
+        ).toEqual(["horizontal_bar", "pie", "stat_cards"]);
     });
 
     it("qualifying answers produce a qualifying chart", () => {
@@ -169,7 +169,7 @@ describe("production path produces charts", () => {
                     [{ tool, args: { year: 2024, gp: "Bahrain" }, success: true, data: stints }],
                     "tyre strategy"
                 )
-            ).toEqual(["stacked_bar"]);
+            ).toEqual(["stacked_bar", "pie"]);
         }
     });
 

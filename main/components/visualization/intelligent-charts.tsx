@@ -41,6 +41,8 @@ import {
     ZAxis,
     ComposedChart,
     ReferenceArea,
+    PieChart as RechartsPieChart,
+    Pie,
 } from "recharts";
 import { F1_PALETTE, CHART_TOKENS, colorForDriver, colorForSeries, STEERING_COLORS } from "./chart-palette";
 
@@ -82,6 +84,23 @@ function formatTick(value: number, unit: string): string {
     if (unit === "pos") return `P${value}`;
     if (Number.isInteger(value)) return value.toString();
     return value.toFixed(1);
+}
+
+/**
+ * Pick a readable label color for a given bar/segment fill. Light fills
+ * get dark text and vice-versa, so labels never vanish on white bars
+ * (e.g. the HARD compound, or a driver whose color resolves to white)
+ * in dark mode.
+ */
+function contrastTextFill(hex: string): string {
+    const m = (hex ?? "").match(/^#?([0-9a-f]{6})$/i);
+    if (!m) return "#fff";
+    const n = parseInt(m[1], 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.55 ? "#111" : "#fff";
 }
 
 // =============================================================================
@@ -228,8 +247,30 @@ export function HorizontalBarChart({ spec }: { spec: HorizontalBarSpec }) {
                         <LabelList
                             dataKey="value"
                             position="right"
-                            formatter={(v: unknown) => formatValue(Number(v), spec.unit)}
-                            style={{ fill: CHART_TOKENS.foreground, fontSize: 10, fontWeight: 500 }}
+                            content={(props: any) => {
+                                const x = Number(props?.x ?? 0);
+                                const y = Number(props?.y ?? 0);
+                                const width = Number(props?.width ?? 0);
+                                const height = Number(props?.height ?? 0);
+                                const value = props?.value;
+                                const index = Number(props?.index ?? 0);
+                                const entry = data[index];
+                                const fill = entry
+                                    ? contrastTextFill(entry.key === highlight ? CHART_TOKENS.highlight : colorForDriver(entry.key, index))
+                                    : CHART_TOKENS.foreground;
+                                return (
+                                    <text
+                                        x={x + width + 4}
+                                        y={y + height / 2}
+                                        dy={4}
+                                        fill={fill}
+                                        fontSize={10}
+                                        fontWeight={500}
+                                    >
+                                        {formatValue(Number(value), spec.unit)}
+                                    </text>
+                                );
+                            }}
                         />
                     </Bar>
                 </BarChart>
@@ -1084,6 +1125,140 @@ export function KpiCard({ spec }: { spec: KpiSpec }) {
 // =============================================================================
 // Empty / fallback
 // =============================================================================
+
+// =============================================================================
+// Pie / Donut distribution (share of points, compound mix, etc.)
+// =============================================================================
+
+interface PieSpec {
+    type: "pie";
+    title: string;
+    subtitle?: string;
+    insight?: string;
+    question?: string;
+    data: Array<{ key: string; value: number; label?: string }>;
+    xAxisLabel: string;
+    yAxisLabel: string;
+    unit: string;
+    /** Render as a donut (hollow centre) when true. */
+    donut?: boolean;
+}
+
+export function PieDistributionChart({ spec }: { spec: PieSpec }) {
+    const data = (spec.data ?? []).filter((d) => Number.isFinite(d.value) && d.value > 0);
+    const total = data.reduce((s, d) => s + d.value, 0);
+    const innerRadius = spec.donut ? 52 : 0;
+    const outerRadius = 96;
+
+    return (
+        <div className="space-y-2">
+            <ChartHeader
+                title={spec.title}
+                subtitle={spec.subtitle}
+                insight={spec.insight}
+                question={spec.question}
+            />
+            <ResponsiveContainer width="100%" height={300}>
+                <RechartsPieChart>
+                    <Pie
+                        data={data}
+                        dataKey="value"
+                        nameKey="key"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={innerRadius}
+                        outerRadius={outerRadius}
+                        paddingAngle={2}
+                        isAnimationActive={false}
+                        label={(props: { name?: string; percent?: number }) => {
+                            const pct = Math.round(((props.percent ?? 0) * 100));
+                            if (pct < 5) return null;
+                            return `${props.name} ${pct}%`;
+                        }}
+                        labelLine={false}
+                    >
+                        {data.map((entry, i) => (
+                            <Cell
+                                key={`cell-${i}`}
+                                fill={colorForDriver(entry.key, i)}
+                                stroke="var(--background)"
+                                strokeWidth={1}
+                            />
+                        ))}
+                    </Pie>
+                    <Tooltip content={<SmartTooltip unit={spec.unit} />} />
+                    <Legend
+                        verticalAlign="bottom"
+                        height={36}
+                        iconType="circle"
+                        wrapperStyle={{ fontSize: 11 }}
+                    />
+                </RechartsPieChart>
+            </ResponsiveContainer>
+            {total > 0 && (
+                <p className="text-[11px] text-muted-foreground text-center">
+                    Total {formatValue(total, spec.unit)}
+                </p>
+            )}
+        </div>
+    );
+}
+
+// =============================================================================
+// Colored stat cards (highlighted KPI boxes, OpenAI-style)
+// =============================================================================
+
+interface StatCardSpec {
+    type: "stat_cards";
+    title: string;
+    subtitle?: string;
+    insight?: string;
+    question?: string;
+    data: Array<{ key: string; value: number; label?: string; color?: string }>;
+    unit: string;
+}
+
+export function StatCardGrid({ spec }: { spec: StatCardSpec }) {
+    const items = spec.data ?? [];
+    return (
+        <div className="space-y-2">
+            <ChartHeader
+                title={spec.title}
+                subtitle={spec.subtitle}
+                insight={spec.insight}
+                question={spec.question}
+            />
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {items.map((item, i) => {
+                    const color = item.color ?? colorForDriver(item.key, i);
+                    return (
+                        <div
+                            key={item.key}
+                            className="relative overflow-hidden rounded-xl border border-border/50 bg-card/40 p-4"
+                            style={{ boxShadow: `inset 0 2px 0 ${color}` }}
+                        >
+                            <div
+                                className="absolute inset-0 opacity-10 pointer-events-none"
+                                style={{ background: `linear-gradient(135deg, ${color}, transparent)` }}
+                            />
+                            <p className="relative text-[10px] uppercase tracking-wider text-muted-foreground truncate">
+                                {item.key}
+                            </p>
+                            <p className="relative text-2xl font-bold mt-1" style={{ color }}>
+                                {formatValue(item.value, spec.unit)}
+                            </p>
+                            {item.label && (
+                                <p className="relative text-[11px] text-muted-foreground mt-1">
+                                    {item.label}
+                                </p>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
 
 export function EmptyChart({ title }: { title?: string }) {
     return (

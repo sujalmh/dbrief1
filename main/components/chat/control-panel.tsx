@@ -57,7 +57,7 @@ export function ControlPanel() {
             <div className="flex items-center gap-1">
                 {/* Deep Research Mode — sliding switch. Fixed-size track
                     (never resizes on toggle); the knob slides left/right.
-                    Active adds outline to track + text; hover outlines
+                    Active outlines the track only; hover outlines
                     the track. */}
                 <Tooltip>
                     <TooltipTrigger asChild>
@@ -92,7 +92,7 @@ export function ControlPanel() {
                                 className={cn(
                                     "absolute top-1/2 -translate-y-1/2 text-[11px] font-bold uppercase tracking-wider transition-all duration-200",
                                     deepOn
-                                        ? "left-2.5 rounded-sm text-purple-300 outline outline-1 outline-purple-300/60"
+                                        ? "left-2.5 text-purple-300"
                                         : "right-2.5 text-muted-foreground/40"
                                 )}
                             >

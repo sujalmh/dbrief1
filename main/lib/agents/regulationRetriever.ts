@@ -18,7 +18,7 @@
 import { z } from "zod";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { chatContentToText } from "../llm";
+import { chatContentToText, LLM_TIMEOUT_MS } from "../llm";
 
 // =============================================================================
 // Configuration
@@ -30,6 +30,11 @@ export const EMBEDDING_MODEL = "voyage-4";
 /** voyage-4 default output dimension (must match the Qdrant collection). */
 export const EMBEDDING_DIM = 1024;
 const RERANK_MODEL = "rerank-3";
+/** Per-request timeout for Voyage/Qdrant calls (ms). */
+const REG_HTTP_TIMEOUT_MS = (() => {
+    const raw = Number(process.env.REG_HTTP_TIMEOUT_MS);
+    return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 60_000) : 20_000;
+})();
 const MAX_SUBQUERIES = 5;
 const MIN_SUBQUERIES = 2;
 const DEFAULT_MATCH_COUNT = 10;
@@ -166,7 +171,9 @@ export async function generateSubQueries(
             new HumanMessage(query),
         ];
 
-        const response = await model.invoke(messages);
+        const response = await model.invoke(messages, {
+            signal: AbortSignal.timeout(LLM_TIMEOUT_MS.intent),
+        });
         const content = chatContentToText(response.content);
 
         // Parse JSON array from response
@@ -224,6 +231,7 @@ export async function embedQuery(text: string): Promise<number[]> {
                 model: EMBEDDING_MODEL,
                 input_type: "query",
             }),
+            signal: AbortSignal.timeout(REG_HTTP_TIMEOUT_MS),
         });
 
         if (!response.ok) {
@@ -337,6 +345,7 @@ export async function retrieveFromQdrant(
                 limit: matchCount,
                 with_payload: true,
             }),
+            signal: AbortSignal.timeout(REG_HTTP_TIMEOUT_MS),
         });
 
         if (!response.ok) {
@@ -431,6 +440,7 @@ export async function rerankDocuments(
                 return_documents: false,
                 truncation: true,
             }),
+            signal: AbortSignal.timeout(REG_HTTP_TIMEOUT_MS),
         });
 
         if (!response.ok) {

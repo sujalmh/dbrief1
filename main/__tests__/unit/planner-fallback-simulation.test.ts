@@ -6,8 +6,19 @@
  * generic "get events" plan.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createFallbackPlan } from "@/lib/planner";
+
+const PREV_TINYFISH = process.env.TINYFISH_API_KEY;
+
+beforeEach(() => {
+    process.env.TINYFISH_API_KEY = "test-key";
+});
+
+afterEach(() => {
+    if (PREV_TINYFISH === undefined) delete process.env.TINYFISH_API_KEY;
+    else process.env.TINYFISH_API_KEY = PREV_TINYFISH;
+});
 
 describe("createFallbackPlan — simulation detection", () => {
     it("routes a 'what if' query to run_simulation", () => {
@@ -68,19 +79,37 @@ describe("createFallbackPlan — simulation detection", () => {
     });
 });
 
-describe("createFallbackPlan — recency routing", () => {
-    it("routes 'who won the last race' to web_search (news), never a guessed GP", () => {
+describe("createFallbackPlan - recency routing", () => {
+    it("anchors 'who won the last race' on get_events and adds news search when configured", () => {
         const plan = createFallbackPlan("who won the last race");
-        expect(plan.steps).toHaveLength(1);
-        expect(plan.steps[0].tool).toBe("web_search");
-        expect(plan.steps[0].args.domain_type).toBe("news");
+        expect(plan.steps[0].tool).toBe("get_events");
+        const web = plan.steps.find((s) => s.tool === "web_search");
+        expect(web?.args.domain_type).toBe("news");
     });
 
-    it("routes latest/current/news queries to web_search", () => {
+    it("anchors latest/current/news queries on get_events", () => {
         for (const q of ["latest F1 news", "current standings", "most recent race results"]) {
             const plan = createFallbackPlan(q);
-            expect(plan.steps[0].tool).toBe("web_search");
+            expect(plan.steps[0].tool).toBe("get_events");
         }
+    });
+
+    it("includes standings for a current-standings fallback", () => {
+        const plan = createFallbackPlan("current standings");
+        expect(plan.steps.some((s) => s.tool === "get_driver_standings")).toBe(true);
+    });
+
+    it("uses the constructor table for constructor-standings fallbacks", () => {
+        const plan = createFallbackPlan("current constructor standings");
+        expect(plan.steps.some((s) => s.tool === "get_constructor_standings")).toBe(true);
+        expect(plan.steps.some((s) => s.tool === "get_driver_standings")).toBe(false);
+    });
+
+    it("never plans web tools when TinyFish is not configured", () => {
+        delete process.env.TINYFISH_API_KEY;
+        const plan = createFallbackPlan("who won the last race");
+        expect(plan.steps[0].tool).toBe("get_events");
+        expect(plan.steps.some((s) => s.tool === "web_search")).toBe(false);
     });
 
     it("does NOT route named-GP queries to web_search", () => {

@@ -122,7 +122,7 @@ export function UsageFooter({ usage, durationMs, className }: UsageFooterProps) 
         <div
             data-testid="usage-footer"
             className={cn(
-                "mt-3 pt-2 border-t border-border/40 flex flex-col gap-1 text-[10px] font-mono text-muted-foreground/80",
+                "mt-3 pt-2 border-t border-border/40 flex flex-col gap-1 text-[11px] font-mono text-muted-foreground",
                 className
             )}
         >
@@ -140,7 +140,7 @@ export function UsageFooter({ usage, durationMs, className }: UsageFooterProps) 
                         title={`Full planner model id: ${usage!.plannerModel}`}
                     >
                         <Wrench className="h-3 w-3 shrink-0" />
-                        <span className="text-muted-foreground/70 uppercase tracking-wider text-[9px]">planner</span>
+                        <span className="text-muted-foreground uppercase tracking-wider text-[10px]">planner</span>
                         <span className="truncate max-w-[180px]">
                             {shortModelId(usage!.plannerModel!)}
                         </span>
@@ -172,7 +172,7 @@ export function UsageFooter({ usage, durationMs, className }: UsageFooterProps) 
                         >
                             <Cpu className="h-3 w-3 shrink-0" />
                             {hasPlanner && (
-                                <span className="text-muted-foreground/70 uppercase tracking-wider text-[9px]">answer</span>
+                                <span className="text-muted-foreground uppercase tracking-wider text-[10px]">answer</span>
                             )}
                             <span className="truncate max-w-[180px]">
                                 {shortModelId(usage!.model)}

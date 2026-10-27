@@ -30,8 +30,8 @@ export default function ErrorBoundary({
           </p>
         </div>
         
-        <div className="w-full text-left bg-black/40 p-4 rounded-lg overflow-auto max-h-48 border border-white/5">
-          <p className="font-mono text-xs text-red-400 break-words">
+        <div className="w-full text-left bg-muted/60 p-4 rounded-lg overflow-auto max-h-48 border border-border">
+          <p className="font-mono text-xs text-red-700 dark:text-red-400 break-words">
             {error.message || "Unknown error occurred"}
           </p>
         </div>

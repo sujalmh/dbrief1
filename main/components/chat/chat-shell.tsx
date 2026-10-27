@@ -66,10 +66,26 @@ function useAuthErrorBanner() {
  * replace the URL — Next swaps the route without reloading the page.
  */
 function useRouteSession(routeSessionId: string | null) {
-    const [routeLoading, setRouteLoading] = useState(false);
+    const [previousRouteSessionId, setPreviousRouteSessionId] = useState(routeSessionId);
+    const [routeLoading, setRouteLoading] = useState(
+        routeSessionId !== null &&
+            useChatStore.getState().currentSessionId !== routeSessionId
+    );
     const [routeError, setRouteError] = useState<string | null>(null);
     const handledRef = useRef<string | null | undefined>(undefined);
     const runRef = useRef(0);
+
+    // Reset the route view state when the URL session changes. Adjusting
+    // state during render is React's recommended alternative to calling
+    // setState synchronously inside the effect below.
+    if (previousRouteSessionId !== routeSessionId) {
+        setPreviousRouteSessionId(routeSessionId);
+        setRouteError(null);
+        setRouteLoading(
+            routeSessionId !== null &&
+                useChatStore.getState().currentSessionId !== routeSessionId
+        );
+    }
 
     useEffect(() => {
         if (handledRef.current === routeSessionId) return;
@@ -83,8 +99,6 @@ function useRouteSession(routeSessionId: string | null) {
             // Already live (just sent the first message, URL replaced) —
             // leave the optimistic state alone.
             if (useChatStore.getState().currentSessionId === routeSessionId) return;
-            setRouteError(null);
-            setRouteLoading(true);
             useChatStore.getState().setCurrentSessionId(routeSessionId);
             useChatStore.getState().setMessages([]);
             loadSessionIntoStore(routeSessionId, isCurrent)
@@ -99,8 +113,6 @@ function useRouteSession(routeSessionId: string | null) {
                 });
         } else {
             if (useChatStore.getState().currentSessionId) resetToFreshChat();
-            setRouteError(null);
-            setRouteLoading(false);
         }
     }, [routeSessionId]);
 
@@ -115,7 +127,7 @@ export function ChatShell({ routeSessionId }: { routeSessionId: string | null })
 
     if (loading) {
         return (
-            <div className="flex h-screen w-full items-center justify-center bg-carbon text-white">
+            <div className="flex h-screen w-full items-center justify-center bg-carbon text-foreground">
                 <Loader2 className="h-8 w-8 animate-spin text-f1-red" />
             </div>
         );

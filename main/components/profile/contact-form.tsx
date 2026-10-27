@@ -68,7 +68,7 @@ export function ContactForm() {
                 }}
                 placeholder="Subject (optional)"
                 aria-label="Contact subject"
-                className="text-sm bg-background/60 border-white/10"
+                className="text-sm bg-background/60 border-border"
             />
             <Textarea
                 value={message}
@@ -78,7 +78,7 @@ export function ContactForm() {
                 }}
                 placeholder="What's on your mind?"
                 aria-label="Contact message"
-                className="min-h-[80px] text-sm bg-background/60 border-white/10"
+                className="min-h-[80px] text-sm bg-background/60 border-border"
             />
             {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
             <div>

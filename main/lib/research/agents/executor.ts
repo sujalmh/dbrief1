@@ -20,6 +20,7 @@ import type { ResearchMemory } from "../memory";
 import type { Task, TaskStatus, Evidence } from "../types";
 import type { ExecutionResult } from "../evidence-store";
 import { findPlaceholderArg, placeholderError, PLACEHOLDER_ERROR_PREFIX } from "@/lib/args-guard";
+import { readToolErrorPayload } from "@/lib/executor";
 
 // =============================================================================
 // Configuration
@@ -248,10 +249,29 @@ export class Executor {
             try {
                 const data = await this.invokeWithTimeout(tool, resolvedArgs);
 
-                // Add to evidence store
+                // Tools sometimes fail softly with `{error:true,...}` /
+                // `{success:false,...}`. Treat that as a failed task and never
+                // admit it to the evidence store, where the synthesizer would
+                // mistake an error payload for evidence.
+                const toolError = readToolErrorPayload(data);
+                if (toolError) {
+                    onUpdate?.({ taskId: task.id, status: "failed", error: toolError.message });
+                    return {
+                        taskId: task.id,
+                        tool: task.tool,
+                        args: resolvedArgs,
+                        success: false,
+                        error: toolError.message,
+                        durationMs: Date.now() - startTime,
+                    };
+                }
+
+                // Add to evidence store. Visualization calls are frontend
+                // markers, not evidence: including them inflates the source
+                // count and gives the synthesizer a "fact" with no data.
                 const toolMetadata = this.registry.getToolMetadata(task.tool);
                 let evidence: Evidence | null = null;
-                if (toolMetadata) {
+                if (toolMetadata && toolMetadata.category !== "visualization") {
                     const result: ExecutionResult = {
                         taskId: task.id,
                         tool: task.tool,
@@ -310,13 +330,17 @@ export class Executor {
      * Invoke a tool with a timeout.
      */
     private async invokeWithTimeout(tool: StructuredTool, args: Record<string, unknown>): Promise<unknown> {
-        const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("Tool execution timed out")), STEP_TIMEOUT_MS)
-        );
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error("Tool execution timed out")), STEP_TIMEOUT_MS);
+        });
 
         const invokePromise = tool.invoke(args);
-
-        return Promise.race([invokePromise, timeoutPromise]);
+        try {
+            return await Promise.race([invokePromise, timeoutPromise]);
+        } finally {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+        }
     }
 
     /**

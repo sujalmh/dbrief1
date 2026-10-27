@@ -90,8 +90,8 @@ describe("composer quota strip (inline, hover for details)", () => {
         expect(strip).toMatch(/if \(!quota\) return null/);
     });
 
-    it("shows a compact chats summary with reset timing", () => {
-        expect(strip).toMatch(/chats/);
+    it("shows a compact questions-used summary with reset timing", () => {
+        expect(strip).toMatch(/daily questions/);
         expect(strip).toMatch(/resetLabel\(quota\.resetsAt\)/);
     });
 

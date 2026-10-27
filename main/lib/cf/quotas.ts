@@ -226,9 +226,10 @@ interface ModelPrice {
 const BUILTIN_PRICES: Array<[string, ModelPrice]> = [
     ["nemotron", { inPerM: 0, outPerM: 0 }],
     [":free", { inPerM: 0, outPerM: 0 }],
-    // Managed fleet runs on the flat-rate Go subscription (MiMo V2.5),
+    // Managed fleet runs on the flat-rate Go subscription (DeepSeek V4.1 Flash),
     // so marginal token cost is zero; token COUNTS are still ledgered
     // (they're the signal future paid tiers will price on).
+    ["deepseek-v4.1-flash", { inPerM: 0, outPerM: 0 }],
     ["mimo", { inPerM: 0, outPerM: 0 }],
     ["gemini-2.0-flash", { inPerM: 0.1, outPerM: 0.4 }],
     ["gemini-2.5-flash", { inPerM: 0.3, outPerM: 2.5 }],

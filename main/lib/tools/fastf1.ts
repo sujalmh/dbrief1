@@ -403,6 +403,26 @@ export const getDriverStandingsTool = tool(
     }
 );
 
+/**
+ * Get constructor (team) standings
+ */
+export const getConstructorStandingsTool = tool(
+    async ({ year, team }) => {
+        return JSON.stringify(await f1Post("/f1/standings/constructors", {
+            year,
+            team: team || undefined,
+        }));
+    },
+    {
+        name: "get_constructor_standings",
+        description: "Get official constructor (team) standings (position, points, wins) for a specific season",
+        schema: z.object({
+            year: YearSchema,
+            team: z.string().optional().describe("Filter by team name (e.g. 'Mercedes', 'Ferrari')"),
+        }),
+    }
+);
+
 // =============================================================================
 // Tool Registry
 // =============================================================================
@@ -443,4 +463,5 @@ export const f1Tools: Record<string, StructuredTool> = {
 
     get_tyres: getTyresTool,
     get_driver_standings: getDriverStandingsTool,
+    get_constructor_standings: getConstructorStandingsTool,
 };

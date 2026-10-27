@@ -56,6 +56,14 @@ describe("message-bubble markdown upgrades", () => {
         expect(source).toMatch(/lineBreaks=\{isUser\}/);
     });
 
+    it("labels partial tool failures as a data gap when an answer exists", () => {
+        expect(source).toMatch(/answerProduced=\{message\.content\.trim\(\)\.length > 0 && !isError\}/);
+        const planning = readSource("components/chat/planning-grid.tsx");
+        expect(planning).toMatch(/const isPartial = isComplete && hasError && !!answerProduced/);
+        expect(planning).toMatch(/"Data gap"/);
+        expect(planning).toMatch(/"Partial"/);
+    });
+
     it("keeps the inline-charts wiring untouched", () => {
         expect(source).toMatch(/<InlineCharts/);
         expect(source).toMatch(/messageId=\{message\.id\}/);

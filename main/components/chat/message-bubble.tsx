@@ -21,6 +21,7 @@ import { UsageFooter } from "@/components/chat/usage-footer"
 import { useRef, memo, useCallback, useState, useMemo, useEffect } from "react"
 import { useChatHandler } from "@/lib/hooks/use-chat-handler"
 import { getDriverColor, getDriverPattern, seasonFromPayload } from "@/lib/f1-colors"
+import { themeSafeColor } from "@/lib/utils/contrast"
 import type { Components } from "react-markdown"
 import type { PluggableList } from "unified"
 
@@ -62,11 +63,20 @@ const highlightDrivers = (text: string, season?: number) => {
         const color = getDriverColor(part, season);
 
         if (color !== "#FFFFFF") {
+            // Team colours are kept, but each theme gets a variant that
+            // actually clears WCAG AA — Red Bull navy / Ferrari red /
+            // McLaren orange otherwise fall to ~4.0:1 on small text.
+            const safe = themeSafeColor(color);
             return (
                 <span
                     key={index}
-                    style={{ color: color }}
-                    className="font-bold brightness-110 drop-shadow-sm"
+                    style={
+                        {
+                            "--driver-light": safe.light,
+                            "--driver-dark": safe.dark,
+                        } as React.CSSProperties
+                    }
+                    className="driver-name font-semibold"
                 >
                     {part}
                 </span>
@@ -97,6 +107,18 @@ const HighlightedText = memo(function HighlightedText({ children, season }: { ch
 });
 
 // Memoized markdown components - defined outside component to avoid recreation
+/** Flatten a React children tree to plain text (for cell heuristics). */
+function childrenToText(children: React.ReactNode): string {
+    if (children == null || typeof children === "boolean") return "";
+    if (typeof children === "string" || typeof children === "number") return String(children);
+    if (Array.isArray(children)) return children.map(childrenToText).join("");
+    if (typeof children === "object" && "props" in (children as { props?: unknown })) {
+        const props = (children as { props?: { children?: React.ReactNode } }).props;
+        return childrenToText(props?.children);
+    }
+    return "";
+}
+
 const createMarkdownComponents = (season?: number): Components => ({
     // Long URLs never push the 360px layout wider — break anywhere.
     // External links get a favicon + open in a new tab.
@@ -151,7 +173,9 @@ const createMarkdownComponents = (season?: number): Components => ({
     },
     th: ({ node: _node, ...props }) => {
         void _node;
-        return <th className="px-4 py-3 font-bold border-b border-border/70 text-left whitespace-nowrap" {...props} />;
+        // `scope="col"` is required for table semantics (screen readers
+        // announce the column header per cell); the visual style stays.
+        return <th scope="col" className="whitespace-nowrap border-b border-border/70 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" {...props} />;
     },
     pre: ({ node: _node, ...props }) => {
         void _node;
@@ -165,15 +189,15 @@ const createMarkdownComponents = (season?: number): Components => ({
     },
     h1: ({ node: _node, ...props }) => {
         void _node;
-        return <h1 aria-level={2} className="mt-6 mb-4 text-2xl font-black uppercase italic tracking-widest text-foreground border-b border-[var(--f1-red)] pb-2" {...props} />;
+        return <h1 aria-level={2} className="mt-6 mb-4 border-b border-border pb-2 text-xl font-semibold tracking-tight text-foreground" {...props} />;
     },
     h2: ({ node: _node, ...props }) => {
         void _node;
-        return <h2 aria-level={3} className="mt-5 mb-3 text-lg font-bold uppercase italic tracking-wider text-foreground" {...props} />;
+        return <h2 aria-level={3} className="mt-5 mb-3 text-lg font-semibold tracking-tight text-foreground" {...props} />;
     },
     h3: ({ node: _node, ...props }) => {
         void _node;
-        return <h3 aria-level={4} className="mt-4 mb-2 text-base font-bold uppercase italic tracking-wide text-muted-foreground" {...props} />;
+        return <h3 aria-level={4} className="mt-5 mb-2 text-[13px] font-semibold uppercase tracking-wider text-foreground/80" {...props} />;
     },
     // GitHub alert callouts (`> [!NOTE]` …) render as colored notes.
     blockquote: ({ node, children }) => {
@@ -207,7 +231,20 @@ const createMarkdownComponents = (season?: number): Components => ({
     },
     p: ({ children }) => <p className="mb-4 last:mb-0"><HighlightedText season={season}>{children}</HighlightedText></p>,
     li: ({ children, ...props }) => <li {...props}><HighlightedText season={season}>{children}</HighlightedText></li>,
-    td: ({ children, ...props }) => <td className="px-4 py-3 border-b border-border/70" {...props}><HighlightedText season={season}>{children}</HighlightedText></td>,
+    td: ({ children, ...props }) => {
+        // Numeric cells (positions, points, lap times, gaps) align right
+        // with tabular figures so columns of digits stay scannable.
+        const text = childrenToText(children).trim();
+        const numeric = /^[+\-−–]?\d[\d.,:]*\s*(s|pts|%|laps?)?$/i.test(text);
+        return (
+            <td
+                className={cn("border-b border-border/70 px-3 py-3", numeric && "text-right tabular-nums")}
+                {...props}
+            >
+                <HighlightedText season={season}>{children}</HighlightedText>
+            </td>
+        );
+    },
     strong: ({ children, ...props }) => <strong {...props}><HighlightedText season={season}>{children}</HighlightedText></strong>
 });
 
@@ -303,18 +340,18 @@ function TableBlock({ children }: { children: React.ReactNode }) {
 
     return (
         <div className="my-4 w-full max-w-full">
-            <div ref={containerRef} className="w-full max-w-full overflow-x-auto">
-                <table className="w-full min-w-[420px] sm:min-w-[520px] text-sm border-collapse">
+            <div ref={containerRef} className="table-scroll w-full max-w-full overflow-x-auto">
+                <table className="w-full min-w-[360px] border-collapse text-sm tabular-nums sm:min-w-[520px]">
                     {children}
                 </table>
             </div>
-            <div className="mt-1 flex items-center justify-end gap-1" role="toolbar" aria-label="Table actions">
+            <div className="mt-1.5 flex items-center justify-end gap-1" role="toolbar" aria-label="Table actions">
                 {(["markdown", "csv"] as const).map((format) => (
                     <button
                         key={format}
                         type="button"
                         onClick={() => handleCopy(format)}
-                        className="rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+                        className="inline-flex h-7 items-center rounded-md border border-border/60 px-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:border-border hover:text-foreground"
                     >
                         {copied ? "Copied" : format === "markdown" ? "Copy MD" : "Copy CSV"}
                     </button>
@@ -513,19 +550,21 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
 
     const ActionsToolbar = (
         <div className={cn(
-            "flex items-center gap-1",
+            "flex items-center gap-0.5",
             isUser
                 // Hover-reveal on desktop; touch has no hover so the
                 // actions stay visible on phones.
-                ? "opacity-0 group-hover:opacity-100 max-md:opacity-100 transition-opacity self-center mr-2"
-                : "mt-2 justify-start"
+                ? "opacity-0 group-hover:opacity-100 focus-within:opacity-100 max-md:opacity-100 transition-opacity self-center mr-2"
+                // Assistant actions stay out of the way until the reader
+                // reaches for them (keyboard users get them on focus).
+                : "mt-2 justify-start opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 max-md:opacity-100"
         )}>
             <Tooltip>
                 <TooltipTrigger asChild>
                     <Button
                         variant="minimal"
                         size="icon"
-                        className="h-7 w-7 rounded-sm hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                        className="h-8 w-8 rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                         onClick={handleCopy}
                     >
                         {isCopied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
@@ -543,7 +582,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                         <Button
                             variant="minimal"
                             size="icon"
-                            className="h-7 w-7 rounded-sm hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                            className="h-8 w-8 rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                             onClick={handleRetry}
                             disabled={isLoading}
                         >
@@ -565,9 +604,9 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                                 variant="minimal"
                                 size="icon"
                                 className={cn(
-                                    "h-7 w-7 rounded-sm hover:bg-muted/50 transition-colors",
+                                    "h-8 w-8 rounded-md transition-colors hover:bg-muted/50",
                                     message.feedback === 'up'
-                                        ? "bg-[var(--f1-red)]/10 text-[var(--f1-red)] hover:text-[var(--f1-red)]"
+                                        ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-400"
                                         : "text-muted-foreground hover:text-foreground"
                                 )}
                                 onClick={() => handleFeedback('up')}
@@ -587,9 +626,9 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                                 variant="minimal"
                                 size="icon"
                                 className={cn(
-                                    "h-7 w-7 rounded-sm hover:bg-muted/50 transition-colors",
+                                    "h-8 w-8 rounded-md transition-colors hover:bg-muted/50",
                                     message.feedback === 'down'
-                                        ? "bg-[var(--f1-red)]/10 text-[var(--f1-red)] hover:text-[var(--f1-red)]"
+                                        ? "bg-red-500/10 text-red-700 dark:text-red-400 hover:text-red-700 dark:hover:text-red-400"
                                         : "text-muted-foreground hover:text-foreground"
                                 )}
                                 onClick={() => handleFeedback('down')}
@@ -610,7 +649,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                     <Button
                         variant="ghost"
                         size="icon"
-                        className="h-7 w-7 rounded-sm hover:bg-muted/50 text-muted-foreground hover:text-red-500 transition-colors"
+                        className="ml-1 h-8 w-8 rounded-md border-l border-border/50 pl-1 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-red-500"
                         onClick={() => deleteEverywhere(message.id)}
                     >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -626,8 +665,8 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
 
     return (
         <div ref={containerRef} className={cn("group flex w-full min-w-0 max-w-full gap-2 md:gap-3 p-3 md:p-4 overflow-hidden", isUser ? "flex-row-reverse" : "flex-row")}>
-            <Avatar className={cn("h-8 w-8 shrink-0 border overflow-hidden", isUser ? "bg-muted/50 border-[var(--f1-red)]" : "bg-white border-white/20")}>
-                <AvatarFallback className={cn("text-xs font-bold", isUser ? "text-[var(--f1-red)] bg-transparent" : "bg-white text-foreground")}>
+            <Avatar className={cn("h-8 w-8 shrink-0 border overflow-hidden shadow-sm", isUser ? "bg-[var(--f1-red)]/10 border-[var(--f1-red)]" : "bg-white border-border")}>
+                <AvatarFallback className={cn("text-xs font-bold", isUser ? "text-[var(--f1-red-ink)] bg-transparent" : "bg-white text-foreground")}>
                     {isUser ? "DRV" : "PIT"}
                 </AvatarFallback>
                 {!isUser && <AvatarImage src="/logo.svg" alt="AI" className="object-contain bg-white p-0.5" />}
@@ -640,12 +679,18 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                     : "min-w-0 flex-1 px-0 py-2 bg-transparent shadow-none"
             )}>
                 {!isUser && (
-                    <span className="text-[10px] uppercase font-mono tracking-wider text-muted-foreground mb-1">
+                    <span className="text-[10px] uppercase font-mono tracking-wider text-[var(--f1-red-ink)] mb-1">
                         Race Engineer
                     </span>
                 )}
 
-                {message.steps && message.steps.length > 0 && <PlanningGrid steps={message.steps} reasoning={message.reasoning} />}
+                {message.steps && message.steps.length > 0 && (
+                    <PlanningGrid
+                        steps={message.steps}
+                        reasoning={message.reasoning}
+                        answerProduced={message.content.trim().length > 0 && !isError}
+                    />
+                )}
 
                 {/* Deep research mode: iterative planning grid */}
                 {message.iterations && message.iterations.length > 0 && (
@@ -673,8 +718,8 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                                 data-testid="degraded-warning"
                                 className="mt-2 flex items-center gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/5 px-3 py-2 text-xs"
                             >
-                                <AlertOctagon className="h-3.5 w-3.5 text-yellow-400 shrink-0" />
-                                <span className="font-bold uppercase tracking-wider text-yellow-400">
+                                <AlertOctagon className="h-3.5 w-3.5 text-amber-600 dark:text-yellow-400 shrink-0" />
+                                <span className="font-bold uppercase tracking-wider text-amber-700 dark:text-yellow-400">
                                     Degraded Mode
                                 </span>
                                 <span className="text-muted-foreground">
@@ -690,7 +735,7 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                         >
                             {message.degradedWarnings.map((w, idx) => (
                                 <div key={idx} className="space-y-0.5">
-                                    <div className="font-bold uppercase text-yellow-400">
+                                    <div className="font-bold uppercase text-amber-700 dark:text-yellow-400">
                                         {w.stage} ({w.kind})
                                     </div>
                                     <div className="text-muted-foreground">{w.message}</div>
@@ -718,13 +763,13 @@ function MessageBubbleComponent({ message, isLastAssistant = false, readOnly = f
                     <div className="mt-2 flex items-center gap-2">
                         <ShieldCheck className={cn(
                             "h-3.5 w-3.5",
-                            message.confidence.overall > 0.7 ? "text-green-400" :
-                            message.confidence.overall > 0.4 ? "text-yellow-400" : "text-red-400"
+                            message.confidence.overall > 0.7 ? "text-emerald-700 dark:text-green-400" :
+                            message.confidence.overall > 0.4 ? "text-amber-700 dark:text-yellow-400" : "text-red-600 dark:text-red-400"
                         )} />
                         <span className={cn(
                             "text-xs font-bold",
-                            message.confidence.overall > 0.7 ? "text-green-400" :
-                            message.confidence.overall > 0.4 ? "text-yellow-400" : "text-red-400"
+                            message.confidence.overall > 0.7 ? "text-emerald-700 dark:text-green-400" :
+                            message.confidence.overall > 0.4 ? "text-amber-700 dark:text-yellow-400" : "text-red-600 dark:text-red-400"
                         )}>
                             Confidence: {(message.confidence.overall * 100).toFixed(0)}%
                         </span>

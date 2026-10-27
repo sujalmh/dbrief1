@@ -69,6 +69,82 @@ export function detectFocus(query: string): string[] {
     return Array.from(new Set(found));
 }
 
+/** Standard mode should not turn one answer into a wall of charts. */
+const MAX_STANDARD_CHARTS = 4;
+
+function isShareQuery(query: string): boolean {
+    return /\b(share|percentage|proportion|distribution|mix)\b/i.test(query);
+}
+
+function isConsistencyQuery(query: string): boolean {
+    return /\b(consisten\w*|distribution|spread|median|box|variab\w*|outlier)\b/i.test(query);
+}
+
+function isPositionQuery(query: string): boolean {
+    return /\b(position|place|gained|lost|overtak|bump|climb|drop)\b/i.test(query);
+}
+
+function uniqueDriverCount(rows: Array<Record<string, unknown>>): number {
+    const key = DRIVER_KEYS.find((k) => rows.some((r) => r[k] != null));
+    if (!key) return 0;
+    return new Set(rows.map((r) => String(r[key] ?? ""))).size;
+}
+
+/** Parse "1:23.456", "0 days 00:10:00", or a numeric string to seconds. */
+function parseTimeToSeconds(value: unknown): number | null {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "string") return null;
+    const cleaned = value.trim().replace(/^0 days\s+/i, "");
+    if (!cleaned) return null;
+    const parts = cleaned.split(":").map((p) => Number(p));
+    if (parts.some((p) => !Number.isFinite(p))) return null;
+    if (parts.length === 3) return parts[0]! * 3600 + parts[1]! * 60 + parts[2]!;
+    if (parts.length === 2) return parts[0]! * 60 + parts[1]!;
+    return Number.isFinite(parts[0]) ? parts[0]! : null;
+}
+
+function quantile(sorted: number[], p: number): number {
+    if (sorted.length === 0) return 0;
+    const idx = (sorted.length - 1) * p;
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    const w = idx - lo;
+    return (sorted[lo] ?? 0) * (1 - w) + (sorted[hi] ?? 0) * w;
+}
+
+function boxStats(values: number[]) {
+    const sorted = [...values].sort((a, b) => a - b);
+    const q1 = quantile(sorted, 0.25);
+    const median = quantile(sorted, 0.5);
+    const q3 = quantile(sorted, 0.75);
+    const iqr = q3 - q1;
+    const lower = q1 - 1.5 * iqr;
+    const upper = q3 + 1.5 * iqr;
+    const inRange = sorted.filter((v) => v >= lower && v <= upper);
+    return {
+        min: inRange[0] ?? sorted[0] ?? 0,
+        q1,
+        median,
+        q3,
+        max: inRange[inRange.length - 1] ?? sorted[sorted.length - 1] ?? 0,
+        outliers: sorted.filter((v) => v < lower || v > upper),
+    };
+}
+
+/** Remove charts that repeat the same type and the same first rows. */
+function dedupeSpecs(specs: ChartSpec[]): ChartSpec[] {
+    const seen = new Set<string>();
+    return specs.filter((spec) => {
+        const data = (spec.config as { data?: unknown })?.data;
+        const signature = Array.isArray(data)
+            ? `${spec.type}|${data.length}|${JSON.stringify(data.slice(0, 3))}`
+            : `${spec.type}|${spec.id}`;
+        if (seen.has(signature)) return false;
+        seen.add(signature);
+        return true;
+    });
+}
+
 /**
  * Synthesize a smart ChartSpec[] from the raw tool results of a standard
  * (non-research) query. This is the equivalent of what the deep-research
@@ -92,33 +168,40 @@ export function synthesizeChartSpecs(
         if (rows.length === 0) continue;
 
         const intent = inferIntentFromTool(result.tool, rows, query);
-        const spec = synthesizeOne(result, rows, intent, focus);
+        let spec: ChartSpec | null = null;
+
+        if (intent === "standings_breakdown" && isShareQuery(query)) {
+            spec = synthesizePointsPie(result, rows);
+        } else if (intent === "strategy_breakdown" && isShareQuery(query)) {
+            spec = synthesizeCompoundPie(result, rows);
+        } else if (intent === "lap_progression") {
+            const drivers = uniqueDriverCount(rows);
+            if (isPositionQuery(query) && detectRoundPosShape(rows)) {
+                spec = synthesizeBump(result, rows);
+            } else if (drivers <= 1 && isConsistencyQuery(query)) {
+                spec = synthesizeHistogram(result, rows);
+            } else if (drivers > 1 && isConsistencyQuery(query)) {
+                spec = synthesizeBoxPlot(result, rows);
+            } else if (drivers === 2 && focus.length === 2) {
+                const driverKey = DRIVER_KEYS.find((k) => rows.some((r) => r[k] != null));
+                const timeKey = LAP_TIME_KEYS.find((k) => rows.some((r) => r[k] != null));
+                if (driverKey && timeKey) {
+                    spec = synthesizePaceDumbbell(result, rows, focus, driverKey, timeKey);
+                }
+                if (!spec) spec = synthesizeSwarm(result, rows);
+            } else if (drivers > 1) {
+                spec = synthesizeSwarm(result, rows);
+            } else {
+                spec = synthesizeOne(result, rows, intent, focus, query);
+            }
+        } else {
+            spec = synthesizeOne(result, rows, intent, focus, query);
+        }
+
         if (spec && hasChartData(spec)) specs.push(spec);
-
-        if (intent === "standings_breakdown") {
-            const pie = synthesizePointsPie(result, rows);
-            if (pie && hasChartData(pie)) specs.push(pie);
-            const cards = synthesizeTopDriverCards(result, rows);
-            if (cards && hasChartData(cards)) specs.push(cards);
-        }
-        if (intent === "strategy_breakdown") {
-            const pie = synthesizeCompoundPie(result, rows);
-            if (pie && hasChartData(pie)) specs.push(pie);
-        }
-
-        if (intent === "lap_progression") {
-            // Multi-driver lap data also gets a pace-distribution swarm
-            // (one dot per lap, f1pace-style) so the full-race comparison
-            // reads at a glance — plus a position bump when the payload
-            // carries per-lap positions.
-            const swarm = synthesizeSwarm(result, rows);
-            if (swarm && hasChartData(swarm)) specs.push(swarm);
-            const bump = synthesizeBump(result, rows);
-            if (bump && hasChartData(bump)) specs.push(bump);
-        }
     }
 
-    return specs;
+    return dedupeSpecs(specs).slice(0, MAX_STANDARD_CHARTS);
 }
 
 /** Tool outputs with no chart renderer — never synthesize from these. */
@@ -231,7 +314,8 @@ function synthesizeOne(
     result: RawResult,
     rows: Array<Record<string, unknown>>,
     intent: string,
-    focus: string[]
+    focus: string[],
+    query: string
 ): ChartSpec | null {
     const keys = new Set<string>();
     for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
@@ -304,22 +388,46 @@ function synthesizeOne(
         }
 
         case "standings_breakdown": {
-            const driver = pick("driver", "Driver", "Abbreviation") ?? "driver";
+            const driver = pick("driver", "Driver", "Abbreviation", "team", "Team", "team_name") ?? "driver";
+            const isTeamTable = driver === "team" || driver === "team_name";
             const points = pick("points", "Points") ?? "points";
-            const aggregated = aggregateRows(rows, driver, points, "sum", { topN: 20 });
+            const wins = pick("wins", "Wins");
+            const gap = pick("points_gap_to_leader", "pointsGapToLeader", "gap_to_leader", "gap");
+            const wantsWins = /\bwins?\b/i.test(query) && wins !== null;
+            const wantsGap = !wantsWins && /\b(gap|behind|deficit)\b/i.test(query) && gap !== null;
+            const metric = wantsWins ? wins! : wantsGap ? gap! : points;
+            const aggregated = aggregateRows(rows, driver, metric, wantsGap ? "average" : "sum", {
+                sort: wantsGap ? "asc" : "desc",
+            }).slice(0, 10);
+            const xAxisLabel = wantsWins
+                ? "Wins"
+                : wantsGap
+                  ? "Points gap to leader"
+                  : "Championship points";
+            const topLabel = isTeamTable ? "Top 10 teams" : "Top 10 drivers";
             return {
                 id: `standings_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
                 type: "horizontal_bar",
-                title: `Final Standings: ${argsSummary(result.args)}`,
-                subtitle: "Total championship points",
+                title: wantsWins
+                    ? `Wins: ${argsSummary(result.args)}`
+                    : wantsGap
+                      ? `Points Gap to Leader: ${argsSummary(result.args)}`
+                      : `Final Standings: ${argsSummary(result.args)}`,
+                subtitle: wantsWins
+                    ? `${topLabel} • race wins`
+                    : wantsGap
+                      ? `${topLabel} • lower is closer to the leader`
+                      : isTeamTable
+                        ? `${topLabel} • constructor points`
+                        : `${topLabel} • championship points`,
                 dataSource: result.tool,
                 xField: driver,
-                yField: points,
+                yField: metric,
                 config: {
                     data: aggregated,
-                    xAxisLabel: "Championship points",
-                    yAxisLabel: driver,
-                    unit: "pts",
+                    xAxisLabel,
+                    yAxisLabel: isTeamTable ? "Team" : "Driver",
+                    unit: wantsWins ? "wins" : "pts",
                     intent,
                     highlight: aggregated[0] ? { key: aggregated[0].key, value: aggregated[0].value } : undefined,
                 },
@@ -346,6 +454,10 @@ function synthesizeOne(
                     yAxisLabel: "Driver",
                     unit: "s",
                     intent,
+                    // Fastest (smallest) first — the renderer draws index 0
+                    // at the top and converts absolute lap times into a
+                    // gap-to-quickest scale so the spread is visible.
+                    sortAsc: true,
                     highlight: aggregated[0] ? { key: aggregated[0].key, value: aggregated[0].value } : undefined,
                 },
             };
@@ -381,44 +493,97 @@ function synthesizeOne(
         }
 
         case "finishing_order": {
-            // Single-GP classification ordered by finish (P1 first, winner
-            // highlighted). Renders ascending — the bar renderer sorts
-            // descending by default, so the spec carries sortAsc.
+            type FinishRow = {
+                position: number;
+                driver: string;
+                name?: string;
+                team?: string;
+                time?: string;
+                gap?: string;
+                status?: string;
+                points?: number;
+                gained?: number;
+                grid?: number;
+            };
             const driver = pick("driver", "Driver", "Abbreviation") ?? "driver";
             const pos = pick("finish", "Finish", "finish_position", "FinishPosition", "position", "Position", "pos", "Pos") ?? "position";
-            const data = rows
+            const team = pick("team", "Team", "TeamName", "team_name");
+            const name = pick("name", "FullName", "driver_name", "DriverName");
+            const time = pick("time", "Time");
+            const gap = pick("gap", "GapToLeader", "gap_to_leader", "Gap");
+            const status = pick("status", "Status", "ClassifiedPosition");
+            const points = pick("points", "Points");
+            const gained = pick("PositionsGained", "positions_gained", "positionsGained", "gained");
+            const grid = pick("grid", "Grid", "GridPosition", "grid_position");
+            const data: FinishRow[] = rows
                 .map((r) => ({
-                    key: String(r[driver] ?? "?"),
-                    value: toNumberSafe(r[pos]) ?? NaN,
+                    position: toNumberSafe(r[pos]) ?? 0,
+                    driver: String(r[driver] ?? "?"),
+                    name: name ? String(r[name] ?? "") : undefined,
+                    team: team ? String(r[team] ?? "") : undefined,
+                    time: time ? String(r[time] ?? "") : undefined,
+                    gap: gap ? String(r[gap] ?? "") : undefined,
+                    status: status ? String(r[status] ?? "") : undefined,
+                    points: points ? toNumberSafe(r[points]) ?? undefined : undefined,
+                    gained: gained ? toNumberSafe(r[gained]) ?? undefined : undefined,
+                    grid: grid ? toNumberSafe(r[grid]) ?? undefined : undefined,
                 }))
-                .filter((d) => Number.isFinite(d.value) && d.value > 0)
-                .sort((a, b) => a.value - b.value);
+                .filter((d) => Number.isFinite(d.position) && d.position > 0)
+                .sort((a, b) => a.position - b.position);
             if (data.length === 0) return null;
-            const winner = data[0]!;
+
             return {
                 id: `finish_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
-                type: "horizontal_bar",
+                type: "position_ladder",
                 title: `Finishing Order: ${argsSummary(result.args)}`,
                 subtitle: "Final classification",
                 dataSource: result.tool,
-                xField: driver,
-                yField: pos,
+                xField: "position",
+                yField: "driver",
                 config: {
                     data,
-                    xAxisLabel: "Finishing position",
+                    xAxisLabel: "Position",
                     yAxisLabel: "Driver",
                     unit: "pos",
                     intent,
-                    sortAsc: true,
-                    highlight: { key: winner.key, value: winner.value },
                 },
             };
         }
 
-        case "weather_conditions":
-            // No weather renderer exists — a generic comparison bar from
-            // temperature rows would be misleading, so render nothing.
-            return null;
+        case "weather_conditions": {
+            const timeKey = pick("time", "Time", "session_time", "SessionTime");
+            const air = pick("air_temp", "AirTemp", "air_temperature");
+            const track = pick("track_temp", "TrackTemp", "track_temperature");
+            if (!air && !track) return null;
+            const series = [air ? "air_temp" : null, track ? "track_temp" : null].filter(
+                (s): s is string => s !== null
+            );
+            const data = rows
+                .map((r, i) => ({
+                    x: parseTimeToSeconds(timeKey ? r[timeKey] : null) ?? i + 1,
+                    air_temp: air ? toNumberSafe(r[air]) : null,
+                    track_temp: track ? toNumberSafe(r[track]) : null,
+                }))
+                .filter((d) => d.air_temp != null || d.track_temp != null);
+            if (data.length < 2) return null;
+            return {
+                id: `weather_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
+                type: "line",
+                title: `Weather: ${argsSummary(result.args)}`,
+                subtitle: "Air and track temperature over the session",
+                dataSource: result.tool,
+                xField: "x",
+                yField: series[0] ?? "air_temp",
+                config: {
+                    data,
+                    xAxisLabel: "Session time (s)",
+                    yAxisLabel: "Temperature (°C)",
+                    unit: "°C",
+                    series,
+                    intent,
+                },
+            };
+        }
 
         case "strategy_breakdown": {            // tyre compound usage: { driver: { SOFT: n, MEDIUM: n, HARD: n } }
             const driver = pick("driver", "Driver") ?? "driver";
@@ -458,7 +623,12 @@ function synthesizeOne(
         default: {
             // Default: best driver on a single numeric metric
             const driver = pick("driver", "Driver", "Abbreviation") ?? "driver";
-            const metric = pick("time", "Time", "lap_time", "LapTime", "q3", "Q3", "position", "Position", "points", "Points") ?? "value";
+            const time = pick("time", "Time", "lap_time", "LapTime");
+            if (focus.length === 2 && time) {
+                const pace = synthesizePaceDumbbell(result, rows, focus, driver, time);
+                if (pace) return pace;
+            }
+            const metric = time ?? pick("q3", "Q3", "position", "Position", "points", "Points") ?? "value";
             const aggregated = aggregateRows(rows, driver, metric, "average", { topN: 10 });
             // Mark focus drivers so the renderer highlights them
             const data = aggregated.map((r) => ({
@@ -489,8 +659,155 @@ function synthesizeOne(
 }
 
 /**
+ * Two-driver pace comparison: best lap vs average lap per driver.
+ * A dumbbell shows both the peak and the typical pace; a bar of averages
+ * hides the peak that decides qualifying or a fastest-lap question.
+ */
+function synthesizePaceDumbbell(
+    result: RawResult,
+    rows: Array<Record<string, unknown>>,
+    focus: string[],
+    driverKey: string,
+    timeKey: string
+): ChartSpec | null {
+    const groups = new Map<string, number[]>();
+    for (const row of rows) {
+        const driver = String(row[driverKey] ?? "?");
+        const value = toNumberSafe(row[timeKey]);
+        if (value == null || value <= 0) continue;
+        if (!groups.has(driver)) groups.set(driver, []);
+        groups.get(driver)!.push(value);
+    }
+    const chosen = focus.map((code) => {
+        const match = Array.from(groups.keys()).find((d) => d.toUpperCase() === code.toUpperCase());
+        return match ?? null;
+    });
+    if (chosen.some((c) => c == null)) return null;
+    if (chosen.length !== 2) return null;
+    if ((chosen as string[]).some((driver) => (groups.get(driver)?.length ?? 0) < 2)) return null;
+    const data = (chosen as string[]).map((driver) => {
+        const values = groups.get(driver)!;
+        const best = Math.min(...values);
+        const average = values.reduce((a, b) => a + b, 0) / values.length;
+        return { category: driver, left: best, right: average, delta: average - best };
+    });
+    if (data.some((d) => !Number.isFinite(d.left) || !Number.isFinite(d.right))) return null;
+    return {
+        id: `pace_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
+        type: "dumbbell",
+        title: `Pace Comparison: ${(chosen as string[]).join(" vs ")}`,
+        subtitle: "Best lap vs average lap",
+        dataSource: result.tool,
+        xField: "category",
+        yField: "right",
+        config: {
+            data,
+            xAxisLabel: "Lap time",
+            yAxisLabel: "Driver",
+            unit: "s",
+            leftLabel: "Best",
+            rightLabel: "Average",
+            intent: "compare_drivers",
+        },
+    };
+}
+
+/**
+ * Lap-time distribution for multi-driver data. A box plot is the right
+ * family when the question is about consistency or spread; a line per lap
+ * would be noise.
+ */
+function synthesizeBoxPlot(
+    result: RawResult,
+    rows: Array<Record<string, unknown>>
+): ChartSpec | null {
+    const keys = new Set<string>();
+    for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
+    const has = (k: string) => keys.has(k);
+    const driver = DRIVER_KEYS.find(has);
+    const time = LAP_TIME_KEYS.find(has);
+    if (!driver || !time) return null;
+    const groups = new Map<string, number[]>();
+    for (const row of rows) {
+        const d = String(row[driver] ?? "?");
+        const v = toNumberSafe(row[time]);
+        if (v == null || v <= 0) continue;
+        if (!groups.has(d)) groups.set(d, []);
+        groups.get(d)!.push(v);
+    }
+    if (groups.size < 2) return null;
+    const data = Array.from(groups, ([category, values]) => ({
+        category,
+        ...boxStats(values),
+    }));
+    return {
+        id: `box_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
+        type: "box_plot",
+        title: `Lap Time Distribution: ${argsSummary(result.args)}`,
+        subtitle: `${groups.size} drivers • median and interquartile range`,
+        dataSource: result.tool,
+        xField: "category",
+        yField: "value",
+        config: {
+            data,
+            xAxisLabel: "Driver",
+            yAxisLabel: "Lap time",
+            unit: "s",
+            intent: "lap_time_distribution",
+        },
+    };
+}
+
+/**
+ * Single-driver lap-time histogram for consistency questions. A line chart
+ * shows the order of laps; a histogram shows the shape of the pace.
+ */
+function synthesizeHistogram(
+    result: RawResult,
+    rows: Array<Record<string, unknown>>
+): ChartSpec | null {
+    const keys = new Set<string>();
+    for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
+    const has = (k: string) => keys.has(k);
+    const time = LAP_TIME_KEYS.find(has);
+    if (!time) return null;
+    const values = rows
+        .map((r) => toNumberSafe(r[time]))
+        .filter((v): v is number => v != null && v > 0);
+    if (values.length < 5) return null;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const binCount = Math.min(12, Math.max(5, Math.ceil(Math.sqrt(values.length))));
+    const width = (max - min) / binCount || 1;
+    const data = Array.from({ length: binCount }, (_, i) => ({
+        bin: (min + i * width).toFixed(1),
+        count: 0,
+    }));
+    for (const value of values) {
+        const idx = Math.min(binCount - 1, Math.floor((value - min) / width));
+        data[idx]!.count += 1;
+    }
+    return {
+        id: `hist_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
+        type: "histogram",
+        title: `Lap Time Distribution: ${argsSummary(result.args)}`,
+        subtitle: `${values.length} laps • ${binCount} bins`,
+        dataSource: result.tool,
+        xField: "bin",
+        yField: "count",
+        config: {
+            data,
+            xAxisLabel: "Lap time (s)",
+            yAxisLabel: "Laps",
+            unit: "laps",
+            intent: "lap_time_distribution",
+        },
+    };
+}
+
+/**
  * Pace-distribution swarm (one dot per lap) for multi-driver lap data.
- * Returns null unless at least two drivers share lap-time rows — single
+ * Returns null unless at least two drivers share lap-time rows - single
  * stints stay a plain progression line.
  */
 function synthesizeSwarm(
@@ -635,39 +952,6 @@ function synthesizePointsPie(
             yAxisLabel: points,
             unit: "pts",
             donut: true,
-        },
-    };
-}
-
-/**
- * Colored stat cards for the top drivers by points.
- */
-function synthesizeTopDriverCards(
-    result: RawResult,
-    rows: Array<Record<string, unknown>>
-): ChartSpec | null {
-    const keys = new Set<string>();
-    for (const r of rows) for (const k of Object.keys(r)) keys.add(k);
-    const has = (k: string) => keys.has(k);
-    const driver = ["driver", "Driver", "Abbreviation"].find(has);
-    const points = ["points", "Points"].find(has);
-    if (!driver || !points) return null;
-    const aggregated = aggregateRows(rows, driver, points, "sum", { topN: 3 });
-    if (aggregated.length === 0) return null;
-    const data = aggregated.map((r) => ({ key: r.key, value: r.value, label: r.label }));
-    return {
-        id: `stats_${result.tool}_${Math.random().toString(36).slice(2, 6)}`,
-        type: "stat_cards",
-        title: `Top Drivers: ${argsSummary(result.args)}`,
-        subtitle: "Championship leaders",
-        dataSource: result.tool,
-        xField: driver,
-        yField: points,
-        config: {
-            data,
-            xAxisLabel: driver,
-            yAxisLabel: points,
-            unit: "pts",
         },
     };
 }

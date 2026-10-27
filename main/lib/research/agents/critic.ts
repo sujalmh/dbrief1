@@ -54,7 +54,7 @@ export class Critic {
                 grounded: isRefusal,
                 issues: isRefusal
                     ? []
-                    : ["Answer was generated with no evidence in the store — likely using training data."],
+                    : ["Answer was generated with no evidence in the store - likely using training data."],
                 severity: isRefusal ? "ok" : "major",
             };
         }

@@ -12,6 +12,9 @@ import { isRecencyQuery } from "@/lib/planner";
 describe("isRecencyQuery", () => {
     it.each([
         "who won the last race",
+        "who won?",
+        "Who won the race?",
+        "Who won the Grand Prix?",
         "Who won the last Grand Prix?",
         "latest F1 news",
         "most recent race results",
@@ -34,6 +37,7 @@ describe("isRecencyQuery", () => {
         "Show Verstappen's lap times in the 2023 Monaco GP",
         "Compare telemetry between NOR and PIA in Abu Dhabi 2023",
         "Who won the championship in 2010?",
+        "Who won the 2024 British Grand Prix?",
         "Hey! How can you help with F1?",
         "What if Abu Dhabi 2021 didn't end under safety car?",
         "Explain the DRS rules",

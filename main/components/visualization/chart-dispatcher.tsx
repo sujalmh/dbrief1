@@ -18,6 +18,7 @@ import * as React from "react";
 import type { ChartSpec } from "@/lib/research/types";
 import {
     HorizontalBarChart,
+    PositionLadder,
     LineOrAreaChart,
     ScatterPlot,
     StackedBarChart,
@@ -112,6 +113,33 @@ export function ChartDispatcher({ spec }: { spec: ChartSpec }) {
                         unit,
                         highlightKey: cfg.highlight?.key,
                         sortAsc: cfg.sortAsc === true,
+                    }}
+                />
+            );
+
+        case "position_ladder":
+            return (
+                <PositionLadder
+                    spec={{
+                        type: "position_ladder",
+                        title: spec.title,
+                        subtitle: spec.subtitle,
+                        insight,
+                        question,
+                        data: data as unknown as Array<{
+                            position: number;
+                            driver: string;
+                            name?: string;
+                            team?: string;
+                            time?: string;
+                            gap?: string;
+                            status?: string;
+                            points?: number;
+                            gained?: number;
+                        }>,
+                        xAxisLabel,
+                        yAxisLabel,
+                        unit,
                     }}
                 />
             );

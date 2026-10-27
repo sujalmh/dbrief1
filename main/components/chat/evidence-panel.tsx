@@ -9,20 +9,20 @@ interface EvidencePanelProps {
 }
 
 const EVIDENCE_TYPE_COLORS: Record<string, string> = {
-    qualifying: "text-purple-400",
-    race: "text-red-400",
-    laps: "text-blue-400",
-    telemetry: "text-cyan-400",
-    telemetry_summary: "text-cyan-300",
-    weather: "text-yellow-400",
-    standings: "text-green-400",
-    race_control: "text-orange-400",
-    tyres: "text-amber-400",
-    regulation: "text-indigo-400",
-    web_search: "text-gray-400",
-    simulation: "text-pink-400",
-    results: "text-blue-300",
-    fastest_lap: "text-emerald-400",
+    qualifying: "text-purple-700 dark:text-purple-400",
+    race: "text-red-700 dark:text-red-400",
+    laps: "text-blue-700 dark:text-blue-400",
+    telemetry: "text-cyan-700 dark:text-cyan-400",
+    telemetry_summary: "text-cyan-700 dark:text-cyan-300",
+    weather: "text-amber-700 dark:text-yellow-400",
+    standings: "text-emerald-700 dark:text-green-400",
+    race_control: "text-orange-700 dark:text-orange-400",
+    tyres: "text-amber-700 dark:text-amber-400",
+    regulation: "text-indigo-700 dark:text-indigo-400",
+    web_search: "text-muted-foreground",
+    simulation: "text-pink-700 dark:text-pink-400",
+    results: "text-blue-700 dark:text-blue-300",
+    fastest_lap: "text-emerald-700 dark:text-emerald-400",
 }
 
 export function EvidencePanel({ evidence }: EvidencePanelProps) {

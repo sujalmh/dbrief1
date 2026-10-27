@@ -85,6 +85,23 @@ export class EvidenceStore {
             return null;
         }
 
+        // Defense in depth: never admit a soft tool-error payload as evidence,
+        // even if a caller forgot to normalize it.
+        let parsedData: unknown = result.data;
+        if (typeof parsedData === "string") {
+            try {
+                parsedData = JSON.parse(parsedData) as unknown;
+            } catch {
+                // Plain text is valid evidence for some tools.
+            }
+        }
+        if (typeof parsedData === "object" && parsedData !== null && !Array.isArray(parsedData)) {
+            const rec = parsedData as Record<string, unknown>;
+            if (rec.error === true || rec.success === false || (typeof rec.error === "string" && rec.error.trim())) {
+                return null;
+            }
+        }
+
         const id = `E${++this.counter}`;
         const source: EvidenceSource = {
             tool: result.tool,

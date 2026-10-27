@@ -47,9 +47,13 @@ docker run -p 8080:8080 f1-api
 - `POST /f1/session/load` - Load session metadata
 
 ### Results
-- `POST /f1/results` - Session results
-- `POST /f1/qualifying` - Qualifying results
-- `POST /f1/race` - Race results
+- `POST /f1/results` - Session results (results-only load; recently finished sessions supported)
+- `POST /f1/qualifying` - Qualifying results (results-only load)
+- `POST /f1/race` - Race results (results-only load)
+
+### Standings
+- `POST /f1/standings/drivers` - Driver standings
+- `POST /f1/standings/constructors` - Constructor (team) standings
 
 ### Lap Data
 - `POST /f1/laps` - All laps with filters

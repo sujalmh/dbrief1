@@ -244,7 +244,6 @@ describe("feedback + contact + admin wiring", () => {
     it("all modals use flat liquid glass (no gradients)", () => {
         for (const rel of [
             "components/chat/settings-modal.tsx",
-            "components/chat/feedback-dialog.tsx",
             "components/chat/share-dialog.tsx",
             "components/layout/info-modal.tsx",
             "components/profile/profile-modal.tsx",
@@ -255,6 +254,12 @@ describe("feedback + contact + admin wiring", () => {
             expect(source, rel).toMatch(/modal-glass/);
             expect(source, rel).not.toMatch(/bg-gradient-to-r from-white/);
         }
+        // The feedback dialog is deliberately opaque: chart colours bled
+        // through the glass and made the rating copy hard to read.
+        const feedback = readSource("components/chat/feedback-dialog.tsx");
+        expect(feedback).not.toMatch(/modal-glass/);
+        expect(feedback).toMatch(/border-border bg-background/);
+        expect(feedback).not.toMatch(/bg-gradient-to-r from-white/);
         const css = readSource("app/globals.css");
         expect(css).toMatch(/\.modal-glass/);
         expect(css).toMatch(/backdrop-filter: blur/);

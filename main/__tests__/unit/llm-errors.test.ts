@@ -136,6 +136,22 @@ describe("classifyLlmError", () => {
             expect(cls.kind).toBe("bad_output");
             expect(cls.recoverable).toBe(true);
         });
+
+        it("classifies a structured-output 400 as recoverable", () => {
+            const err = Object.assign(
+                new Error('400 {"model":"deepseek-v4.1-flash"}'),
+                { status: 400 }
+            );
+            const cls = classifyLlmError(err, "IntentAnalyzer.structured");
+            expect(cls.kind).toBe("bad_output");
+            expect(cls.recoverable).toBe(true);
+        });
+
+        it("keeps a non-structured 400 non-recoverable", () => {
+            const err = Object.assign(new Error("400 malformed request"), { status: 400 });
+            const cls = classifyLlmError(err, "Responder.stream");
+            expect(cls.recoverable).toBe(false);
+        });
     });
 
     describe("safety net: unknown errors default to non-recoverable", () => {

@@ -100,23 +100,23 @@ export function QuotaStrip() {
                         setOpen(false);
                     }
                 }}
-                className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[10px] font-mono text-muted-foreground/80 transition-colors hover:text-foreground focus-visible:text-foreground"
+                className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] font-mono text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground"
             >
                 <span
                     data-testid="quota-strip-dot"
                     className={cn("h-2 w-2 shrink-0 rounded-full", quotaDotTone(quota, util))}
                 />
                 <span className="truncate whitespace-nowrap">
-                    {compact(quota.account.queriesUsed)}/{compact(quota.account.queriesCap)} chats
+                    {compact(quota.account.queriesUsed)}/{compact(quota.account.queriesCap)} daily questions
                 </span>
-                <span className="shrink-0">·</span>
-                <span className="shrink-0 whitespace-nowrap">{resetLabel(quota.resetsAt)}</span>
+                <span className="hidden shrink-0 sm:inline">·</span>
+                <span className="hidden shrink-0 whitespace-nowrap sm:inline">{resetLabel(quota.resetsAt)}</span>
             </button>
             {open && (
                 <div
                     role="dialog"
                     aria-label="Daily usage details"
-                    className="absolute bottom-full right-0 z-50 mb-2 rounded-xl border border-white/15 bg-white/75 dark:bg-black/45 shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-xl"
+                    className="absolute bottom-full right-0 z-50 mb-2 overflow-hidden rounded-xl border border-border bg-popover/95 shadow-[0_8px_32px_var(--wheel-shadow)] backdrop-blur-xl"
                 >
                     <QuotaCard quota={quota} />
                 </div>

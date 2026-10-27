@@ -49,7 +49,7 @@ import type {
  * would otherwise allow more iterations, we stop once this elapses so a
  * single slow tool/plan/reflect call cannot hang the user forever.
  */
-const OVERALL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const OVERALL_TIMEOUT_MS = 4 * 60 * 1000; // 4 minutes (route budget is 5)
 
 // =============================================================================
 // Research Manager
@@ -92,7 +92,7 @@ export class ResearchManager {
          * reads the accumulator, only forwards chunks into it.
          */
     ) {
-        this.registry = createToolRegistry(options.deepResearch);
+        this.registry = createToolRegistry(options.deepResearch, plannerModel);
         this.evidenceStore = new EvidenceStore();
         this.memory = new ResearchMemory();
         this.reasoner = new Reasoner(plannerModel);
@@ -457,6 +457,7 @@ export class ResearchManager {
             // answer that wasn't grounded in the data they asked for.
             let reportStream: AsyncGenerator<string> | null = null;
             try {
+                const remainingMs = Math.max(0, OVERALL_TIMEOUT_MS - (Date.now() - startTime));
                 reportStream = this.synthesizer.generate({
                     objective,
                     researchType,
@@ -464,6 +465,10 @@ export class ResearchManager {
                     memory: this.memory,
                     confidence,
                     chartSpecs,
+                    // Leave enough headroom for the platform's route budget;
+                    // a stalled synthesis must abort instead of being killed
+                    // mid-stream by the hosting timeout.
+                    timeoutMs: Math.max(20_000, remainingMs),
                     // Forward every raw LLM chunk to the usage
                     // accumulator so the API route can emit a single
                     // `usage` SSE event at the end of the deep
@@ -538,8 +543,11 @@ export class ResearchManager {
 
                 // --- Step 5.5: Critic verification ---
                 // Skip verification if the synthesizer errored — there's
-                // nothing meaningful to verify.
-                if (!synthErrored) {
+                // nothing meaningful to verify. Also skip it when the route
+                // budget is nearly exhausted: a 60s critic call would push
+                // the stream past the platform's execution ceiling.
+                const criticRemainingMs = OVERALL_TIMEOUT_MS - (Date.now() - startTime);
+                if (!synthErrored && criticRemainingMs > 45_000) {
                     try {
                         const criticResult = await this.critic.review(
                             fullReport,
@@ -550,7 +558,7 @@ export class ResearchManager {
 
                         if (criticResult.severity === "major") {
                             const warning =
-                                "\n\n---\n⚠️ **Verification note:** Some claims in this answer could not be fully verified against the retrieved data. Please cross-check with official F1 sources.";
+                                "\n\n---\n**Verification note:** Some claims in this answer could not be fully verified against the retrieved data. Please cross-check with official F1 sources.";
                             yield { type: "token", content: warning };
                         }
                     } catch (criticError) {
@@ -590,6 +598,12 @@ export class ResearchManager {
             }
 
             // --- Done ---
+            if (timedOut) {
+                yield {
+                    type: "error",
+                    message: `Research reached the overall time limit (${Math.round(OVERALL_TIMEOUT_MS / 1000)}s) and finished with the evidence gathered so far.`,
+                };
+            }
             yield {
                 type: "done",
                 result: {
@@ -600,12 +614,6 @@ export class ResearchManager {
                     confidence: confidence.overall,
                 },
             };
-            if (timedOut) {
-                yield {
-                    type: "error",
-                    message: `Research reached the overall time limit (${Math.round(OVERALL_TIMEOUT_MS / 1000)}s) — synthesizing with the evidence gathered so far.`,
-                };
-            }
         } catch (error) {
             yield {
                 type: "error",
@@ -632,13 +640,16 @@ export async function createResearchManager(
     mode: AiMode,
     byok: { baseUrl?: string; model?: string; apiKey?: string } | undefined,
     options: ResearchOptions,
-    reasoning: boolean = false
+    reasoning: boolean = false,
+    sessionId?: string
 ): Promise<ResearchManager> {
     // Independent model constructions (dynamic imports + client setup) —
-    // run together instead of sequentially.
+    // run together instead of sequentially. The gateway session id is
+    // required by OpenCode Go; callers that use this factory directly must
+    // pass one or model init will fail with a 400.
     const [plannerModel, responderModel] = await Promise.all([
-        getPlannerModel(mode, byok),
-        getResponderModel(mode, byok, reasoning),
+        getPlannerModel(mode, byok, sessionId),
+        getResponderModel(mode, byok, reasoning, sessionId),
     ]);
 
     return new ResearchManager(plannerModel, responderModel, options);

@@ -117,7 +117,7 @@ Today is ${currentDate}. The ${currentYear} season is in progress. "Recent", "la
 ${toolList}
 
 ## Rules
-1. Each task must use a tool from the list above, spelled EXACTLY as listed — never invent variants (there is no get_constructors_standings: use get_driver_standings and aggregate by team).
+1. Each task must use a tool from the list above, spelled EXACTLY as listed — never invent variants. Use get_constructor_standings for official team championship questions and get_driver_standings for drivers.
 2. Tool args must match the tool's input schema.
 3. Use {{task_id.field.path}} template syntax in args to reference outputs of prior tasks. Example: { "gp": "{{task_1_1.events[2].event_name}}" }
 4. Task IDs are assigned in order as task_<iteration>_<n> (first task this iteration is task_1_1, second task_1_2, ...). Use dependsOn with those EXACT IDs to specify task IDs that must complete before this task can run.
@@ -125,6 +125,9 @@ ${toolList}
 6. Only produce tasks that are needed for the current strategy — don't over-plan.
 7. For years before 2018, only use get_driver_standings, get_race, get_qualifying, get_results (no telemetry/laps).
 8. Driver codes are 3 letters: VER, HAM, LEC, NOR, etc.
+9. Pre-season testing (RoundNumber 0 / EventFormat "testing") is NOT a Grand Prix. Never use it as a race or as the last/next event.
+10. Never plan fetch_web_pages without concrete URLs. If URLs are unknown, use web_search first; do not invent links.
+11. For lap-time analysis, get_laps returns a compact per-lap table plus clean averages. Plan one call per driver, not a second summary call.
 
 ## Handling Predictive / Simulation / What-If Queries
 When the objective is a prediction, counterfactual, or "what-if" scenario (keywords: "what if", "simulate", "predict", "project", "how would", "what would happen", "counterfactual", "hypothetical"), you MUST:
@@ -142,7 +145,7 @@ When the objective is a prediction, counterfactual, or "what-if" scenario (keywo
 Example plan for "What if Abu Dhabi 2021 didn't end under safety car?":
   task_1_1: get_laps(year=2021, gp="Abu Dhabi", session="R", driver="HAM", lap_start=50, lap_end=55)
   task_1_2: get_laps(year=2021, gp="Abu Dhabi", session="R", driver="VER", lap_start=50, lap_end=55)
-  task_1_3: run_simulation(scenario_id="abu-dhabi-21-no-sc", horizon="race", metric="gap", reference_data="{{task_1_1}}", reference_field="LapTime", dependsOn=["task_1_1","task_1_2"])
+  task_1_3: run_simulation(scenario_id="abu-dhabi-21-no-sc", horizon="race", metric="gap", reference_data="{{task_1_1}}", reference_field="LapTime"), with dependsOn=["task_1_1","task_1_2"] set as a TASK FIELD (not inside args).
 If no historical data is relevant (pure hypothetical), you may call run_simulation with explicit base_value/variance, but prefer grounding in data whenever possible.
 
 ## Current State
@@ -270,11 +273,13 @@ ${memory.toContextString()}`;
             text.toLowerCase().includes(gp.toLowerCase())
         );
 
-        // Always get standings for the year
+        // Always get standings for the year (constructor table when the
+        // question is about teams, driver table otherwise).
+        const wantsConstructors = /\b(constructors?|teams?)\b/i.test(text);
         tasks.push({
             id: `task_${iteration}_${taskNum++}`,
-            description: `Get driver standings for ${year}`,
-            tool: "get_driver_standings",
+            description: `Get ${wantsConstructors ? "constructor" : "driver"} standings for ${year}`,
+            tool: wantsConstructors ? "get_constructor_standings" : "get_driver_standings",
             args: { year },
             dependsOn: [],
             status: "pending" as const,

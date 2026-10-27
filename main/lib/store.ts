@@ -90,6 +90,7 @@ export interface ChartSpec {
     | 'heatmap'
     | 'histogram'
     | 'horizontal_bar'
+    | 'position_ladder'
     | 'area'
     | 'stacked_bar'
     | 'dumbbell'
@@ -246,7 +247,7 @@ export type MessageFeedback = 'up' | 'down';
 interface Settings {
     /**
      * Which model serves this client:
-     * - "managed": the app owner's model (OpenCode Go, MiMo V2.5).
+     * - "managed": the app owner's model (OpenCode Go, DeepSeek V4.1 Flash).
      *   The user picks nothing; the server resolves everything from env.
      * - "byok": brought by the user via Settings (base URL + model id
      *   + friendly name below; the API key itself lives in an httpOnly

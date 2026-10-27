@@ -117,7 +117,7 @@ describe("synthesizeChartSpecs", () => {
         expect(data[0]?.y).toBe(1);
     });
 
-    it("synthesizes a finishing-order bar for plain results questions", () => {
+    it("synthesizes a classification ladder for plain results questions", () => {
         const specs = synthesizeChartSpecs(
             [
                 {
@@ -126,9 +126,9 @@ describe("synthesizeChartSpecs", () => {
                     success: true,
                     data: {
                         results: [
-                            { driver: "VER", grid: 1, finish: 1 },
-                            { driver: "HAM", grid: 5, finish: 2 },
-                            { driver: "LEC", grid: 3, finish: 4 },
+                            { driver: "VER", grid: 1, finish: 1, team: "Red Bull" },
+                            { driver: "HAM", grid: 5, finish: 2, team: "Mercedes" },
+                            { driver: "LEC", grid: 3, finish: 4, team: "Ferrari" },
                         ],
                     },
                 },
@@ -137,19 +137,61 @@ describe("synthesizeChartSpecs", () => {
         );
         expect(specs).toHaveLength(1);
         const spec = specs[0];
-        expect(spec?.type).toBe("horizontal_bar");
+        expect(spec?.type).toBe("position_ladder");
         expect(spec?.title).toContain("Finishing Order");
-        const cfg = spec?.config as {
-            data: Array<{ key: string; value: number }>;
+        const rows = (spec?.config as {
+            data: Array<{ position: number; driver: string; grid?: number; team?: string }>;
             unit?: string;
-            sortAsc?: boolean;
-            highlight?: { key: string; value: number };
-        };
-        // P1 first, winner highlighted.
-        expect(cfg.sortAsc).toBe(true);
-        expect(cfg.unit).toBe("pos");
-        expect(cfg.data.map((d) => d.key)).toEqual(["VER", "HAM", "LEC"]);
-        expect(cfg.highlight).toEqual({ key: "VER", value: 1 });
+        }).data;
+        expect(rows.map((d) => d.driver)).toEqual(["VER", "HAM", "LEC"]);
+        expect(rows[1]).toMatchObject({ position: 2, driver: "HAM", grid: 5, team: "Mercedes" });
+    });
+
+    it("maps FastAPI race rows to the classification ladder", () => {
+        const specs = synthesizeChartSpecs(
+            [{
+                tool: "get_race",
+                args: { year: 2026, gp: "United States Grand Prix", session: "R" },
+                success: true,
+                data: {
+                    results: [
+                        { Abbreviation: "ANT", GridPosition: 1, Position: 1, GapToLeader: "0.000", PositionsGained: 0, TeamName: "Mercedes" },
+                        { Abbreviation: "LEC", GridPosition: 4, Position: 2, GapToLeader: "+13.078", PositionsGained: 2, TeamName: "Ferrari" },
+                        { Abbreviation: "VER", GridPosition: 2, Position: 3, GapToLeader: "+17.485", PositionsGained: -1, TeamName: "Red Bull" },
+                    ],
+                },
+            }],
+            "race results"
+        );
+        expect(specs.map((s) => s.type)).toEqual(["position_ladder"]);
+        const rows = (specs[0]?.config as {
+            data: Array<{ position: number; driver: string; grid?: number; team?: string; gap?: string; gained?: number }>;
+        }).data;
+        expect(rows[0]).toMatchObject({ position: 1, driver: "ANT", grid: 1, team: "Mercedes", gap: "0.000", gained: 0 });
+        expect(rows[1]).toMatchObject({ position: 2, driver: "LEC", grid: 4, team: "Ferrari", gap: "+13.078", gained: 2 });
+    });
+
+    it("falls back to a position ladder when grid positions are missing", () => {
+        const specs = synthesizeChartSpecs(
+            [
+                {
+                    tool: "get_race",
+                    args: { year: 2024, gp: "Monaco" },
+                    success: true,
+                    data: {
+                        results: [
+                            { driver: "VER", finish: 1, team: "Red Bull" },
+                            { driver: "HAM", finish: 2, team: "Mercedes" },
+                            { driver: "LEC", finish: 3, team: "Ferrari" },
+                        ],
+                    },
+                },
+            ],
+            "race results"
+        );
+        expect(specs.map((s) => s.type)).toEqual(["position_ladder"]);
+        const cfg = specs[0]?.config as { data: Array<{ driver: string; position: number }> };
+        expect(cfg.data.map((d) => d.driver)).toEqual(["VER", "HAM", "LEC"]);
     });
 
     it("skips non-chartable tools (schedule, search, regulations)", () => {
@@ -225,11 +267,60 @@ describe("synthesizeChartSpecs", () => {
             ],
             "final standings"
         );
+        // One question-shaped chart, not a bar + pie + cards from the same rows.
         expect(specs).toHaveLength(1);
         const spec = specs[0];
         expect(spec?.type).toBe("horizontal_bar");
         const cfg = spec?.config as { unit?: string };
         expect(cfg.unit).toBe("pts");
+    });
+
+    it("uses wins when the question asks about wins", () => {
+        const specs = synthesizeChartSpecs(
+            [{
+                tool: "get_driver_standings",
+                args: { year: 2024 },
+                success: true,
+                data: { standings: [{ driver: "VER", points: 437, wins: 9 }, { driver: "NOR", points: 374, wins: 4 }] },
+            }],
+            "who has the most wins"
+        );
+        expect(specs).toHaveLength(1);
+        expect(specs[0]?.title).toContain("Wins");
+        expect((specs[0]?.config as { unit?: string }).unit).toBe("wins");
+    });
+
+    it("uses points gap when the question asks about the gap", () => {
+        const specs = synthesizeChartSpecs(
+            [{
+                tool: "get_driver_standings",
+                args: { year: 2026 },
+                success: true,
+                data: {
+                    standings: [
+                        { driver: "ANT", points: 365, points_gap_to_leader: 0 },
+                        { driver: "RUS", points: 242, points_gap_to_leader: 123 },
+                        { driver: "HAM", points: 241, points_gap_to_leader: 124 },
+                    ],
+                },
+            }],
+            "what is the points gap to the leader"
+        );
+        expect(specs).toHaveLength(1);
+        expect(specs[0]?.title).toContain("Points Gap");
+        const rows = (specs[0]?.config as { data: Array<{ key: string; value: number }> }).data;
+        expect(rows.map((r) => r.value)).toEqual([0, 123, 124]);
+    });
+
+    it("deduplicates the same chart coming from duplicate tool results", () => {
+        const result = {
+            tool: "get_driver_standings",
+            args: { year: 2024 },
+            success: true,
+            data: { standings: [{ driver: "VER", points: 437 }, { driver: "NOR", points: 374 }] },
+        };
+        const specs = synthesizeChartSpecs([result, result], "standings");
+        expect(specs).toHaveLength(1);
     });
 
     it("respects top-N aggregation for many drivers", () => {
@@ -252,6 +343,52 @@ describe("synthesizeChartSpecs", () => {
         // Top 20 + Others = 21
         expect(data.length).toBeLessThanOrEqual(21);
         expect(data.some((d) => d.key === "Others")).toBe(true);
+    });
+
+    it("caps standings charts at the top 10 without an Others bar", () => {
+        const standings = Array.from({ length: 15 }, (_, i) => ({
+            driver: `D${i}`,
+            points: 200 - i * 10,
+        }));
+        const specs = synthesizeChartSpecs(
+            [{ tool: "get_driver_standings", args: { year: 2024 }, success: true, data: { standings } }],
+            "standings"
+        );
+        const rows = (specs[0]?.config as { data: Array<{ key: string }> }).data;
+        expect(rows).toHaveLength(10);
+        expect(rows.some((r) => r.key === "Others")).toBe(false);
+    });
+
+    it("two-driver pace comparison uses a best-vs-average dumbbell", () => {
+        const specs = synthesizeChartSpecs(
+            [{
+                tool: "get_laps",
+                args: { year: 2024, gp: "Suzuka" },
+                success: true,
+                data: {
+                    laps: [
+                        { driver: "VER", lap_time: "1:32.8" },
+                        { driver: "VER", lap_time: "1:32.6" },
+                        { driver: "VER", lap_time: "1:32.4" },
+                        { driver: "NOR", lap_time: "1:33.2" },
+                        { driver: "NOR", lap_time: "1:33.0" },
+                        { driver: "NOR", lap_time: "1:32.9" },
+                    ],
+                },
+            }],
+            "compare VER and NOR pace"
+        );
+        expect(specs.map((s) => s.type)).toEqual(["dumbbell"]);
+        const cfg = specs[0]?.config as {
+            data: Array<{ category: string; left: number; right: number; delta: number }>;
+            leftLabel?: string;
+            rightLabel?: string;
+        };
+        expect(cfg.leftLabel).toBe("Best");
+        expect(cfg.rightLabel).toBe("Average");
+        expect(cfg.data[0]?.category).toBe("VER");
+        expect(cfg.data[0]?.left).toBeCloseTo(92.4, 1);
+        expect(cfg.data[0]?.right).toBeCloseTo(92.6, 1);
     });
 
     it("marks focus drivers in subtitles", () => {

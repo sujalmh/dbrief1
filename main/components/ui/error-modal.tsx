@@ -25,7 +25,7 @@ export function ErrorModal() {
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.95, opacity: 0 }}
                     onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                    className="relative w-full max-w-md overflow-hidden rounded-xl border border-white/15 bg-white/75 dark:bg-black/45 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+                    className="relative w-full max-w-md overflow-hidden rounded-xl border border-border bg-popover/95 backdrop-blur-xl shadow-[0_8px_32px_var(--wheel-shadow)]"
                 >
                     {/* Header Strip */}
                     <div className="h-1 w-full bg-red-600" />

@@ -79,7 +79,7 @@ describe("managed mode", () => {
         );
     });
 
-    it("falls back to mimo-v2.5 + Go gateway by default", () => {
+    it("falls back to deepseek-v4.1-flash + Go gateway by default", () => {
         withEnv(
             {
                 MANAGED_LLM_MODEL: undefined,
@@ -88,7 +88,7 @@ describe("managed mode", () => {
                 LLM_BASE_URL: undefined,
             },
             () => {
-                expect(getManagedModelId()).toBe("mimo-v2.5");
+                expect(getManagedModelId()).toBe("deepseek-v4.1-flash");
                 expect(getManagedBaseUrl()).toBe(GO_BASE_URL);
             }
         );

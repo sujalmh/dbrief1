@@ -53,6 +53,9 @@ npx tsc --noEmit    # typecheck
 
 Pull requests must keep the suite green. The one excluded file, `planner.test.ts`, calls a live model and only runs with API keys configured.
 
+Answer accuracy, model policy, the remaining quality work, and the release
+checklist are tracked in [AI_RESPONSE_QUALITY.md](AI_RESPONSE_QUALITY.md).
+
 ## Contributing
 
 Contributions are welcome — please read [CONTRIBUTING.md](CONTRIBUTING.md) first. In short: open focused pull requests against `main`, keep tests passing, and follow the house style (flowing sentences, no emojis, no em dashes).

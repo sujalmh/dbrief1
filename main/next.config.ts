@@ -18,6 +18,10 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   compress: true,
+  // Dev only: Next 16 blocks /_next/* requests whose Host isn't localhost,
+  // which breaks the app when it's opened from another device. These are the
+  // hosts this machine is reachable on over the tailnet (Tailscale serve).
+  allowedDevOrigins: ["laptop-p1vsp5h2.tail95c97a.ts.net", "100.82.117.9"],
   images: {
     formats: ["image/avif", "image/webp"],
   },

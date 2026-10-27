@@ -5,7 +5,7 @@
  *
  *   1. "managed" — set up by the app owner via env vars. The user
  *      picks nothing; the server uses one fixed model for both
- *      planning and answering (OpenCode Go gateway, MiMo V2.5).
+ *      planning and answering (OpenCode Go gateway, DeepSeek V4.1 Flash).
  *   2. "byok" — brought by the user. They enter a base URL, a model
  *      identifier, a display name, and their own API key (the key
  *      itself lives in an httpOnly cookie, never in localStorage).
@@ -25,7 +25,7 @@ export interface ByokConfig {
     modelName: string;
 }
 
-export const MANAGED_DEFAULT_MODEL = "mimo-v2.5";
+export const MANAGED_DEFAULT_MODEL = "deepseek-v4.1-flash";
 export const MANAGED_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1";
 
 /** Legacy gateway URLs (kept so old env setups keep working). */
@@ -46,7 +46,7 @@ export function getManagedModelId(): string {
 
 /**
  * Managed base URL resolved from env. Defaults to the Go gateway
- * (which serves mimo-v2.5).
+ * (which serves deepseek-v4.1-flash).
  */
 export function getManagedBaseUrl(): string {
     const raw =

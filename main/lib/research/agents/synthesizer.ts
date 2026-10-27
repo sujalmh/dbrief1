@@ -61,8 +61,14 @@ export class Synthesizer {
          * Errors inside the callback are swallowed by the caller.
          */
         onChunk?: (chunk: unknown) => void;
+        /** Remaining route budget for synthesis (ms). Defaults to the full responder timeout. */
+        timeoutMs?: number;
     }): AsyncGenerator<string> {
         const { objective, researchType, evidenceStore, memory, confidence, chartSpecs, onChunk } = params;
+        const streamTimeoutMs = Math.max(
+            15_000,
+            Math.min(params.timeoutMs ?? LLM_TIMEOUT_MS.responder, LLM_TIMEOUT_MS.responder)
+        );
 
         // --- Guardrail 1: Refuse if no evidence ---
         if (evidenceStore.size() === 0) {
@@ -103,6 +109,12 @@ export class Synthesizer {
 6. ONLY reference charts from the "Available Charts" list below. Use the EXACT chart name, e.g., "See Chart 1: Pace Distribution - Suzuka 2024". Do NOT reference charts that are not in the list. If no charts are available, do not mention charts at all.
 7. State the confidence level and note any missing data.
 
+## Precision Rules
+- Quote numbers exactly as they appear in the evidence. Do not compute gaps, totals, averages, or counts unless the evidence explicitly provides the derived value.
+- If an evidence row has GapToLeader, PositionsGained, points_gap_to_leader, or points_gap_to_next, quote it instead of deriving it.
+- Do not add a sentence that counts rows or teams. The table already shows them.
+- Do not claim a chart shows strategy, tyres, weather, or pit stops unless that data is in the evidence.
+
 ${CHART_GUIDANCE_DEEP_PROMPT}
 
 ${ANSWER_STYLE_PROMPT}
@@ -139,7 +151,7 @@ Produce a comprehensive, evidence-backed answer. Use markdown formatting.`;
             const stream = await this.model.stream([
                 new SystemMessage(systemPrompt),
                 humanMessage,
-            ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.responder) });
+            ], { signal: AbortSignal.timeout(streamTimeoutMs) });
 
             for await (const chunk of stream) {
                 try { onChunk?.(chunk) } catch { /* best-effort */ }
@@ -162,7 +174,7 @@ Produce a comprehensive, evidence-backed answer. Use markdown formatting.`;
                         new SystemMessage(systemPrompt),
                         humanMessage,
                         correctionPrompt,
-                    ], { signal: AbortSignal.timeout(LLM_TIMEOUT_MS.responder) });
+                    ], { signal: AbortSignal.timeout(streamTimeoutMs) });
                     for await (const chunk of retryStream) {
                         try { onChunk?.(chunk) } catch { /* best-effort */ }
                         retryText += chatContentToText(chunk.content);
@@ -178,6 +190,11 @@ Produce a comprehensive, evidence-backed answer. Use markdown formatting.`;
                 }
             }
 
+            // Remove any unresolved citation markers. Leaving [E99] in the
+            // final report makes the UI render a citation that links to
+            // nothing and makes the answer look verified when it is not.
+            fullText = this.stripInvalidReferences(fullText, evidenceStore);
+
             // Deterministic house-style enforcement on the complete answer
             // (safe here because the full text is buffered — never applied
             // to streaming chunks, where split multi-byte sequences could
@@ -186,13 +203,28 @@ Produce a comprehensive, evidence-backed answer. Use markdown formatting.`;
 
             // Stream the validated text token-by-token
             // Split into reasonable chunks to preserve streaming UX
-            const chunkSize = 4; // characters per token chunk
+            const chunkSize = 24; // characters per token chunk
             for (let i = 0; i < fullText.length; i += chunkSize) {
                 yield fullText.slice(i, i + chunkSize);
             }
         } catch (error) {
-            yield `\n\n[Synthesis error: ${error instanceof Error ? error.message : "unknown error"}]\n\n${evidenceContext}`;
+            // Never stream the raw error or the evidence dump: both can carry
+            // internal endpoint details and hundreds of KB of source text.
+            console.error(
+                "[Synthesizer] Generation failed:",
+                error instanceof Error ? error.message : error
+            );
+            yield "I couldn't complete the final synthesis for this question. The retrieved evidence is still available in the research panel; please retry the request.";
         }
+    }
+
+    /**
+     * Normalize citation brackets that contain trailing prose, e.g.
+     * `[E1 covers the 2024 calendar]` -> `[E1] covers the 2024 calendar`.
+     * The validator only treats the leading E-number as the reference.
+     */
+    normalizeCitationMarkers(text: string): string {
+        return text.replace(/\[(E\d+)\b([^\]]*)\]/g, "[$1]$2");
     }
 
     /**
@@ -200,8 +232,16 @@ Produce a comprehensive, evidence-backed answer. Use markdown formatting.`;
      * Returns a list of invalid references (empty if all valid).
      */
     validateReferences(text: string, evidenceStore: EvidenceStore): string[] {
-        const refs = text.match(/\[E\d+\]/g) || [];
+        const normalized = this.normalizeCitationMarkers(text);
+        const refs = normalized.match(/\[E\d+\]/g) || [];
         const validIds = new Set(evidenceStore.getAll().map((e) => `[${e.id}]`));
         return refs.filter((ref) => !validIds.has(ref));
+    }
+
+    /** Remove citation markers that do not resolve to an evidence item. */
+    stripInvalidReferences(text: string, evidenceStore: EvidenceStore): string {
+        const normalized = this.normalizeCitationMarkers(text);
+        const validIds = new Set(evidenceStore.getAll().map((e) => `[${e.id}]`));
+        return normalized.replace(/\[E\d+\]/g, (ref) => (validIds.has(ref) ? ref : ""));
     }
 }

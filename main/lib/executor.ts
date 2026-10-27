@@ -23,6 +23,61 @@ export interface ExecutionResult {
     durationMs: number;
 }
 
+/**
+ * Tool-level error payloads (as opposed to thrown errors).
+ *
+ * Several tools fail softly by returning `{ error: true, message }` or
+ * `{ success: false, error }` instead of throwing: web search without an API
+ * key, regulation retrieval failures, invalid visualization requests, and
+ * simulation failures all use this shape. Treating those payloads as
+ * successful context is dangerous: the responder sees a "result" that
+ * contains no data and can fall back to training knowledge. This helper
+ * normalizes them into a real step failure.
+ */
+export interface ToolErrorPayload {
+    message: string;
+}
+
+export function readToolErrorPayload(data: unknown): ToolErrorPayload | null {
+    let parsed: unknown = data;
+    if (typeof parsed === "string") {
+        try {
+            parsed = JSON.parse(parsed) as unknown;
+        } catch {
+            return null;
+        }
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        return null;
+    }
+    const rec = parsed as Record<string, unknown>;
+    const errorValue = rec.error;
+    if (errorValue === true) {
+        return {
+            message:
+                typeof rec.message === "string" && rec.message.trim()
+                    ? rec.message
+                    : "Tool reported an error",
+        };
+    }
+    if (rec.success === false) {
+        return {
+            message:
+                typeof rec.error === "string" && rec.error.trim()
+                    ? rec.error
+                    : typeof rec.message === "string" && rec.message.trim()
+                        ? rec.message
+                        : "Tool reported an error",
+        };
+    }
+    // `{ error: "message" }` (e.g. run_simulation) is also a soft failure.
+    // Do not treat an `errors` array (fetch_web_pages partial results) as one.
+    if (typeof errorValue === "string" && errorValue.trim()) {
+        return { message: errorValue };
+    }
+    return null;
+}
+
 // =============================================================================
 // Configuration
 // =============================================================================
@@ -48,6 +103,9 @@ const TOOL_ALIASES: Record<string, string> = {
     get_driver_standings_for_year: "get_driver_standings",
     get_championship_standings: "get_driver_standings",
     get_standings: "get_driver_standings",
+    get_constructors_standings: "get_constructor_standings",
+    get_constructor_standings_for_year: "get_constructor_standings",
+    get_team_standings: "get_constructor_standings",
     get_telemetry_data: "get_telemetry",
     get_telemetry_stats: "get_telemetry_summary",
     get_telemetry_summary_stats: "get_telemetry_summary",
@@ -221,6 +279,18 @@ async function executeStep(
                 }
             }
 
+            const toolError = readToolErrorPayload(parsedData);
+            if (toolError) {
+                return {
+                    step: stepIndex,
+                    tool: step.tool,
+                    args: validatedArgs as Record<string, unknown>,
+                    success: false,
+                    error: toolError.message,
+                    durationMs: Date.now() - startTime,
+                };
+            }
+
             return {
                 step: stepIndex,
                 tool: step.tool,
@@ -338,7 +408,8 @@ const MAX_ROWS_PER_LIST = 12;
  * backmarker questions (P20, last place) from full results tables.
  * These payloads are small (a 25-event schedule ≈ 6KB, a 20-driver
  * table ≈ 3KB), so keeping them whole is cheaper than a wrong answer.
- * Large time-series (`data`, `messages`, `laps`, ...) keep the tight cap.
+ * Tyre/stint, weather, and race-control payloads are also kept complete
+ * enough for strategy/conditions questions; telemetry is summarized first.
  */
 const ROW_CAP_BY_KEY: Record<string, number> = {
     events: 30,
@@ -346,7 +417,37 @@ const ROW_CAP_BY_KEY: Record<string, number> = {
     results: 25,
     standings: 25,
     sessions: 15,
+    // Strategy/conditions answers need the full row set, not the generic
+    // 12-row cap. These payloads are still bounded and compact.
+    tyres: 80,
+    messages: 100,
+    data: 60,
 };
+
+/** Fields projected from fat classification rows, including quote-ready gaps. */
+const CLASSIFICATION_ROW_FIELDS = [
+    "Position",
+    "ClassifiedPosition",
+    "GridPosition",
+    "Abbreviation",
+    "Driver",
+    "DriverId",
+    "FullName",
+    "FirstName",
+    "LastName",
+    "TeamName",
+    "TeamId",
+    "Time",
+    "GapToLeader",
+    "PositionsGained",
+    "Gap",
+    "Q1",
+    "Q2",
+    "Q3",
+    "Status",
+    "Points",
+    "Laps",
+] as const;
 
 /**
  * Estimate token count from a string
@@ -356,20 +457,27 @@ function estimateTokens(text: string): number {
 }
 
 /**
- * Check if data is telemetry-like (has 'data' array with many points)
+ * Telemetry channels that identify a telemetry payload. Weather payloads
+ * also use a `data` array, so presence of a generic array is not enough.
+ */
+const TELEMETRY_CHANNELS = ["Speed", "Throttle", "Brake", "nGear", "DRS", "RPM"];
+
+/**
+ * Check if data is telemetry-like (a `data` array of driving channels).
  */
 function isTelemetryData(data: unknown): data is { data: unknown[];[key: string]: unknown } {
-    return (
-        typeof data === "object" &&
-        data !== null &&
-        "data" in data &&
-        Array.isArray((data as { data: unknown[] }).data) &&
-        (data as { data: unknown[] }).data.length > 50
-    );
+    if (typeof data !== "object" || data === null || !("data" in data)) return false;
+    const points = (data as { data: unknown }).data;
+    if (!Array.isArray(points) || points.length === 0) return false;
+    const first = points[0];
+    if (typeof first !== "object" || first === null) return false;
+    return TELEMETRY_CHANNELS.some((channel) => channel in (first as Record<string, unknown>));
 }
 
 /**
- * Check if data is laps-like (has 'laps' array with many entries)
+ * Check if data is laps-like (has a non-empty `laps` array). The old
+ * threshold (>20) let small lap sets fall through to the generic row cap,
+ * which silently dropped laps 13-20 from the responder's context.
  */
 function isLapsData(data: unknown): data is { laps: unknown[];[key: string]: unknown } {
     return (
@@ -377,8 +485,106 @@ function isLapsData(data: unknown): data is { laps: unknown[];[key: string]: unk
         data !== null &&
         "laps" in data &&
         Array.isArray((data as { laps: unknown[] }).laps) &&
-        (data as { laps: unknown[] }).laps.length > 20
+        (data as { laps: unknown[] }).laps.length > 0
     );
+}
+
+/** Max corner rows kept in LLM context. Even Jeddah (27 corners) fits whole. */
+const MAX_CORNERS_IN_CONTEXT = 40;
+
+function coerceFiniteNumber(value: unknown): number | null {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value === "string" && value.trim() !== "") {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function roundOneDecimal(value: number): number {
+    return Math.round(value * 10) / 10;
+}
+
+interface TelemetrySample {
+    distance: number;
+    speed: number;
+}
+
+function readTelemetrySamples(points: Array<Record<string, unknown>>): TelemetrySample[] {
+    const samples: TelemetrySample[] = [];
+    for (const point of points) {
+        const distance = coerceFiniteNumber(point.Distance ?? point.distance);
+        const speed = coerceFiniteNumber(point.Speed ?? point.speed);
+        if (distance !== null && speed !== null) {
+            samples.push({ distance, speed });
+        }
+    }
+    return samples;
+}
+
+/**
+ * Compact corner minimum speeds from raw telemetry plus the circuit's corner
+ * distances. The full telemetry array is never forwarded; each corner keeps
+ * only its number, letter, and the min speed within 20 m of the corner.
+ */
+function computeCornerMinSpeeds(
+    corners: unknown,
+    samples: TelemetrySample[]
+): Array<{ corner: number; letter: string; min_speed: number }> | null {
+    if (!Array.isArray(corners) || corners.length === 0 || samples.length === 0) {
+        return null;
+    }
+
+    const out: Array<{ corner: number; letter: string; min_speed: number }> = [];
+    for (const raw of corners) {
+        if (typeof raw !== "object" || raw === null) continue;
+        const corner = raw as Record<string, unknown>;
+        const number = coerceFiniteNumber(corner.Number ?? corner.number ?? corner.corner);
+        const distance = coerceFiniteNumber(corner.Distance ?? corner.distance);
+        if (number === null || distance === null) continue;
+
+        let minSpeed: number | null = null;
+        for (const sample of samples) {
+            if (Math.abs(sample.distance - distance) <= 20) {
+                minSpeed = minSpeed === null ? sample.speed : Math.min(minSpeed, sample.speed);
+            }
+        }
+        if (minSpeed === null) continue;
+
+        const letterValue = corner.Letter ?? corner.letter;
+        out.push({
+            corner: number,
+            letter: typeof letterValue === "string" ? letterValue : "",
+            min_speed: roundOneDecimal(minSpeed),
+        });
+    }
+
+    return out.length > 0 ? out.slice(0, MAX_CORNERS_IN_CONTEXT) : null;
+}
+
+/** Equal-distance-thirds average speed, matching get_telemetry_summary. */
+function computeSectorSpeeds(samples: TelemetrySample[]): Record<string, number> | null {
+    if (samples.length === 0) return null;
+    const maxDistance = Math.max(...samples.map((s) => s.distance));
+    if (!(maxDistance > 0)) return null;
+
+    const sums = [0, 0, 0];
+    const counts = [0, 0, 0];
+    for (const sample of samples) {
+        const index = sample.distance <= maxDistance / 3
+            ? 0
+            : sample.distance <= (2 * maxDistance) / 3
+                ? 1
+                : 2;
+        sums[index] += sample.speed;
+        counts[index] += 1;
+    }
+
+    return {
+        sector1_avg_speed: counts[0] > 0 ? roundOneDecimal(sums[0] / counts[0]) : 0,
+        sector2_avg_speed: counts[1] > 0 ? roundOneDecimal(sums[1] / counts[1]) : 0,
+        sector3_avg_speed: counts[2] > 0 ? roundOneDecimal(sums[2] / counts[2]) : 0,
+    };
 }
 
 /**
@@ -386,7 +592,9 @@ function isLapsData(data: unknown): data is { laps: unknown[];[key: string]: unk
  * Replaces raw data array with statistical summary
  */
 function summarizeTelemetryForLLM(data: { data: unknown[];[key: string]: unknown }): Record<string, unknown> {
-    const points = data.data as Array<Record<string, number>>;
+    const points = data.data.filter(
+        (point): point is Record<string, unknown> => typeof point === "object" && point !== null
+    );
 
     if (points.length === 0) {
         return { ...data, data: [], summary: "No telemetry data available" };
@@ -400,7 +608,9 @@ function summarizeTelemetryForLLM(data: { data: unknown[];[key: string]: unknown
     const summary: Record<string, { min: number; max: number; avg: number }> = {};
 
     for (const channel of channels) {
-        const values = points.map((p) => p[channel]).filter((v) => typeof v === "number" && !isNaN(v));
+        const values = points
+            .map((p) => p[channel])
+            .filter((v): v is number => typeof v === "number" && !isNaN(v));
         if (values.length > 0) {
             summary[channel] = {
                 min: Math.round(values.reduce((a, b) => Math.min(a, b)) * 100) / 100,
@@ -410,18 +620,61 @@ function summarizeTelemetryForLLM(data: { data: unknown[];[key: string]: unknown
         }
     }
 
+    const samples = readTelemetrySamples(points);
+    const cornerMinSpeeds = computeCornerMinSpeeds(data.corners, samples);
+    const sectorSpeeds = computeSectorSpeeds(samples);
+
     // Keep only essential metadata + summary. Field names are chosen to
     // avoid racing-domain misreads: `telemetry_points` is the count of
     // telemetry samples (NOT championship points), and `lap_number` is
-    // which lap was sampled (NOT a finishing position).
+    // which lap was sampled (NOT a finishing position). Corner and sector
+    // aggregates are compact and derived from the sampled points.
     return {
         driver: data.driver,
         lap_number: data.lap_number,
         lap_time: data.lap_time,
         telemetry_points: points.length,
+        ...(data.downsampled_from !== undefined ? { downsampled_from: data.downsampled_from } : {}),
         telemetry_summary: summary,
-        note: "Raw telemetry data replaced with statistical summary for LLM context efficiency",
+        ...(cornerMinSpeeds ? { corner_min_speeds: cornerMinSpeeds } : {}),
+        ...(sectorSpeeds ? { sector_speeds: sectorSpeeds } : {}),
+        note: "Raw telemetry data replaced with statistical summary for LLM context efficiency. Corner minimum speeds and sector averages are derived from the sampled telemetry points.",
     };
+}
+
+/**
+ * Check for the compact get_telemetry_summary shape. It has no raw `data`
+ * array, only channel summaries plus optional corner/sector detail.
+ */
+function isTelemetrySummaryData(data: unknown): data is Record<string, unknown> {
+    if (typeof data !== "object" || data === null || Array.isArray(data)) return false;
+    const rec = data as Record<string, unknown>;
+    if (Array.isArray(rec.data)) return false;
+    return (
+        (typeof rec.speed_summary === "object" && rec.speed_summary !== null) ||
+        Array.isArray(rec.corner_min_speeds)
+    );
+}
+
+/**
+ * Preserve corner and sector detail on get_telemetry_summary payloads. The
+ * generic row cap (12) otherwise cuts a 15-27 corner circuit down to its
+ * first 12 corners, which makes corner-by-corner comparisons impossible.
+ */
+function summarizeTelemetrySummaryForLLM(data: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = { ...data };
+    const corners = data.corner_min_speeds;
+    if (Array.isArray(corners)) {
+        const valid = corners.filter(
+            (corner): corner is Record<string, unknown> => typeof corner === "object" && corner !== null
+        );
+        out.corner_min_speeds = valid.slice(0, MAX_CORNERS_IN_CONTEXT);
+        if (valid.length > MAX_CORNERS_IN_CONTEXT) {
+            out.corners_omitted = valid.length - MAX_CORNERS_IN_CONTEXT;
+        }
+    }
+    out.note = "Compact telemetry summary retained for LLM context; corner minimum speeds and sector averages are included, raw telemetry arrays are not.";
+    return out;
 }
 
 
@@ -462,60 +715,183 @@ function parseLapTimeToSeconds(lapTime: unknown): number | null {
     return null;
 }
 
+/** Format seconds as a lap time without the "95:16" hour bug. */
+function formatSecondsToLapTime(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds <= 0) return "N/A";
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, "0")}:${secs.toFixed(3).padStart(6, "0")}`;
+    }
+    return `${minutes}:${secs.toFixed(3).padStart(6, "0")}`;
+}
+
+/** Lap fields the responder needs: position, pace, sectors, tyre context. */
+const LAP_CONTEXT_FIELDS = [
+    "LapNumber",
+    "LapTime",
+    "Driver",
+    "Compound",
+    "TyreLife",
+    "Stint",
+    "Sector1Time",
+    "Sector2Time",
+    "Sector3Time",
+    "Position",
+] as const;
+
+function isNonEmpty(value: unknown): boolean {
+    return value !== undefined && value !== null && value !== "" && value !== "NaT";
+}
+
+function isTruthyFlag(value: unknown): boolean {
+    return value === true || value === "True" || value === "true" || value === 1 || value === "1";
+}
+
+function isPitLap(lap: Record<string, unknown>): boolean {
+    return isNonEmpty(lap.PitInTime) || isNonEmpty(lap.PitOutTime);
+}
+
+function isDeletedLap(lap: Record<string, unknown>): boolean {
+    return isTruthyFlag(lap.Deleted);
+}
+
+function compactLapRow(lap: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const field of LAP_CONTEXT_FIELDS) {
+        if (isNonEmpty(lap[field])) out[field] = lap[field];
+    }
+    if (isPitLap(lap)) out.PitLap = true;
+    if (isDeletedLap(lap)) out.Deleted = true;
+    return Object.keys(out).length > 0 ? out : lap;
+}
+
 /**
- * Summarize laps data for LLM consumption
- * Keeps only key laps (fastest, first, last) and aggregates the rest
+ * Cap the compact per-lap table. One driver's race (≈78 laps) fits whole;
+ * multi-driver payloads are sampled evenly while always retaining the
+ * fastest and final laps, so pace/strategy questions still have real rows.
+ */
+const MAX_LAPS_IN_CONTEXT = 220;
+
+function sampleLapsForContext(
+    rows: Array<{ index: number; lap: Record<string, unknown> }>,
+    fastestIndex: number | null,
+    cap: number
+): Array<{ index: number; lap: Record<string, unknown> }> {
+    if (rows.length <= cap) return rows;
+    const keep = new Set<number>();
+    keep.add(0);
+    keep.add(rows.length - 1);
+    if (fastestIndex !== null) {
+        const pos = rows.findIndex((r) => r.index === fastestIndex);
+        if (pos >= 0) keep.add(pos);
+    }
+    const step = (rows.length - 1) / Math.max(1, cap - keep.size);
+    for (let i = 0; i < cap && keep.size < cap; i++) {
+        keep.add(Math.min(rows.length - 1, Math.round(i * step)));
+    }
+    return [...keep].sort((a, b) => a - b).map((i) => rows[i]);
+}
+
+/**
+ * Summarize laps data for LLM consumption.
+ *
+ * Earlier versions kept only fastest/first/last when a lap set exceeded 20
+ * rows, which made "show every lap time" unanswerable even though the data
+ * was present. The responder now receives a compact per-lap table (pace,
+ * sectors, compound, tyre age, position) plus clean per-driver aggregates.
  */
 function summarizeLapsForLLM(data: { laps: unknown[];[key: string]: unknown }): Record<string, unknown> {
-    const laps = data.laps as Array<Record<string, unknown>>;
+    const rawLaps = data.laps;
+    const laps = rawLaps.filter(
+        (lap): lap is Record<string, unknown> => typeof lap === "object" && lap !== null
+    );
 
     if (laps.length === 0) {
         return { ...data, summary: "No lap data available" };
     }
 
-    // Find fastest lap (lexical comparison works for standard time strings)
-    const fastestLap = laps.reduce((fastest, lap) => {
-        const currentSec = parseLapTimeToSeconds(lap.LapTime);
-        const fastestSec = parseLapTimeToSeconds(fastest.LapTime);
+    const parsed = laps.map((lap, index) => ({
+        index,
+        lap,
+        seconds: parseLapTimeToSeconds(lap.LapTime),
+    }));
+    const valid = parsed.filter((p): p is typeof p & { seconds: number } => p.seconds !== null && p.seconds > 0);
+    // Clean pace excludes pit-in/pit-out and deleted laps. Falling back to
+    // all valid laps keeps the aggregate available for short/practice runs.
+    const clean = valid.filter((p) => !isPitLap(p.lap) && !isDeletedLap(p.lap));
+    const paceSample = clean.length > 0 ? clean : valid;
 
-        if (currentSec === null) return fastest;
-        if (fastestSec === null) return lap;
+    const fastest = paceSample.reduce<typeof paceSample[number] | null>(
+        (best, p) => (best === null || p.seconds < best.seconds ? p : best),
+        null
+    );
 
-        return currentSec < fastestSec ? lap : fastest;
-    }, laps[0]);
+    const averageSeconds = paceSample.length > 0
+        ? paceSample.reduce((sum, p) => sum + p.seconds, 0) / paceSample.length
+        : null;
 
-    // Calculate Average Lap Time
-    const validLapSeconds = laps
-        .map((l) => parseLapTimeToSeconds(l.LapTime))
-        .filter((t): t is number => t !== null && t > 0);
-
-    let averageLapTimeStr = "N/A";
-
-    if (validLapSeconds.length > 0) {
-        const totalSeconds = validLapSeconds.reduce((a, b) => a + b, 0);
-        const avgSeconds = totalSeconds / validLapSeconds.length;
-
-        // Format back to MM:SS.mmm for readability
-        const mins = Math.floor(avgSeconds / 60);
-        const secs = (avgSeconds % 60).toFixed(3);
-        averageLapTimeStr = `${mins}:${secs.padStart(6, '0')}`;
+    // Per-driver aggregates make multi-driver lap payloads comparable
+    // without forcing the responder to do arithmetic across 40+ rows.
+    const byDriver = new Map<string, { valid: number; clean: number; totalSeconds: number; fastest: number | null; compounds: Set<string> }>();
+    for (const p of valid) {
+        const driver = typeof p.lap.Driver === "string" && p.lap.Driver.trim()
+            ? p.lap.Driver.trim()
+            : "unknown";
+        const entry = byDriver.get(driver) ?? { valid: 0, clean: 0, totalSeconds: 0, fastest: null, compounds: new Set<string>() };
+        entry.valid++;
+        if (!isPitLap(p.lap) && !isDeletedLap(p.lap)) {
+            entry.clean++;
+            entry.totalSeconds += p.seconds;
+        }
+        if (entry.fastest === null || p.seconds < entry.fastest) entry.fastest = p.seconds;
+        if (typeof p.lap.Compound === "string" && p.lap.Compound.trim()) entry.compounds.add(p.lap.Compound.trim());
+        byDriver.set(driver, entry);
     }
 
-    // Get first and last lap
+    const allRows = parsed.map((p) => ({ index: p.index, lap: compactLapRow(p.lap) }));
+    const sampled = sampleLapsForContext(allRows, fastest?.index ?? null, MAX_LAPS_IN_CONTEXT);
+    const notes = [
+        sampled.length < allRows.length
+            ? `Showing ${sampled.length} of ${allRows.length} laps (evenly sampled; fastest and final laps retained).`
+            : `Showing all ${allRows.length} laps.`,
+        "Compact per-lap table for LLM context efficiency; the full lap data remains available to the chart renderer.",
+    ];
+
     const firstLap = laps[0];
     const lastLap = laps[laps.length - 1];
 
     return {
         session_name: data.session_name,
         total_laps: laps.length,
-        average_lap_time: averageLapTimeStr,
+        valid_laps: valid.length,
+        clean_laps: clean.length,
+        average_lap_time: averageSeconds !== null ? formatSecondsToLapTime(averageSeconds) : "N/A",
+        average_lap_time_note:
+            "Excludes pit-in/pit-out and deleted laps when clean laps exist; otherwise all timed laps.",
         key_laps: {
-            fastest: fastestLap,
-            first: firstLap,
-            last: lastLap,
+            fastest: fastest ? compactLapRow(fastest.lap) : null,
+            first: compactLapRow(firstLap),
+            last: compactLapRow(lastLap),
         },
-        laps_with_times: validLapSeconds.length,
-        note: "Full lap table replaced with key laps and average summary for LLM context efficiency",
+        ...(byDriver.size > 0
+            ? {
+                  drivers: [...byDriver.entries()].map(([driver, v]) => ({
+                      driver,
+                      laps_with_times: v.valid,
+                      clean_laps: v.clean,
+                      average_lap_time: v.clean > 0 ? formatSecondsToLapTime(v.totalSeconds / v.clean) : "N/A",
+                      fastest_lap_time: v.fastest !== null ? formatSecondsToLapTime(v.fastest) : "N/A",
+                      compounds: [...v.compounds],
+                  })),
+              }
+            : {}),
+        laps: sampled.map((r) => r.lap),
+        ...(sampled.length < allRows.length
+            ? { laps_omitted: allRows.length - sampled.length }
+            : {}),
+        note: notes.join(" "),
     };
 }
 
@@ -637,34 +1013,6 @@ function summarizeRegulationsForLLM(data: { retrieved_documents: unknown[];[key:
 }
 
 /**
- * Fields the responder needs per classification row. Everything else the
- * backend sends (headshot URLs, team colors, empty broadcast/country
- * fields, Q1-Q3 nulls on race payloads) is context bloat: ~500 chars/row
- * × 20 rows trips the 10KB generic stub and hides the backmarkers.
- */
-const CLASSIFICATION_ROW_FIELDS = [
-    "Position",
-    "ClassifiedPosition",
-    "GridPosition",
-    "Abbreviation",
-    "Driver",
-    "DriverId",
-    "FullName",
-    "FirstName",
-    "LastName",
-    "TeamName",
-    "TeamId",
-    "Time",
-    "Gap",
-    "Q1",
-    "Q2",
-    "Q3",
-    "Status",
-    "Points",
-    "Laps",
-] as const;
-
-/**
  * Project a fat classification row to the fields the responder needs.
  * Non-object rows and rows matching none of the known fields pass
  * through untouched (never destroy shapes we don't recognize).
@@ -710,6 +1058,14 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
         return {
             ...result,
             data: summarizeTelemetryForLLM(result.data),
+        };
+    }
+
+    // Check if it's a compact telemetry summary and keep corner/sector detail
+    if (isTelemetrySummaryData(result.data)) {
+        return {
+            ...result,
+            data: summarizeTelemetrySummaryForLLM(result.data),
         };
     }
 
@@ -781,10 +1137,12 @@ function reduceResultData(result: ExecutionResult): ExecutionResult {
         }
     }
 
-    // Generic truncation for large payloads
+    // Generic truncation for large payloads. The tighter per-shape
+    // summarizers above handle telemetry, laps, fetches, regulations, and
+    // simulations; this is the last resort for unknown shapes.
     try {
         const strData = JSON.stringify(result.data);
-        if (strData.length > 10000) {
+        if (strData.length > 20000) {
             let summaryInfo = "";
             if (typeof result.data === "object" && result.data !== null) {
                 summaryInfo = ` Keys available: ${Object.keys(result.data).join(", ")}`;
@@ -810,9 +1168,16 @@ export interface FailedStep {
 
 export function buildRefusalMessage(failedSteps: FailedStep[], planReasoning?: string): string {
     const allServer = failedSteps.length > 0 && failedSteps.every((r) => SERVER_ERROR_RE.test(r.error));
+    const boundaryText = [planReasoning ?? "", ...failedSteps.map((r) => r.error)].join("\n");
+    const isDataBoundary = DATA_BOUNDARY_RE.test(boundaryText);
+    const hasPlanReason = !!(planReasoning && planReasoning.trim());
     const headline = allServer
         ? "The F1 data service is temporarily unavailable. Please try again in a moment."
-        : "I was unable to retrieve any F1 data for your query. This may be due to an invalid Grand Prix name, session type, or year. Please verify the details and try again.";
+        : isDataBoundary
+          ? "That data isn't available for the requested session. The details below explain why."
+          : hasPlanReason
+            ? "I couldn't complete that request. The details below explain why."
+            : "I was unable to retrieve any F1 data for your query. This may be due to an invalid Grand Prix name, session type, or year. Please verify the details and try again.";
     const detail = failedSteps.length > 0
         ? failedSteps.map((r) => `- Step ${r.step} (${r.tool}): ${sanitizeStepError(r.error)}`).join("\n")
         : (planReasoning || "No execution steps were produced for this query.");
@@ -820,6 +1185,7 @@ export function buildRefusalMessage(failedSteps: FailedStep[], planReasoning?: s
 }
 
 const SERVER_ERROR_RE = /api key|unauthorized|\b40[013]\b|forbidden|timed out|timeout|network|fetch failed|service unavailable|internal server error/i;
+const DATA_BOUNDARY_RE = /only available from 2018|not available before 2018|pre-2018|no telemetry (?:data )?(?:is )?available/i;
 
 function sanitizeStepError(error: string): string {
     if (SERVER_ERROR_RE.test(error)) {
@@ -847,9 +1213,26 @@ export function aggregateContext(context: ExecutionContext): string {
                 /<\/(f1_data|system|human)/gi,
                 "<\\/$1"
             );
+            // Include the call args (year/GP/session/driver) in every
+            // section header. FastF1 payloads often carry only a session
+            // name, and without args the responder cannot name the Grand
+            // Prix/year it is supposed to cite. Keep the arg block small
+            // so reference_data-style payloads cannot bloat the context.
+            let argsText = "";
+            try {
+                const serialized = JSON.stringify(result.args ?? {});
+                if (serialized && serialized !== "{}") {
+                    argsText = serialized.length > 500
+                        ? `${serialized.slice(0, 500)}…`
+                        : serialized;
+                }
+            } catch {
+                argsText = "";
+            }
             sections.push(
-                `### ${result.tool} (Step ${result.step})\n` +
-                "```json\n" +
+                `### ${result.tool} (Step ${result.step})` +
+                (argsText ? `\nArgs: ${argsText}` : "") +
+                "\n```json\n" +
                 `${safeJson}\n` +
                 "```"
             );

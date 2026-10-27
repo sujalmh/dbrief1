@@ -24,6 +24,7 @@ import {
     CHART_GUIDANCE_DEEP_PROMPT,
     describeChartsForPrompt,
     sanitizeAnswerText,
+    createStreamingAnswerSanitizer,
 } from "@/lib/synthesis/answer-style";
 import { Synthesizer } from "@/lib/research/agents/synthesizer";
 import { EvidenceStore } from "@/lib/research/evidence-store";
@@ -66,6 +67,28 @@ describe("sanitizeAnswerText", () => {
     it("handles empty and plain text", () => {
         expect(sanitizeAnswerText("")).toBe("");
         expect(sanitizeAnswerText("plain answer")).toBe("plain answer");
+    });
+});
+
+describe("createStreamingAnswerSanitizer", () => {
+    it("removes em dashes and emojis across chunks", () => {
+        const s = createStreamingAnswerSanitizer();
+        const out = [s.push("VER wins — 1:32.600 "), s.push("🏁"), s.push(" done"), s.flush()].join("");
+        expect(out).toBe("VER wins - 1:32.600  done");
+    });
+
+    it("never corrupts a surrogate pair split across chunks", () => {
+        const flag = "🏁";
+        const s = createStreamingAnswerSanitizer();
+        const out = [s.push("result "), s.push(flag.slice(0, 1)), s.push(flag.slice(1)), s.push(" clean"), s.flush()].join("");
+        expect(out).toBe("result  clean");
+        expect(out).not.toContain("\uFFFD");
+    });
+
+    it("keeps citations, lap times, and markdown intact", () => {
+        const s = createStreamingAnswerSanitizer();
+        const out = [s.push("See [E1]: **1:23.456**"), s.push(" and 2023–2024"), s.flush()].join("");
+        expect(out).toBe("See [E1]: **1:23.456** and 2023–2024");
     });
 });
 
@@ -138,10 +161,10 @@ describe("shared style blocks", () => {
 
 describe("synthesis prompt wiring", () => {
     it("standard responder uses the shared blocks", () => {
-        const source = readSource("app/api/chat/route.ts");
+        const source = readSource("lib/synthesis/responder-prompt.ts");
         expect(source).toMatch(/ANSWER_STYLE_PROMPT/);
         expect(source).toMatch(/CHART_GUIDANCE_STANDARD_PROMPT/);
-        expect(source).toMatch(/from "@\/lib\/synthesis\/answer-style"/);
+        expect(source).toMatch(/from "\.\/answer-style"/);
     });
 
     it("deep synthesizer uses the shared blocks + sanitizer", () => {
@@ -254,5 +277,39 @@ describe("Synthesizer chart + style behavior", () => {
         for await (const token of gen) out += token;
         expect(captured.calls ?? 0).toBe(0);
         expect(out).toMatch(/unable to retrieve any data/);
+    });
+
+    it("strips citation markers that do not resolve to evidence", async () => {
+        const synth = new Synthesizer(fakeModel("VER was fastest [E1] and [E99].", {}));
+        let out = "";
+        const gen = synth.generate({
+            objective: "Who had the best pace?",
+            researchType: "comparative",
+            evidenceStore: seededStore(),
+            memory: new ResearchMemory(),
+            confidence: CONFIDENCE,
+            chartSpecs: [],
+        });
+        for await (const token of gen) out += token;
+        expect(out).toContain("[E1]");
+        expect(out).not.toContain("[E99]");
+    });
+
+    it("normalizes citations with trailing prose instead of dropping them", async () => {
+        const synth = new Synthesizer(
+            fakeModel("The calendar [E1 covers only the 2024 schedule] is confirmed.", {})
+        );
+        let out = "";
+        const gen = synth.generate({
+            objective: "What does the calendar cover?",
+            researchType: "factual",
+            evidenceStore: seededStore(),
+            memory: new ResearchMemory(),
+            confidence: CONFIDENCE,
+            chartSpecs: [],
+        });
+        for await (const token of gen) out += token;
+        expect(out).toContain("[E1] covers only the 2024 schedule");
+        expect(out).not.toContain("[E1 covers");
     });
 });

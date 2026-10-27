@@ -139,7 +139,7 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
                                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                             </div>
                         ) : links.length === 0 ? (
-                            <div className="flex items-center gap-3 rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 px-3 py-2.5 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
+                            <div className="wheel-panel flex items-center gap-3 rounded-xl px-3 py-2.5">
                                 <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
                                 <div>
                                     <p className="text-xs font-semibold">No links yet</p>
@@ -152,7 +152,7 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
                             links.map((l) => (
                                 <div
                                     key={l.token}
-                                    className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 px-2 py-1.5 pl-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]"
+                                    className="wheel-panel flex items-center gap-2 rounded-xl px-2 py-1.5 pl-3"
                                 >
                                     <Link2 className="h-4 w-4 shrink-0 text-[var(--f1-purple)]" />
                                     <input
@@ -210,7 +210,7 @@ export function ShareDialog({ open, onOpenChange, sessionId, sessionTitle }: Sha
                             {links.length === 0 ? "Create share link" : "Create another link"}
                         </Button>
 
-                        <div className="rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 p-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
+                        <div className="wheel-panel rounded-xl p-3">
                             <div className="mb-2 flex items-center gap-2 text-muted-foreground">
                                 <Download className="h-3.5 w-3.5" />
                                 <span className="text-[11px] font-bold uppercase tracking-wider">

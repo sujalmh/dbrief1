@@ -15,8 +15,9 @@
  */
 
 import { StructuredTool } from "@langchain/core/tools";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { f1Tools } from "@/lib/tools/fastf1";
-import { regulationRetrieveTool } from "@/lib/tools/regulation";
+import { regulationRetrieveTool, createRegulationRetrieveTool } from "@/lib/tools/regulation";
 import { webSearchTool, fetchWebPagesTool } from "@/lib/tools/search";
 import { runSimulationTool } from "@/lib/tools/simulation";
 import { createVisualizationTool } from "@/lib/tools/visualization";
@@ -75,7 +76,7 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
         description: "Get results for any session (practice, qualifying, or race)",
         category: "data",
         outputType: "results",
-        outputShape: "{ session_name, results: [{ position, driver, team, lap_time, gap, status, points }] }",
+        outputShape: "{ session_name, year, gp, session, results: [{ Position, Abbreviation, FullName, TeamName, Time, GapToLeader, PositionsGained, GridPosition, Status, Points }] }",
         requires: [],
         provides: ["results"],
     },
@@ -84,7 +85,7 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
         description: "Get qualifying results with Q1, Q2, Q3 times for a Grand Prix",
         category: "data",
         outputType: "qualifying",
-        outputShape: "{ session_name, results: [{ position, driver, team, q1, q2, q3, lap_time }] }",
+        outputShape: "{ session_name, year, gp, session, results: [{ Position, Abbreviation, FullName, TeamName, Q1, Q2, Q3, Time }] }",
         requires: [],
         provides: ["qualifying"],
     },
@@ -93,7 +94,7 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
         description: "Get race results including positions, times, and status for a Grand Prix",
         category: "data",
         outputType: "race",
-        outputShape: "{ session_name, results: [{ position, driver, team, lap_time, gap, status, points, grid_position }] }",
+        outputShape: "{ session_name, year, gp, session, results: [{ Position, Abbreviation, FullName, TeamName, Time, GapToLeader, PositionsGained, GridPosition, Status, Points }] }",
         requires: [],
         provides: ["race"],
     },
@@ -165,7 +166,16 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
         description: "Get final driver standings (points, wins, position) for a specific season",
         category: "data",
         outputType: "standings",
-        outputShape: "{ year, standings: [{ position, driver, points, wins, team }] }",
+        outputShape: "{ year, standings: [{ position, driver, driver_code, driver_name, points, wins, team, team_id }] }",
+        requires: [],
+        provides: ["standings"],
+    },
+    get_constructor_standings: {
+        name: "get_constructor_standings",
+        description: "Get official constructor (team) standings (position, points, wins) for a specific season",
+        category: "data",
+        outputType: "standings",
+        outputShape: "{ year, standings: [{ position, team, team_name, team_id, points, wins, nationality }] }",
         requires: [],
         provides: ["standings"],
     },
@@ -284,7 +294,9 @@ export class ToolRegistry {
      * Filter tools available for the current research mode.
      */
     getToolsForMode(deepResearch: boolean): ToolMetadata[] {
-        return this.getAllMetadata().filter((m) => !m.deepResearchOnly || deepResearch);
+        return this.getAllMetadata().filter(
+            (m) => this.tools.has(m.name) && (!m.deepResearchOnly || deepResearch)
+        );
     }
 
     /**
@@ -362,11 +374,16 @@ function describeToolArgs(tool: StructuredTool): string | null {
 /**
  * Build the default tool registry with all F1 tools registered.
  * @param deepResearch - whether to include deep-research-only tools (web_search, simulation)
+ * @param regulationModel - optional planner model for regulation sub-query expansion
  */
-export function createToolRegistry(deepResearch: boolean = true): ToolRegistry {
+export function createToolRegistry(
+    deepResearch: boolean = true,
+    regulationModel?: BaseChatModel
+): ToolRegistry {
     const registry = new ToolRegistry();
 
-    // F1 data tools (14)
+    // F1 data tools (seasons, events, sessions, results, laps, telemetry,
+    // weather, race control, tyres, standings)
     for (const [name, tool] of Object.entries(f1Tools)) {
         const metadata = TOOL_METADATA[name];
         if (metadata) {
@@ -375,12 +392,21 @@ export function createToolRegistry(deepResearch: boolean = true): ToolRegistry {
     }
 
     // Regulation tool (FIA regulations + stewards' decisions vector search).
-    registry.register(regulationRetrieveTool, TOOL_METADATA.retrieve_regulations);
+    // Deep research passes its planner model so retrieval also gets the
+    // same sub-query expansion as the normal chat path.
+    registry.register(
+        regulationModel ? createRegulationRetrieveTool(regulationModel) : regulationRetrieveTool,
+        TOOL_METADATA.retrieve_regulations
+    );
 
-    // Deep-research-only tools
+    // Deep-research-only tools. Web tools are registered only when the
+    // server can actually reach TinyFish; an unconfigured tool in the
+    // planner prompt invites wasted steps and soft-error payloads.
     if (deepResearch) {
-        registry.register(webSearchTool, TOOL_METADATA.web_search);
-        registry.register(fetchWebPagesTool, TOOL_METADATA.fetch_web_pages);
+        if (process.env.TINYFISH_API_KEY) {
+            registry.register(webSearchTool, TOOL_METADATA.web_search);
+            registry.register(fetchWebPagesTool, TOOL_METADATA.fetch_web_pages);
+        }
         registry.register(runSimulationTool, TOOL_METADATA.run_simulation);
     }
 

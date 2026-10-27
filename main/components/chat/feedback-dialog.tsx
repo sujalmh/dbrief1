@@ -64,24 +64,25 @@ export function FeedbackDialog() {
     return (
         <Dialog open={isFeedbackOpen} onOpenChange={setFeedbackOpen}>
             <DialogContent className="sm:max-w-[420px] border-none bg-transparent p-0 shadow-none gap-0">
-                <div className="modal-glass rounded-xl p-6">
+                {/* Solid surface: the glass panel let chart colours bleed
+                    through the copy. */}
+                <div className="rounded-xl border border-border bg-background p-6 shadow-2xl">
                     <DialogHeader className="mb-4 text-center">
-                        <div className="mx-auto mb-2 h-1 w-12 rounded-full bg-gradient-to-r from-[var(--f1-red)] to-[var(--f1-red)]/40" />
-                        <DialogTitle className="text-lg font-black uppercase italic tracking-widest">
+                        <DialogTitle className="text-base font-semibold tracking-tight">
                             How was that answer?
                         </DialogTitle>
-                        <DialogDescription className="text-muted-foreground/80">
-                            Your first response just landed — rate it to help tune the race engineer.
+                        <DialogDescription className="text-sm text-muted-foreground">
+                            Rate this first response to help tune the race engineer.
                         </DialogDescription>
                     </DialogHeader>
 
                     {sent ? (
-                        <p className="py-4 text-center text-sm font-bold text-green-500">
+                        <p className="py-4 text-center text-sm font-medium text-emerald-700 dark:text-[var(--f1-green)]">
                             Thanks — feedback received.
                         </p>
                     ) : (
                         <div className="grid gap-4">
-                            <div className="flex items-center justify-center gap-1.5" role="radiogroup" aria-label="Star rating">
+                            <div className="flex items-center justify-center gap-1" role="radiogroup" aria-label="Star rating">
                                 {[1, 2, 3, 4, 5].map((star) => (
                                     <button
                                         key={star}
@@ -90,36 +91,42 @@ export function FeedbackDialog() {
                                         aria-checked={rating === star}
                                         aria-label={`${star} star${star > 1 ? "s" : ""}`}
                                         onClick={() => setRating(star)}
-                                        className="rounded-sm p-1 transition-transform hover:scale-110"
+                                        className="flex h-10 w-10 items-center justify-center rounded-md transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                                     >
                                         <Star
                                             className={cn(
-                                                "h-7 w-7 transition-colors",
+                                                "h-6 w-6 transition-colors",
                                                 rating !== null && star <= rating
                                                     ? "fill-[var(--f1-yellow)] text-[var(--f1-yellow)]"
-                                                    : "text-muted-foreground/40"
+                                                    : "text-muted-foreground/50"
                                             )}
                                         />
                                     </button>
                                 ))}
                             </div>
 
-                            <Textarea
-                                value={comment}
-                                onChange={(e) => setComment(e.target.value.slice(0, 2000))}
-                                placeholder="What worked or missed? (optional)"
-                                className="min-h-[80px] bg-background/60 text-sm"
-                            />
+                            <div className="grid gap-1.5">
+                                <label htmlFor="feedback-comment" className="text-xs font-medium text-muted-foreground">
+                                    What worked or missed? <span className="font-normal">(optional)</span>
+                                </label>
+                                <Textarea
+                                    id="feedback-comment"
+                                    value={comment}
+                                    onChange={(e) => setComment(e.target.value.slice(0, 2000))}
+                                    placeholder="Anything specific helps…"
+                                    className="min-h-[80px] bg-background/60 text-sm"
+                                />
+                            </div>
 
                             {errorMsg && <p className="text-xs text-red-500">{errorMsg}</p>}
 
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-end gap-2">
                                 <Button
                                     type="button"
                                     variant="ghost"
                                     size="sm"
                                     onClick={close}
-                                    className="btn-wheel btn-wheel-ghost h-9 px-4 text-xs uppercase tracking-wide text-muted-foreground"
+                                    className="h-9 px-4 text-xs font-medium"
                                 >
                                     Skip
                                 </Button>
@@ -137,9 +144,9 @@ export function FeedbackDialog() {
                                         })
                                     }}
                                     disabled={sending || rating === null}
-                                    className="btn-wheel btn-wheel-green h-9 px-5 text-xs font-bold tracking-wide"
+                                    className="btn-wheel btn-wheel-red h-9 px-4 text-xs font-semibold text-white"
                                 >
-                                    {sending ? "Sending..." : "Send feedback"}
+                                    {sending ? "Sending…" : "Send feedback"}
                                 </Button>
                             </div>
                         </div>

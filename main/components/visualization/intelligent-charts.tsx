@@ -43,8 +43,10 @@ import {
     ReferenceArea,
     PieChart as RechartsPieChart,
     Pie,
+    type LabelProps,
 } from "recharts";
 import { F1_PALETTE, CHART_TOKENS, colorForDriver, colorForSeries, STEERING_COLORS } from "./chart-palette";
+import { cn } from "@/lib/utils";
 
 // =============================================================================
 // Helpers
@@ -60,6 +62,7 @@ function formatValue(value: number, unit: string): string {
         return `${mins}:${secs}`;
     }
     if (unit === "pts" || unit === "points") return `${value} pts`;
+    if (unit === "wins") return `${value} ${value === 1 ? "win" : "wins"}`;
     if (unit === "laps") return `${value} laps`;
     if (unit === "pos") return `P${value}`;
     if (unit === "°C") return `${value}°C`;
@@ -84,23 +87,6 @@ function formatTick(value: number, unit: string): string {
     if (unit === "pos") return `P${value}`;
     if (Number.isInteger(value)) return value.toString();
     return value.toFixed(1);
-}
-
-/**
- * Pick a readable label color for a given bar/segment fill. Light fills
- * get dark text and vice-versa, so labels never vanish on white bars
- * (e.g. the HARD compound, or a driver whose color resolves to white)
- * in dark mode.
- */
-function contrastTextFill(hex: string): string {
-    const m = (hex ?? "").match(/^#?([0-9a-f]{6})$/i);
-    if (!m) return "#fff";
-    const n = parseInt(m[1], 16);
-    const r = (n >> 16) & 255;
-    const g = (n >> 8) & 255;
-    const b = n & 255;
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return luminance > 0.55 ? "#111" : "#fff";
 }
 
 // =============================================================================
@@ -190,13 +176,34 @@ interface HorizontalBarSpec {
 }
 
 export function HorizontalBarChart({ spec }: { spec: HorizontalBarSpec }) {
+    /**
+     * Absolute session times plotted from zero hide the story: a pole lap
+     * of 1:10.270 and a 1:11.311 are 1.5% apart, so every bar renders at
+     * ~97% width and the chart says "everyone is identical". When the
+     * values are time magnitudes (>= 60s) we plot the *gap to the
+     * quickest* value instead and keep the absolute time as the label.
+     */
+    const isTimeBase =
+        spec.unit === "s" &&
+        spec.data.length > 1 &&
+        spec.data.every((d) => Number.isFinite(d.value) && d.value >= 60);
+    const base = isTimeBase ? Math.min(...spec.data.map((d) => d.value)) : 0;
+    const rows = spec.data.map((d) => ({ ...d, gap: d.value - base }));
     // Re-sort defensively — the planner already sorts, but be defensive.
     // Rank charts sort ascending (P1 first, winner highlighted);
-    // everything else sorts descending (leader first).
-    const data = [...spec.data].sort((a, b) =>
-        spec.sortAsc ? a.value - b.value : b.value - a.value
-    );
+    // everything else sorts descending (leader first). In vertical
+    // layout the first row renders at the top, so ascending puts the
+    // fastest driver at the top of a pace chart.
+    const data = [...rows].sort((a, b) => {
+        const av = isTimeBase ? a.gap : a.value;
+        const bv = isTimeBase ? b.gap : b.value;
+        return spec.sortAsc ? av - bv : bv - av;
+    });
+    const maxGap = Math.max(...rows.map((d) => d.gap), 0);
     const highlight = spec.highlightKey ?? data[0]?.key;
+    // Cap the height so a 20-driver chart still fits a 390px phone
+    // without pushing its axis under the composer.
+    const chartHeight = Math.min(Math.max(220, data.length * 34 + 64), 400);
 
     return (
         <div className="space-y-2">
@@ -206,20 +213,29 @@ export function HorizontalBarChart({ spec }: { spec: HorizontalBarSpec }) {
                 insight={spec.insight}
                 question={spec.question}
             />
-            <ResponsiveContainer width="100%" height={Math.max(280, data.length * 36 + 60)}>
+            <ResponsiveContainer width="100%" height={chartHeight}>
                 <BarChart
                     data={data}
                     layout="vertical"
-                    margin={{ top: 10, right: 30, left: 60, bottom: 25 }}
+                    margin={{ top: 10, right: 68, left: 8, bottom: 25 }}
                 >
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART_TOKENS.grid} opacity={0.4} horizontal={false} />
                     <XAxis
                         minTickGap={28}
                         type="number"
+                        domain={isTimeBase ? [0, Math.max(0.3, maxGap * 1.08)] : [0, "auto"]}
                         stroke={CHART_TOKENS.axis}
                         tick={{ fontSize: 11 }}
-                        tickFormatter={(v) => formatTick(v, spec.unit)}
-                        label={{ value: spec.xAxisLabel, position: "insideBottom", offset: -10, fontSize: 11, fill: CHART_TOKENS.axis }}
+                        tickFormatter={(v) =>
+                            isTimeBase ? `+${Number(v).toFixed(1)}` : formatTick(Number(v), spec.unit)
+                        }
+                        label={{
+                            value: isTimeBase ? `Gap to quickest (${spec.unit})` : spec.xAxisLabel,
+                            position: "insideBottom",
+                            offset: -10,
+                            fontSize: 11,
+                            fill: CHART_TOKENS.axis,
+                        }}
                     />
                     <YAxis
                         type="category"
@@ -230,7 +246,7 @@ export function HorizontalBarChart({ spec }: { spec: HorizontalBarSpec }) {
                     />
                     <Tooltip content={<SmartTooltip unit={spec.unit} />} />
                     <Bar
-                        dataKey="value"
+                        dataKey={isTimeBase ? "gap" : "value"}
                         radius={[0, 6, 6, 0]}
                         name={spec.yAxisLabel}
                         // No mount animation: charts must render their final
@@ -241,33 +257,38 @@ export function HorizontalBarChart({ spec }: { spec: HorizontalBarSpec }) {
                         {data.map((entry, i) => (
                             <Cell
                                 key={`cell-${i}`}
-                                fill={entry.key === highlight ? CHART_TOKENS.highlight : colorForDriver(entry.key, i)}
+                                fill={
+                                    !isTimeBase && entry.key === highlight
+                                        ? CHART_TOKENS.highlight
+                                        : colorForDriver(entry.key, i)
+                                }
                             />
                         ))}
                         <LabelList
-                            dataKey="value"
+                            dataKey={isTimeBase ? "gap" : "value"}
                             position="right"
-                            content={(props: any) => {
+                            content={(props: LabelProps) => {
                                 const x = Number(props?.x ?? 0);
                                 const y = Number(props?.y ?? 0);
                                 const width = Number(props?.width ?? 0);
                                 const height = Number(props?.height ?? 0);
-                                const value = props?.value;
                                 const index = Number(props?.index ?? 0);
                                 const entry = data[index];
-                                const fill = entry
-                                    ? contrastTextFill(entry.key === highlight ? CHART_TOKENS.highlight : colorForDriver(entry.key, index))
-                                    : CHART_TOKENS.foreground;
+                                if (!entry) return null;
+                                // Labels sit OUTSIDE the bar, so they must
+                                // follow the page theme — not the bar fill
+                                // (white text on a white card in light mode).
                                 return (
                                     <text
-                                        x={x + width + 4}
+                                        x={x + width + 6}
                                         y={y + height / 2}
                                         dy={4}
-                                        fill={fill}
-                                        fontSize={10}
+                                        fill={CHART_TOKENS.foreground}
+                                        fontSize={11}
                                         fontWeight={500}
+                                        style={{ fontVariantNumeric: "tabular-nums" }}
                                     >
-                                        {formatValue(Number(value), spec.unit)}
+                                        {formatValue(entry.value, spec.unit)}
                                     </text>
                                 );
                             }}
@@ -275,6 +296,129 @@ export function HorizontalBarChart({ spec }: { spec: HorizontalBarSpec }) {
                     </Bar>
                 </BarChart>
             </ResponsiveContainer>
+        </div>
+    );
+}
+
+// =============================================================================
+// Position Ladder (race classification without a position bar)
+// =============================================================================
+
+interface PositionLadderRow {
+    position: number;
+    driver: string;
+    name?: string;
+    team?: string;
+    time?: string;
+    gap?: string;
+    status?: string;
+    points?: number;
+    gained?: number;
+    grid?: number;
+}
+
+interface PositionLadderSpec {
+    type: "position_ladder";
+    title: string;
+    subtitle?: string;
+    insight?: string;
+    question?: string;
+    data: PositionLadderRow[];
+    xAxisLabel: string;
+    yAxisLabel: string;
+    unit: string;
+}
+
+/**
+ * A classification ladder for finishing order. Position is a rank, not a
+ * magnitude, so a bar chart is the wrong visual: P20 would draw the longest
+ * bar. This renders the order directly, with team colors, gaps, and movement.
+ */
+export function PositionLadder({ spec }: { spec: PositionLadderSpec }) {
+    const rows = [...spec.data].sort((a, b) => a.position - b.position);
+    return (
+        <div className="space-y-2">
+            <ChartHeader
+                title={spec.title}
+                subtitle={spec.subtitle}
+                insight={spec.insight}
+                question={spec.question}
+            />
+            <div className="max-h-[520px] overflow-y-auto rounded-lg border border-border/50">
+                {rows.map((row, i) => {
+                    const color = colorForDriver(row.driver, i);
+                    const winner = row.position === 1;
+                    const podium = row.position <= 3;
+                    const statusText = (row.status ?? "").trim();
+                    const retired = /^(R|RET|RETIRED|DNF|DSQ|NC)$/i.test(statusText);
+                    const didNotStart = /^(DNS|DID NOT START)$/i.test(statusText);
+                    const lapped = /^LAPPED$/i.test(statusText);
+                    const isOut = retired || didNotStart;
+                    const right = isOut
+                        ? didNotStart
+                            ? "DNS"
+                            : row.status
+                        : lapped
+                          ? "Lapped"
+                          : row.gap || row.time || (row.points != null ? formatValue(row.points, "pts") : "");
+                    return (
+                        <div
+                            key={`${row.position}-${row.driver}`}
+                            className={cn(
+                                "flex items-center gap-2 border-b border-border/40 px-2.5 py-1.5 last:border-0",
+                                winner && "bg-[var(--f1-yellow)]/10",
+                                isOut && "opacity-60"
+                            )}
+                        >
+                            <span
+                                className={cn(
+                                    "w-7 shrink-0 text-right font-mono text-[11px] font-bold tabular-nums",
+                                    winner
+                                        ? "text-[var(--f1-yellow)]"
+                                        : podium
+                                          ? "text-foreground"
+                                          : "text-muted-foreground"
+                                )}
+                            >
+                                P{row.position}
+                            </span>
+                            <span
+                                className="h-6 w-1 shrink-0 rounded-full"
+                                style={{ backgroundColor: color }}
+                            />
+                            {row.grid != null && (
+                                <span className="w-7 shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">
+                                    G{row.grid}
+                                </span>
+                            )}
+                            <span className="w-10 shrink-0 font-mono text-xs font-semibold">
+                                {row.driver}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+                                {row.team ?? row.name ?? ""}
+                            </span>
+                            {row.gained != null && row.gained !== 0 && (
+                                <span
+                                    className={cn(
+                                        "shrink-0 font-mono text-[10px] tabular-nums",
+                                        row.gained > 0 ? "text-emerald-500" : "text-red-500"
+                                    )}
+                                >
+                                    {row.gained > 0 ? `+${row.gained}` : row.gained}
+                                </span>
+                            )}
+                            <span
+                                className={cn(
+                                    "shrink-0 font-mono text-[10px] tabular-nums",
+                                    retired ? "text-red-500" : "text-muted-foreground"
+                                )}
+                            >
+                                {right}
+                            </span>
+                        </div>
+                    );
+                })}
+            </div>
         </div>
     );
 }

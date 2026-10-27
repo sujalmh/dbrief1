@@ -108,7 +108,7 @@ export function Header() {
                     <Button
                         variant="ghost"
                         size="icon"
-                        className="h-9 w-9"
+                        className="btn-wheel h-9 w-9"
                         onClick={() => setSidebarOpen(!isSidebarOpen)}
                         aria-label={isSidebarOpen ? "Close sidebar" : "Open sidebar"}
                     >
@@ -173,7 +173,7 @@ export function Header() {
                         <Button
                             variant="ghost"
                             size="icon"
-                            className="btn-wheel h-9 w-9 md:h-10 md:w-10"
+                            className="btn-wheel btn-wheel-orange h-9 w-9 md:h-10 md:w-10"
                             onClick={() => setSettingsOpen(true)}
                         >
                             <Settings className="h-5 w-5" />
@@ -195,7 +195,7 @@ export function Header() {
                             <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-9 w-9 rounded-full border border-white/20 p-0.5 md:h-10 md:w-10"
+                                className="h-9 w-9 rounded-full border border-[var(--header-line)] p-0.5 md:h-10 md:w-10"
                                 onClick={() => setProfileOpen(true)}
                             >
                                 {user.google?.avatarUrl ? (

@@ -140,9 +140,12 @@ export class ConfidenceCalculator {
         const obj = parsed as Record<string, unknown>;
         if (!Array.isArray(obj.results)) return null;
         const results = obj.results as Record<string, unknown>[];
-        const winner = results.find(
-            (r) => Number(r.position) === 1 || r.position === "1"
-        );
-        return winner?.driver ? String(winner.driver) : null;
+        const winner = results.find((r) => {
+            const position = r.Position ?? r.position;
+            return Number(position) === 1 || position === "1";
+        });
+        if (!winner) return null;
+        const driver = winner.Abbreviation ?? winner.driver ?? winner.Driver;
+        return driver != null ? String(driver) : null;
     }
 }

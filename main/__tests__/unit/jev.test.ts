@@ -18,6 +18,7 @@ import {
     isConversationalFastPath,
     hasF1EntitySignal,
     isOffTopicRefusal,
+    isClearlyOffTopicRequest,
     isRecencyRoute,
     type JevClassification,
 } from "@/lib/jev";
@@ -392,14 +393,31 @@ describe("isOffTopicRefusal", () => {
 
 describe("hasF1EntitySignal", () => {
     it("passes F1-shaped queries with invalid entities", () => {
-        expect(hasF1EntitySignal("Results for Mickey Mouse in 2024")).toBe(true);
+        expect(hasF1EntitySignal("F1 results for Mickey Mouse in 2024")).toBe(true);
         expect(hasF1EntitySignal("2024 Grand Prix of Nowhere winner")).toBe(true);
         expect(hasF1EntitySignal("telemetry for Senna 1994")).toBe(true);
     });
 
-    it("stays silent on non-F1 prompts", () => {
+    it("stays silent on non-F1 prompts, even with a year", () => {
         expect(hasF1EntitySignal("What's the capital of France?")).toBe(false);
         expect(hasF1EntitySignal("Write a carbonara recipe")).toBe(false);
         expect(hasF1EntitySignal("Who won the Super Bowl?")).toBe(false);
+        expect(hasF1EntitySignal("Write a poem about the 2024 season")).toBe(false);
+        expect(hasF1EntitySignal("Results for Mickey Mouse in 2024")).toBe(false);
+    });
+});
+
+describe("isClearlyOffTopicRequest", () => {
+    it("detects non-F1 task shapes", () => {
+        expect(isClearlyOffTopicRequest("Write a poem about the 2024 season")).toBe(true);
+        expect(isClearlyOffTopicRequest("Give me a carbonara recipe")).toBe(true);
+        expect(isClearlyOffTopicRequest("Solve for x: 2x + 4 = 10")).toBe(true);
+        expect(isClearlyOffTopicRequest("Write code for a quicksort")).toBe(true);
+    });
+
+    it("does not flag normal F1 questions", () => {
+        expect(isClearlyOffTopicRequest("Who won the last race?")).toBe(false);
+        expect(isClearlyOffTopicRequest("Explain the 2026 power unit regulations")).toBe(false);
+        expect(isClearlyOffTopicRequest("Compare Verstappen and Norris")).toBe(false);
     });
 });

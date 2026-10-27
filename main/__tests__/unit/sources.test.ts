@@ -187,6 +187,12 @@ describe("extractEvidenceIds", () => {
         ]);
     });
 
+    it("extracts citations that contain trailing prose", () => {
+        expect(
+            extractEvidenceIds("The calendar [E1 covers only the 2024 schedule] and the race [E2].")
+        ).toEqual(["E1", "E2"]);
+    });
+
     it("returns [] when no refs exist", () => {
         expect(extractEvidenceIds("No citations here.")).toEqual([]);
     });

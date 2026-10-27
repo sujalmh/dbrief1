@@ -262,7 +262,7 @@ export function SettingsModal() {
                     </div>
 
                     {/* Appearance — theme lives here now (removed from navbar) */}
-                    <div className="space-y-2 rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 p-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
+                    <div className="wheel-panel space-y-2 rounded-xl p-3">
                         <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">
                             Appearance
                         </Label>
@@ -284,7 +284,7 @@ export function SettingsModal() {
                                         activeTheme === value && activeClass
                                     )}
                                 >
-                                    <span className={cn("flex items-center gap-1.5", value === "system" && "mix-blend-difference")}>
+                                    <span className={cn("flex items-center gap-1.5", value === "system" && activeTheme === value && "mix-blend-difference")}>
                                         <Icon className="h-3.5 w-3.5" />
                                         <span>{label}</span>
                                     </span>
@@ -294,7 +294,7 @@ export function SettingsModal() {
                     </div>
 
                     {isByok ? (
-                        <div className="space-y-4 rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 p-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">                            <div className="space-y-2">
+                        <div className="wheel-panel space-y-4 rounded-xl p-3">                            <div className="space-y-2">
                                 <Label htmlFor="byokBaseUrl" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/70 ml-1">
                                     Model URL
                                 </Label>
@@ -308,7 +308,7 @@ export function SettingsModal() {
                                         if (errorMsg) setErrorMsg("")
                                     }}
                                     placeholder="https://api.openai.com/v1"
-                                    className="font-mono text-sm bg-background/60 border-white/10 focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40"
+                                    className="font-mono text-sm bg-background/60 border-border focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40"
                                 />
                                 <p className="text-[10px] text-muted-foreground/70">
                                     Base URL of any OpenAI-compatible API (no trailing path needed).
@@ -328,7 +328,7 @@ export function SettingsModal() {
                                             if (errorMsg) setErrorMsg("")
                                         }}
                                         placeholder="gpt-4o-mini"
-                                        className="font-mono text-sm bg-background/60 border-white/10 focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40"
+                                        className="font-mono text-sm bg-background/60 border-border focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40"
                                     />
                                 </div>
                                 <div className="space-y-2">
@@ -343,7 +343,7 @@ export function SettingsModal() {
                                             if (errorMsg) setErrorMsg("")
                                         }}
                                         placeholder="My GPT"
-                                        className="text-sm bg-background/60 border-white/10 focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40"
+                                        className="text-sm bg-background/60 border-border focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40"
                                     />
                                 </div>
                             </div>
@@ -363,7 +363,7 @@ export function SettingsModal() {
                                         setApiKeyInput(e.target.value)
                                         if (errorMsg) setErrorMsg("")
                                     }}
-                                    className="bg-background/60 border-white/10 focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40 font-mono text-sm"
+                                    className="bg-background/60 border-border focus-visible:border-[var(--f1-green)]/50 focus-visible:ring-1 focus-visible:ring-[var(--f1-green)]/40 font-mono text-sm"
                                     placeholder={hasKey ? "Key is saved (hidden for security)" : "sk-..."}
                                 />
                                 {hasKey && !apiKeyInput && (
@@ -409,7 +409,7 @@ export function SettingsModal() {
                             </div>
                         </div>
                     ) : (
-                        <div className="rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 p-3 backdrop-blur-md shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
+                        <div className="wheel-panel rounded-xl p-3">
                             <p className="text-xs text-muted-foreground leading-relaxed">
                                 No setup needed — just confirm and chat.
                             </p>

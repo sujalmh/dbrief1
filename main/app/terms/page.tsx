@@ -10,8 +10,8 @@ export const metadata: Metadata = {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
     return (
         <section className="space-y-2">
-            <h2 className="text-lg font-bold tracking-tight text-white">{title}</h2>
-            <div className="space-y-2 text-sm leading-relaxed text-zinc-300">{children}</div>
+            <h2 className="text-lg font-bold tracking-tight text-foreground">{title}</h2>
+            <div className="space-y-2 text-sm leading-relaxed text-muted-foreground">{children}</div>
         </section>
     );
 }
@@ -20,12 +20,12 @@ export default function TermsPage() {
     // Own scroll container: the root layout locks body scroll for the
     // chat shell (see landing-page.tsx).
     return (
-        <main className="flex h-dvh w-full justify-center overflow-y-auto overscroll-contain bg-carbon px-4 py-12 text-white">
+        <main className="flex h-dvh w-full justify-center overflow-y-auto overscroll-contain bg-carbon px-4 py-12 text-foreground">
             <article className="w-full max-w-3xl space-y-8">
                 <header className="space-y-2">
                     <p className="text-xs font-mono uppercase tracking-widest text-f1-red">Dbrief1</p>
                     <h1 className="text-3xl font-bold tracking-tighter">Terms of Service</h1>
-                    <p className="text-xs text-zinc-500">Last updated: September 2026</p>
+                    <p className="text-xs text-muted-foreground">Last updated: September 2026</p>
                 </header>
 
                 <Section title="The service">
@@ -95,9 +95,9 @@ export default function TermsPage() {
                     </p>
                 </Section>
 
-                <footer className="flex gap-4 border-t border-white/10 pt-4 text-xs text-zinc-500">
-                    <Link href="/" className="hover:text-white">Home</Link>
-                    <Link href="/privacy" className="hover:text-white">Privacy Policy</Link>
+                <footer className="flex gap-4 border-t border-border pt-4 text-xs text-muted-foreground">
+                    <Link href="/" className="hover:text-foreground">Home</Link>
+                    <Link href="/privacy" className="hover:text-foreground">Privacy Policy</Link>
                 </footer>
             </article>
         </main>

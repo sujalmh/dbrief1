@@ -324,9 +324,16 @@ def format_timedelta(td: Optional[Any]) -> Optional[str]:
     if total_seconds < 0 or math.isnan(total_seconds) or math.isinf(total_seconds):
         return None
 
-    minutes = int(total_seconds // 60)
-    seconds = total_seconds % 60
+    hours = int(total_seconds // 3600)
+    remaining = total_seconds - hours * 3600
+    minutes = int(remaining // 60)
+    seconds = remaining - minutes * 60
 
+    # Race/session totals exceed an hour; the old MM:SS formatter rendered
+    # 1:35:16 as "95:16.650". Use HH:MM:SS once the duration crosses an hour
+    # so result times and gaps stay readable and correctly formatted.
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{seconds:06.3f}"
     if minutes > 0:
         return f"{minutes}:{seconds:06.3f}"
     return f"{seconds:.3f}"
@@ -409,6 +416,47 @@ def format_session_results(results_df: pd.DataFrame) -> List[Dict[str, Any]]:
 
     available_columns = [col for col in columns_to_include if col in results_df.columns]
     result = results_df[available_columns].copy()
+
+    # Add explicit, quote-ready derived fields so the responder never has to
+    # subtract times or grid slots itself. Those are the two most common
+    # sources of confidently-wrong prose in race answers.
+    if "Position" in result.columns:
+        gaps: List[Optional[str]] = []
+        changes: List[Optional[int]] = []
+        for _, row in result.iterrows():
+            position = row.get("Position")
+            time_value = row.get("Time")
+            status = str(row.get("Status", "") or "")
+            gap: Optional[str] = None
+            try:
+                pos_int = int(position)
+            except (TypeError, ValueError):
+                pos_int = 0
+            if pos_int == 1:
+                gap = "0.000"
+            elif pos_int > 1 and "Lapped" not in status:
+                try:
+                    if time_value is not None and not pd.isna(time_value):
+                        seconds = pd.Timedelta(time_value).total_seconds()
+                        # A race gap is under ten minutes. Anything larger is
+                        # a total race time or a lapped classification.
+                        if 0 <= seconds < 600:
+                            gap = f"+{seconds:.3f}"
+                except (TypeError, ValueError, OverflowError):
+                    gap = None
+            gaps.append(gap)
+
+            grid = row.get("GridPosition")
+            try:
+                grid_int = int(grid)
+                pos_int = int(position)
+            except (TypeError, ValueError):
+                grid_int = 0
+                pos_int = 0
+            changes.append(grid_int - pos_int if grid_int > 0 and pos_int > 0 else None)
+
+        result["GapToLeader"] = gaps
+        result["PositionsGained"] = changes
 
     return df_to_json(result)
 

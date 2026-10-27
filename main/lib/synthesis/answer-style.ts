@@ -36,7 +36,7 @@ export const CHART_GUIDANCE_STANDARD_PROMPT = `## Charts (rendered automatically
 - Always point the reader at the relevant chart ("see the pace chart below", "the standings chart below shows..."). Every chart must earn its place: state the one takeaway it exists to show.
 - The reader sees each chart, so never announce a chart, describe where it is, or restate what it plainly shows. Add only what the chart doesn't say.
 - Lead with the headline finding the chart makes visible (who is fastest, who gained, where the race was won or lost), then support it with 2-4 key numbers from the data.
-- Do NOT paste the full data table when a chart shows the same rows. A short table (at most 5 rows) is fine when it adds a comparison the chart does not show.
+- Do NOT paste the full data table when a chart shows the same rows. A short table (at most 5 rows) is fine when it adds a comparison the chart does not show. Exception: when the user explicitly asks for standings or a full classification, include the complete standings/classification table (it is compact) and do not re-rank the remaining rows in prose.
 - Keep every number consistent with the data context - each chart is drawn from the same data in team and driver colors, so any mismatch reads as an error.`;
 
 /**
@@ -71,6 +71,8 @@ const EM_DASH_RE = /[—―]/g;
 // text only, never to streaming chunks (a split surrogate pair mid-stream
 // would corrupt output).
 const EMOJI_RE = /[🀀-🫿☀-➿⬀-⭿️‍⃣]/gu;
+/** Single-code-point variant for streaming tests (no global lastIndex). */
+const EMOJI_CP_RE = /[🀀-🫿☀-➿⬀-⭿️‍⃣]/u;
 
 /**
  * Deterministically enforce house style on a COMPLETE buffered answer.
@@ -80,4 +82,56 @@ const EMOJI_RE = /[🀀-🫿☀-➿⬀-⭿️‍⃣]/gu;
 export function sanitizeAnswerText(text: string): string {
     if (!text) return text;
     return text.replace(EM_DASH_RE, "-").replace(EMOJI_RE, "");
+}
+
+/** Code points that belong to an emoji/symbol sequence. */
+const ZWJ = "\u200d";
+const VARIATION_SELECTOR_16 = "\ufe0f";
+const KEYCAP = "\u20e3";
+
+function isStrippedCodePoint(cp: string): boolean {
+    return cp === ZWJ || cp === VARIATION_SELECTOR_16 || cp === KEYCAP || EMOJI_CP_RE.test(cp);
+}
+
+/**
+ * Streaming-safe house-style filter.
+ *
+ * The standard responder streams tokens straight to the client, so the
+ * deterministic style sanitizer cannot wait for the full answer. This filter
+ * removes em dashes and emoji code points chunk by chunk while holding back a
+ * trailing lone surrogate, so a surrogate pair split across two chunks can
+ * never become a corruption character in the output.
+ *
+ * Usage:
+ *   const s = createStreamingAnswerSanitizer();
+ *   for await (const chunk of stream) send(s.push(text(chunk)));
+ *   send(s.flush());
+ */
+export function createStreamingAnswerSanitizer(): {
+    push: (chunk: string) => string;
+    flush: () => string;
+} {
+    let pending = "";
+    return {
+        push(chunk: string): string {
+            if (!chunk) return "";
+            pending = (pending + chunk).replace(EM_DASH_RE, "-");
+            const codePoints = Array.from(pending);
+            pending = "";
+
+            // Hold a trailing high surrogate until its low surrogate arrives.
+            const last = codePoints[codePoints.length - 1];
+            if (last && /[\uD800-\uDBFF]/.test(last)) {
+                pending = codePoints.pop() as string;
+            }
+
+            return codePoints.filter((cp) => !isStrippedCodePoint(cp)).join("");
+        },
+        flush(): string {
+            const out = pending.replace(EM_DASH_RE, "-");
+            pending = "";
+            // A lone surrogate at end-of-stream cannot form a valid character.
+            return out.replace(/[\uD800-\uDFFF]/g, "");
+        },
+    };
 }

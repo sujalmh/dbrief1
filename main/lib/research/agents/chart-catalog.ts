@@ -16,6 +16,7 @@ export const CHART_TYPES = new Set<string>([
     "histogram",
     // New intelligent types
     "horizontal_bar",
+    "position_ladder",
     "area",
     "stacked_bar",
     "dumbbell",

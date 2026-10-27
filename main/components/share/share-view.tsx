@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { MessageBubble } from "@/components/chat/message-bubble";
+import { LogoBadge } from "@/components/layout/header-shell";
 import { F1Disclaimer } from "@/components/legal/f1-disclaimer";
 import { loadSharedSnapshot, type SharedSnapshot } from "@/lib/cf/client";
 import type { Message } from "@/lib/store";
@@ -37,18 +38,18 @@ export function ShareView({ token }: { token: string }) {
 
     return (
         <div className="flex h-dvh w-full flex-col overflow-hidden bg-background font-sans antialiased text-foreground">
-            <header className="z-50 w-full border-b border-white/10 bg-carbon-header text-white">
+            <header className="relative z-50 w-full border-b border-[var(--header-line)] bg-carbon-header text-[var(--header-fg)]">
+                <span aria-hidden className="wheel-led-strip" />
                 <div className="mx-auto flex h-14 w-full max-w-3xl items-center justify-between gap-2 px-4">
                     <div className="flex min-w-0 items-center gap-3">
-                        <div className="flex shrink-0 items-center justify-center rounded-sm bg-white px-1.5 py-1">
-                            {/* eslint-disable-next-line @next/next/no-img-element -- local static logo */}
-                            <img src="/logo.svg" alt="Logo" className="h-6 w-auto" />
-                        </div>
-                        <span className="truncate text-xs font-mono text-zinc-300">
+                        {/* Same theme-aware mark as the app/landing header:
+                            no hard-coded white plate (it glowed on dark). */}
+                        <LogoBadge onBackground className="shrink-0 bg-transparent shadow-none" />
+                        <span className="truncate text-xs font-mono text-[var(--header-dim)]">
                             {snapshot ? snapshot.title.toUpperCase() : "SHARED CHAT"}
                         </span>
                     </div>
-                    <span className="shrink-0 rounded-full border border-white/10 bg-black/40 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                    <span className="wheel-well hidden shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--wheel-text-dim)] sm:inline">
                         Read-only
                     </span>
                 </div>

@@ -70,10 +70,10 @@ export function ProfileModal({
                                     src={user.google.avatarUrl}
                                     alt=""
                                     referrerPolicy="no-referrer"
-                                    className="h-11 w-11 rounded-full border border-white/20 object-cover"
+                                    className="h-11 w-11 rounded-full border border-border object-cover"
                                 />
                             ) : (
-                                <div className="flex h-11 w-11 items-center justify-center rounded-full border border-white/20 bg-muted/50 text-sm font-bold">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-muted/50 text-sm font-bold">
                                     {initials}
                                 </div>
                             )}
@@ -122,7 +122,7 @@ export function ProfileModal({
                             About
                         </Button>
 
-                        <div className="rounded-xl border border-white/15 bg-white/60 dark:bg-black/30 backdrop-blur-md">
+                        <div className="wheel-panel rounded-xl">
                             <Button
                                 type="button"
                                 variant="ghost"

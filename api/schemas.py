@@ -123,6 +123,12 @@ class DriverStandingsRequest(BaseModel):
     driver: Optional[str] = Field(None, description="Filter by specific driver")
 
 
+class ConstructorStandingsRequest(BaseModel):
+    """Request for constructor (team) standings."""
+    year: int = Field(..., ge=1950, le=_MAX_YEAR, description="Season year")
+    team: Optional[str] = Field(None, description="Filter by specific team/constructor")
+
+
 # =============================================================================
 # Response Models
 # =============================================================================
@@ -197,6 +203,9 @@ class SessionLoadResponse(BaseModel):
 class ResultsResponse(BaseModel):
     """Response for session results."""
     session_name: str
+    year: Optional[int] = Field(None, description="Season year the results belong to")
+    gp: Optional[str] = Field(None, description="Canonical Grand Prix / event name")
+    session: Optional[str] = Field(None, description="Session code (R, Q, FP1, ...) when known")
     results: List[dict]
 
 
@@ -394,6 +403,12 @@ class StandingsEntry(BaseModel):
 
 class DriverStandingsResponse(BaseModel):
     """Response for driver standings."""
+    year: int
+    standings: List[dict]
+
+
+class ConstructorStandingsResponse(BaseModel):
+    """Response for constructor (team) standings."""
     year: int
     standings: List[dict]
 

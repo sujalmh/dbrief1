@@ -52,7 +52,7 @@ export function isNetworkBinding(quota: QuotaState): boolean {
 
 function Bar({ pct, tone }: { pct: number; tone: string }) {
     return (
-        <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
             <div className={cn("h-full rounded-full transition-all", tone)} style={{ width: `${Math.min(100, Math.max(0, pct * 100))}%` }} />
         </div>
     );

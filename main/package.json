@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run --testTimeout=120000",
-    "test:quality": "vitest run __tests__/integration/ai-response-quality.test.ts --testTimeout=120000"
+    "test:quality": "vitest run __tests__/integration/ai-response-quality.test.ts --testTimeout=120000",
+    "test:quality:managed": "vitest run __tests__/quality/managed-answer-quality.test.ts --testTimeout=360000 --hookTimeout=120000"
   },
   "dependencies": {
     "@langchain/core": "^1.2.12",

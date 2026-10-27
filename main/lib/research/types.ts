@@ -250,6 +250,7 @@ export const ChartSpecSchema = z.object({
         "heatmap",
         "histogram",
         "horizontal_bar",
+        "position_ladder",
         "area",
         "stacked_bar",
         "dumbbell",

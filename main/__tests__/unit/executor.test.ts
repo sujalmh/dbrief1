@@ -493,10 +493,136 @@ describe('Step Executor', () => {
             expect(msg).not.toContain('verify the details');
         })
 
+        it('uses a data-boundary headline for pre-2018 telemetry', () => {
+            const msg = buildRefusalMessage([{
+                step: 1,
+                tool: 'get_telemetry',
+                error: 'Telemetry, lap, and weather data are only available from 2018 onwards - for 1994 Monaco only race/qualifying results and standings exist.',
+            }]);
+            expect(msg.startsWith("That data isn't available for the requested session")).toBe(true);
+            expect(msg).not.toContain('invalid Grand Prix name');
+            expect(msg).toContain('2018 onwards');
+        })
+
+        it('uses a data-boundary headline from plan reasoning', () => {
+            const msg = buildRefusalMessage([], 'Telemetry data is only available from 2018 onward, so 1994 Monaco telemetry cannot be retrieved.');
+            expect(msg.startsWith("That data isn't available for the requested session")).toBe(true);
+            expect(msg).not.toContain('invalid Grand Prix name');
+            expect(msg).toContain('1994 Monaco telemetry');
+        })
+
         it('keeps the verify-details headline for query-shaped failures', () => {
             const msg = buildRefusalMessage([{ step: 1, tool: 'get_race', error: 'F1 API error 404: Event XYZ not found' }]);
             expect(msg).toContain('verify the details');
             expect(msg).toContain('Event XYZ not found');
+        })
+    })
+
+    describe('Tool-error payloads and context fidelity', () => {
+        it('treats a soft error payload as a failed step', async () => {
+            const mockTool = createMockTool('web_search', {
+                error: true,
+                message: 'Web search is not configured on the server (missing TINYFISH_API_KEY).',
+            })
+            const context = await executeSteps(
+                [{ description: 'Search', tool: 'web_search', args: {} }],
+                { web_search: mockTool }
+            )
+
+            expect(context.successCount).toBe(0)
+            expect(context.failureCount).toBe(1)
+            expect(context.results[0].error).toContain('not configured')
+        })
+
+        it('treats a string error payload as a failed step', async () => {
+            const mockTool = createMockTool('run_simulation', { error: 'Simulation failed' })
+            const context = await executeSteps(
+                [{ description: 'Simulate', tool: 'run_simulation', args: {} }],
+                { run_simulation: mockTool }
+            )
+
+            expect(context.successCount).toBe(0)
+            expect(context.results[0].error).toBe('Simulation failed')
+        })
+
+        it('includes tool args so the responder can name the GP and year', () => {
+            const context: ExecutionContext = {
+                results: [{
+                    step: 1,
+                    tool: 'get_race',
+                    args: { year: 2026, gp: 'United States', session: 'R' },
+                    success: true,
+                    data: { session_name: 'Race', results: [{ Position: 1, Abbreviation: 'ANT' }] },
+                    durationMs: 100,
+                }],
+                successCount: 1,
+                failureCount: 0,
+                totalDurationMs: 100,
+            }
+
+            const aggregated = aggregateContext(context)
+            expect(aggregated).toContain('Args: {"year":2026,"gp":"United States","session":"R"}')
+            expect(aggregated).toContain('United States')
+        })
+
+        it('keeps every lap in a single-driver lap table', () => {
+            const laps = Array.from({ length: 30 }, (_, i) => ({
+                LapNumber: i + 1,
+                LapTime: `1:${String(20 + (i % 5)).padStart(2, '0')}.500`,
+                Driver: 'VER',
+                Compound: i < 15 ? 'MEDIUM' : 'HARD',
+                TyreLife: (i % 15) + 1,
+                Sector1Time: '0:28.100',
+                Sector2Time: '0:33.200',
+                Sector3Time: '0:24.200',
+                Position: 1,
+            }))
+            const context: ExecutionContext = {
+                results: [{
+                    step: 1,
+                    tool: 'get_laps',
+                    args: { year: 2026, gp: 'United States', session: 'R', driver: 'VER' },
+                    success: true,
+                    data: { session_name: 'Race', laps },
+                    durationMs: 100,
+                }],
+                successCount: 1,
+                failureCount: 0,
+                totalDurationMs: 100,
+            }
+
+            const aggregated = aggregateContext(context)
+            expect(aggregated).toContain('"LapNumber": 30')
+            expect(aggregated).toContain('"LapNumber": 1')
+            expect(aggregated).toContain('"clean_laps": 30')
+            expect(aggregated).not.toContain('Full lap table replaced')
+        })
+
+        it('does not misidentify weather rows as telemetry', () => {
+            const weather = Array.from({ length: 30 }, (_, i) => ({
+                Time: `00:${String(i).padStart(2, '0')}:00`,
+                AirTemp: 24,
+                TrackTemp: 31,
+                Humidity: 50,
+                Rainfall: false,
+            }))
+            const context: ExecutionContext = {
+                results: [{
+                    step: 1,
+                    tool: 'get_weather',
+                    args: { year: 2026, gp: 'United States', session: 'R' },
+                    success: true,
+                    data: { session_name: 'Race', data: weather },
+                    durationMs: 100,
+                }],
+                successCount: 1,
+                failureCount: 0,
+                totalDurationMs: 100,
+            }
+
+            const aggregated = aggregateContext(context)
+            expect(aggregated).not.toContain('telemetry_points')
+            expect(aggregated).toContain('"AirTemp": 24')
         })
     })
 })

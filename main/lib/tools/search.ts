@@ -23,6 +23,11 @@ function searchApiKey(): string | undefined {
     return process.env.TINYFISH_API_KEY || undefined;
 }
 
+/** True when web search/fetch can actually reach TinyFish. */
+export function isWebSearchConfigured(): boolean {
+    return !!searchApiKey();
+}
+
 function searchBaseUrl(): string {
     // Canonical endpoint per TinyFish docs (https://docs.tinyfish.ai/search-api).
     // Override with TINYFISH_BASE_URL without a deploy if it ever moves again.
@@ -190,6 +195,7 @@ export const webSearchTool = tool(
         if (!apiKey) {
             return JSON.stringify({
                 error: true,
+                code: "not_configured",
                 message: "Web search is not configured on the server (missing TINYFISH_API_KEY).",
                 query,
             });
@@ -337,6 +343,7 @@ export const fetchWebPagesTool = tool(
         if (!apiKey) {
             return JSON.stringify({
                 error: true,
+                code: "not_configured",
                 message: "Web fetch is not configured on the server (missing TINYFISH_API_KEY).",
                 urls: sliced,
             });

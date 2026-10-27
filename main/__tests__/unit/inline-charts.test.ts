@@ -119,8 +119,8 @@ describe("resolveInlineChartSpecs", () => {
             ],
             query: "standings",
         });
-        expect(out).toHaveLength(3);
-        expect(out.map((s) => s.type)).toEqual(["horizontal_bar", "pie", "stat_cards"]);
+        expect(out).toHaveLength(1);
+        expect(out.map((s) => s.type)).toEqual(["horizontal_bar"]);
     });
 
     it("returns [] for missing / empty / invalid payloads", () => {
@@ -155,6 +155,7 @@ describe("ChartDispatcher coverage", () => {
 
     it.each([
         "horizontal_bar",
+        "position_ladder",
         "bar",
         "line",
         "area",
@@ -194,7 +195,10 @@ describe("ChartDispatcher coverage", () => {
         expect(dispatcher).toMatch(/sortAsc: cfg\.sortAsc === true/);
         const charts = readSource("components/visualization/intelligent-charts.tsx");
         expect(charts).toMatch(/sortAsc\?: boolean/);
-        expect(charts).toMatch(/spec\.sortAsc \? a\.value - b\.value : b\.value - a\.value/);
+        // Rank charts still sort ascending on the plotted metric; time
+        // charts sort on the gap-to-quickest so the fastest row leads.
+        expect(charts).toMatch(/spec\.sortAsc \? av - bv : bv - av/);
+        expect(charts).toMatch(/const av = isTimeBase \? a\.gap : a\.value/);
     });
 
     it("drops specs with no plottable rows", () => {
@@ -253,6 +257,17 @@ describe("ChartDispatcher coverage", () => {
             config: { data: [{ x: 1, VER: 1 }], series: ["VER"] },
         });
         expect(validateChartSpec(bump).ok).toBe(true);
+        const ladder = makeSpec({
+            id: "v3", type: "position_ladder", title: "Finishing order (2024)",
+            xField: "position", yField: "driver",
+            config: {
+                data: [
+                    { position: 1, driver: "VER", team: "Red Bull" },
+                    { position: 2, driver: "NOR", team: "McLaren" },
+                ],
+            },
+        });
+        expect(validateChartSpec(ladder).ok).toBe(true);
     });
 
     it("intelligent-charts exports every renderer", () => {
@@ -260,6 +275,7 @@ describe("ChartDispatcher coverage", () => {
         for (const name of [
             "HorizontalBarChart",
             "LineOrAreaChart",
+            "PositionLadder",
             "ScatterPlot",
             "StackedBarChart",
             "SwarmPlot",
@@ -408,8 +424,8 @@ describe("F1 standings charts", () => {
             ],
             "2024 final standings"
         );
-        expect(specs).toHaveLength(3);
-        expect(specs.map((s) => s.type)).toEqual(["horizontal_bar", "pie", "stat_cards"]);
+        expect(specs).toHaveLength(1);
+        expect(specs.map((s) => s.type)).toEqual(["horizontal_bar"]);
         const spec = specs[0]!;
         expectWellFormed(spec);
         expect(specConfig(spec).unit).toBe("pts");
@@ -435,8 +451,21 @@ describe("F1 standings charts", () => {
             ],
             "constructors"
         );
-        expect(specs).toHaveLength(3);
-        expect(specs.map((s) => s.type)).toEqual(["horizontal_bar", "pie", "stat_cards"]);
+        expect(specs).toHaveLength(1);
+        expect(specs.map((s) => s.type)).toEqual(["horizontal_bar"]);
+    });
+
+    it("explicit points-share questions use a pie only", () => {
+        const specs = synthesizeChartSpecs(
+            [{
+                tool: "get_driver_standings",
+                args: { year: 2024 },
+                success: true,
+                data: { standings: [{ driver: "VER", points: 437 }, { driver: "HAM", points: 374 }] },
+            }],
+            "points share of the standings"
+        );
+        expect(specs.map((s) => s.type)).toEqual(["pie"]);
     });
 });
 
@@ -511,13 +540,13 @@ describe("F1 pace-distribution swarm charts", () => {
         { lap_number: 3, lap_time: "1:32.700", driver: "NOR" },
     ];
 
-    it("multi-driver laps → progression line + pace swarm", () => {
+    it("multi-driver laps → one pace swarm", () => {
         const specs = synthesizeChartSpecs(
             [{ tool: "get_laps", args: { year: 2024, gp: "Suzuka" }, success: true, data: { laps: multiDriverLaps } }],
-            "compare VER and NOR race pace"
+            "race pace comparison"
         );
-        expect(specs.map((s) => s.type)).toEqual(["line", "swarm"]);
-        const swarm = specs[1]!;
+        expect(specs.map((s) => s.type)).toEqual(["swarm"]);
+        const swarm = specs[0]!;
         expect(swarm.title).toContain("Pace Distribution");
         const dots = specConfig(swarm).data as Array<{ driver: string; lap: number; value: number }>;
         expect(dots).toHaveLength(6);
@@ -537,14 +566,17 @@ describe("F1 pace-distribution swarm charts", () => {
         expect(specs.map((s) => s.type)).toEqual(["line"]);
     });
 
-    it("resolves inline with driver focus from the query", () => {
+    it("resolves inline with two focus drivers as a pace dumbbell", () => {
         const out = resolveInlineChartSpecs({
             visualizationData: [
                 { tool: "get_laps", args: { year: 2024 }, success: true, data: { laps: multiDriverLaps } },
             ],
             query: "VER vs NOR",
         });
-        expect(out.map((s) => s.type)).toEqual(["line", "swarm"]);
+        expect(out.map((s) => s.type)).toEqual(["dumbbell"]);
+        const cfg = out[0]?.config as { leftLabel?: string; rightLabel?: string };
+        expect(cfg.leftLabel).toBe("Best");
+        expect(cfg.rightLabel).toBe("Average");
     });
 });
 
@@ -596,7 +628,7 @@ describe("F1 position-progression bump charts", () => {
         expect(specConfig(specs[0]).xAxisLabel).toBe("Lap");
     });
 
-    it("lap times + positions → line + swarm + bump", () => {
+    it("lap times + positions → one pace-distribution chart, not three", () => {
         const specs = synthesizeChartSpecs(
             [{
                 tool: "get_laps", args: { year: 2024 }, success: true,
@@ -611,10 +643,62 @@ describe("F1 position-progression bump charts", () => {
             }],
             "full race comparison"
         );
-        expect(specs.map((s) => s.type)).toEqual(["line", "swarm", "bump"]);
+        expect(specs.map((s) => s.type)).toEqual(["swarm"]);
     });
 
-    it("single-round snapshots become finishing order, not bumps", () => {
+    it("lap-time consistency questions use a box plot", () => {
+        const specs = synthesizeChartSpecs(
+            [{
+                tool: "get_laps", args: { year: 2024 }, success: true,
+                data: {
+                    laps: [
+                        { lap_number: 1, lap_time: "1:32.0", driver: "VER" },
+                        { lap_number: 2, lap_time: "1:31.8", driver: "VER" },
+                        { lap_number: 3, lap_time: "1:32.2", driver: "VER" },
+                        { lap_number: 1, lap_time: "1:32.4", driver: "NOR" },
+                        { lap_number: 2, lap_time: "1:32.1", driver: "NOR" },
+                        { lap_number: 3, lap_time: "1:32.6", driver: "NOR" },
+                    ],
+                },
+            }],
+            "compare lap time consistency"
+        );
+        expect(specs.map((s) => s.type)).toEqual(["box_plot"]);
+        const cfg = specConfig(specs[0]);
+        expect(cfg.unit).toBe("s");
+        expect((cfg.data ?? []).length).toBe(2);
+    });
+
+    it("single-driver consistency questions use a histogram", () => {
+        const specs = synthesizeChartSpecs(
+            [{
+                tool: "get_laps", args: { year: 2024 }, success: true,
+                data: {
+                    laps: [
+                        { lap_number: 1, lap_time: "1:32.0" },
+                        { lap_number: 2, lap_time: "1:31.8" },
+                        { lap_number: 3, lap_time: "1:32.2" },
+                        { lap_number: 4, lap_time: "1:32.1" },
+                        { lap_number: 5, lap_time: "1:31.9" },
+                        { lap_number: 6, lap_time: "1:32.3" },
+                    ],
+                },
+            }],
+            "show lap time distribution"
+        );
+        expect(specs.map((s) => s.type)).toEqual(["histogram"]);
+        const cfg = specConfig(specs[0]);
+        expect(cfg.unit).toBe("laps");
+        expect((cfg.data ?? []).length).toBeGreaterThanOrEqual(5);
+    });
+
+    it("labels lapped rows instead of printing a raw time", () => {
+        const charts = readSource("components/visualization/intelligent-charts.tsx");
+        expect(charts).toMatch(/const lapped = \/\^LAPPED\$\/i/);
+        expect(charts).toContain('"Lapped"');
+    });
+
+    it("single-round snapshots become a classification ladder, not bumps", () => {
         const specs = synthesizeChartSpecs(
             [{
                 tool: "get_race", args: { year: 2024, gp: "Monza" }, success: true,
@@ -622,8 +706,8 @@ describe("F1 position-progression bump charts", () => {
             }],
             "monza result"
         );
-        // A one-point bump is meaningless — the classification bar wins.
-        expect(specs.map((s) => s.type)).toEqual(["horizontal_bar"]);
+        // A one-point bump is meaningless - the classification ladder wins.
+        expect(specs.map((s) => s.type)).toEqual(["position_ladder"]);
         expect(specs[0]?.title).toContain("Finishing Order");
     });
 });
@@ -638,13 +722,13 @@ describe("F1 tyre strategy charts", () => {
         ],
     };
 
-    it.each(["get_tyres", "get_stints"])("%s → stacked_bar in laps", (tool) => {
+    it.each(["get_tyres", "get_stints"])("%s → one stacked_bar in laps", (tool) => {
         const specs = synthesizeChartSpecs(
             [{ tool, args: { year: 2024, gp: "Bahrain" }, success: true, data: stintData }],
             "tyre strategy"
         );
-        expect(specs).toHaveLength(2);
-        expect(specs.map((s) => s.type)).toEqual(["stacked_bar", "pie"]);
+        expect(specs).toHaveLength(1);
+        expect(specs.map((s) => s.type)).toEqual(["stacked_bar"]);
         const spec = specs[0]!;
         expectWellFormed(spec);
         const cfg = specConfig(spec);
@@ -654,6 +738,14 @@ describe("F1 tyre strategy charts", () => {
         const ver = rows.find((r) => r.category === "VER");
         expect(ver?.SOFT).toBe(12);
         expect(ver?.MEDIUM).toBe(25);
+    });
+
+    it("explicit compound-share questions use a pie instead of the stacked bar", () => {
+        const specs = synthesizeChartSpecs(
+            [{ tool: "get_tyres", args: { year: 2024, gp: "Bahrain" }, success: true, data: stintData }],
+            "tyre compound share"
+        );
+        expect(specs.map((s) => s.type)).toEqual(["pie"]);
     });
 });
 
@@ -680,7 +772,7 @@ describe("F1 driver comparison + fallbacks", () => {
         expectWellFormed(specs[0]!);
     });
 
-    it("weather payload renders nothing (no weather renderer exists)", () => {
+    it("weather payload without temperature rows renders nothing", () => {
         const specs = synthesizeChartSpecs(
             [
                 {
@@ -696,8 +788,33 @@ describe("F1 driver comparison + fallbacks", () => {
             ],
             "was it wet"
         );
-        // A generic comparison bar from temperature rows would mislead.
+        // No air/track temperature fields - nothing meaningful to plot.
         expect(specs).toEqual([]);
+    });
+
+    it("weather temperatures render as a session line chart", () => {
+        const specs = synthesizeChartSpecs(
+            [
+                {
+                    tool: "get_weather",
+                    args: { year: 2024, gp: "Silverstone" },
+                    success: true,
+                    data: {
+                        data: [
+                            { time: "0 days 00:00:00", air_temp: 18.5, track_temp: 24.1 },
+                            { time: "0 days 00:10:00", air_temp: 18.9, track_temp: 25.3 },
+                            { time: "0 days 00:20:00", air_temp: 19.2, track_temp: 26.0 },
+                        ],
+                    },
+                },
+            ],
+            "track temperature during the race"
+        );
+        expect(specs.map((s) => s.type)).toEqual(["line"]);
+        const cfg = specConfig(specs[0]);
+        expect(cfg.unit).toBe("°C");
+        expect(cfg.series).toEqual(["air_temp", "track_temp"]);
+        expect((cfg.data ?? []).length).toBe(3);
     });
 
     it("stringified JSON data is parsed", () => {
@@ -712,7 +829,7 @@ describe("F1 driver comparison + fallbacks", () => {
             ],
             "standings"
         );
-        expect(specs).toHaveLength(3);
+        expect(specs).toHaveLength(1);
     });
 
     it("multiple tools → multiple specs in order", () => {
@@ -733,10 +850,10 @@ describe("F1 driver comparison + fallbacks", () => {
             ],
             "telemetry and standings"
         );
-        expect(specs).toHaveLength(4);
-        expect(specs.map((s) => s.type)).toEqual(["line", "horizontal_bar", "pie", "stat_cards"]);
+        expect(specs).toHaveLength(2);
+        expect(specs.map((s) => s.type)).toEqual(["line", "horizontal_bar"]);
         // IDs unique per spec
-        expect(new Set(specs.map((s) => s.id)).size).toBe(4);
+        expect(new Set(specs.map((s) => s.id)).size).toBe(2);
     });
 
     it("skips failed + empty results", () => {

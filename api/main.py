@@ -28,6 +28,7 @@ import secrets
 
 import fastf1
 from fastf1.ergast import Ergast
+from fastf1.exceptions import DataNotLoadedError, InvalidSessionError, RateLimitExceededError
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -37,6 +38,8 @@ from fastapi.responses import JSONResponse
 from schemas import (
     CarDataRequest,
     CarDataResponse,
+    ConstructorStandingsRequest,
+    ConstructorStandingsResponse,
     DriverLapsRequest,
     DriverLapsResponse,
     DriversResponse,
@@ -111,6 +114,10 @@ def _get_max_season_year() -> int:
 # within the last 24 hours). Completed sessions from the current year are
 # always served from the FastF1 cache.
 _LIVE_SESSION_BLOCK_HOURS = 24
+# Results-only loads are cheap and stable, so they are allowed much sooner
+# than full telemetry/lap loads. Three hours after the scheduled session start
+# is enough for a race to finish and provisional results to publish.
+_RESULTS_GRACE_HOURS = 3
 
 MAX_TELEMETRY_POINTS = 5000  # Hard cap on telemetry data points
 
@@ -128,6 +135,26 @@ app = FastAPI(
     docs_url=None if _IS_PRODUCTION else "/docs",
     redoc_url=None if _IS_PRODUCTION else "/redoc",
 )
+
+
+@app.exception_handler(RateLimitExceededError)
+async def _fastf1_rate_limit_handler(request: Request, exc: RateLimitExceededError):
+    """Return a clear 503 when FastF1's upstream request budget is exhausted.
+
+    A cold FastF1 cache can burn through the provider's 500-calls/hour limit.
+    Without this handler the exception surfaces as a generic 500 in every
+    endpoint that touches the timing service.
+    """
+    logger.warning("FastF1 rate limit reached for %s: %s", request.url.path, exc)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": (
+                "The F1 data provider rate limit was reached. Try again later."
+            )
+        },
+        headers={"Retry-After": "900"},
+    )
 
 # =============================================================================
 # API-key auth + rate limiting (cost / DoS protection)
@@ -246,6 +273,14 @@ def _session_cache_key(year: int, gp: str, session_type: str) -> tuple:
 _session_cache: "OrderedDict[tuple, fastf1.core.Session]" = OrderedDict()
 _session_cache_lock = asyncio.Lock()
 
+# Results-only sessions are much lighter than full sessions (no laps,
+# telemetry, weather, or race-control messages). They get their own small
+# cache so a race result lookup never forces a multi-hundred-MB full load.
+_RESULTS_CACHE_MAX_SIZE = 32
+_results_cache: "OrderedDict[tuple, fastf1.core.Session]" = OrderedDict()
+_results_cache_lock = asyncio.Lock()
+_results_load_lock = asyncio.Lock()
+
 
 async def _session_cache_get(key: tuple):
     async with _session_cache_lock:
@@ -303,8 +338,44 @@ def _load_session_sync(year: int, gp: str, session_type: str) -> fastf1.core.Ses
     Load and cache a session synchronously.
     Uses LRU cache to avoid reloading frequently accessed sessions.
     """
-    session = fastf1.get_session(year, gp, session_type)
-    session.load()
+    try:
+        session = fastf1.get_session(year, gp, session_type)
+        session.load()
+    except (ValueError, InvalidSessionError) as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Session '{session_type}' is not available for {year} {gp}. "
+                f"Check the event format with /f1/sessions?year={year}&gp={gp}."
+            ),
+        ) from exc
+    except RateLimitExceededError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The F1 data provider rate limit was reached while loading "
+                "this session. Try again later."
+            ),
+            headers={"Retry-After": "900"},
+        ) from exc
+
+    # FastF1 can finish load() with only part of the session populated when
+    # the upstream timing service is unavailable. Accessing `.laps` then
+    # raises DataNotLoadedError inside an endpoint and becomes a generic 500.
+    # Fail with a clear 503 here instead.
+    try:
+        _ = session.laps
+        _ = session.results
+    except DataNotLoadedError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Session data could not be loaded completely. The timing "
+                "service may be unavailable or this session has no lap data. "
+                "Try again shortly or use a different session."
+            ),
+        ) from exc
+
     return session
 
 
@@ -364,6 +435,121 @@ async def get_session(year: int, gp: str, session_type: str) -> fastf1.core.Sess
                 )
 
         await _session_cache_put(cache_key, session)
+        return session
+
+
+def _load_results_only_sync(year: int, gp: str, session_type: str) -> fastf1.core.Session:
+    """Load only the classification/results plane for a session.
+
+    Full ``session.load()`` pulls laps, telemetry, weather, and race-control
+    messages, which is expensive and why the 24-hour live gate exists. The
+    result table is small and stable, so results endpoints can serve a
+    recently finished race without paying that cost.
+    """
+    try:
+        session = fastf1.get_session(year, gp, session_type)
+        session.load(laps=False, telemetry=False, weather=False, messages=False)
+    except (ValueError, InvalidSessionError) as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Session '{session_type}' is not available for {year} {gp}. "
+                f"Check the event format with /f1/sessions?year={year}&gp={gp}."
+            ),
+        ) from exc
+    except RateLimitExceededError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "The F1 data provider rate limit was reached while loading "
+                "this session. Try again later."
+            ),
+            headers={"Retry-After": "900"},
+        ) from exc
+
+    try:
+        _ = session.results
+    except DataNotLoadedError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Session results could not be loaded. The timing service may "
+                "be unavailable. Try again shortly."
+            ),
+        ) from exc
+
+    return session
+
+
+async def _results_cache_get(key: tuple):
+    async with _results_cache_lock:
+        if key in _results_cache:
+            _results_cache.move_to_end(key)
+            return _results_cache[key]
+    return None
+
+
+async def _results_cache_put(key: tuple, session) -> None:
+    async with _results_cache_lock:
+        if key in _results_cache:
+            _results_cache.move_to_end(key)
+            _results_cache[key] = session
+            return
+        _results_cache[key] = session
+        while len(_results_cache) > _RESULTS_CACHE_MAX_SIZE:
+            _results_cache.popitem(last=False)
+
+
+async def get_results_session(year: int, gp: str, session_type: str) -> fastf1.core.Session:
+    """Get a results-only session, allowing recently completed sessions.
+
+    Full session loads keep the strict 24-hour live gate. This path is for
+    classification tables only: it blocks future sessions and the first
+    ``_RESULTS_GRACE_HOURS`` after the scheduled start (provisional results
+    may still change), then serves the stable results table.
+    """
+    _validate_year(year)
+    validate_gp_param(gp)
+    gp = resolve_gp_name(year, gp)
+    cache_key = _session_cache_key(year, gp, session_type)
+
+    cached = await _results_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    async with _results_load_lock:
+        cached = await _results_cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        loop = asyncio.get_running_loop()
+        session = await loop.run_in_executor(
+            None, _load_results_only_sync, year, gp, session_type
+        )
+
+        if session.date:
+            session_datetime = pd.Timestamp(session.date)
+            now = pd.Timestamp.now(tz=session_datetime.tz)
+            hours_since_start = (now - session_datetime).total_seconds() / 3600
+            if hours_since_start < 0:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Session has not started yet. Session date: "
+                        f"{session.date.isoformat()}"
+                    ),
+                )
+            if hours_since_start < _RESULTS_GRACE_HOURS:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Session results are not final yet (less than "
+                        f"{_RESULTS_GRACE_HOURS} hours since the scheduled start). "
+                        f"Session date: {session.date.isoformat()}"
+                    ),
+                )
+
+        await _results_cache_put(cache_key, session)
         return session
 
 
@@ -525,9 +711,66 @@ async def get_driver_lap(session: fastf1.core.Session, driver: str, lap_identifi
     
     return lap
     
+def _lap_telemetry_or_503(lap):
+    """Return lap telemetry or a clear 503 when FastF1 did not load car data."""
+    try:
+        return lap.get_telemetry()
+    except DataNotLoadedError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Telemetry data could not be loaded for this lap. The timing "
+                "service may be unavailable. Try again shortly."
+            ),
+        ) from exc
+
+
+def _session_data_or_503(getter, label: str):
+    """Read a lazily loaded FastF1 session attribute with a clean 503."""
+    try:
+        return getter()
+    except DataNotLoadedError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"{label} could not be loaded for this session. The timing "
+                "service may be unavailable. Try again shortly."
+            ),
+        ) from exc
+
+
 # =============================================================================
 # K. Standings Endpoint
 # =============================================================================
+
+
+def _safe_int(value) -> Optional[int]:
+    """Convert Ergast values to int, preserving missing/NaN as None."""
+    try:
+        if value is None or pd.isna(value):
+            return None
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        if value is None or pd.isna(value):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_text(value) -> str:
+    """Convert Ergast text fields to a clean string, treating NaN as empty."""
+    try:
+        if value is None or pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
 
 
 @app.post("/f1/standings/drivers", response_model=DriverStandingsResponse)
@@ -547,17 +790,76 @@ async def get_driver_standings(request: DriverStandingsRequest):
             # content is a list of StandingsLists
             # We usually want the first one (should be only one for a season query)
             table = standings.content[0]
-            
+
+            def _first(value) -> str:
+                """Ergast returns constructorIds/Names as one-element lists."""
+                if isinstance(value, (list, tuple)):
+                    return _safe_text(value[0]) if value else ""
+                try:
+                    if pd.api.types.is_list_like(value) and not isinstance(value, str):
+                        values = list(value)
+                        return _safe_text(values[0]) if values else ""
+                except (TypeError, ValueError):
+                    pass
+                return _safe_text(value)
+
             for row in table.iterrows():
                 # row is (index, Series)
                 entry = row[1]
+                driver_id = _safe_text(entry.get("driverId"))
+                driver_code = _safe_text(entry.get("driverCode"))
+                given_name = _safe_text(entry.get("givenName"))
+                family_name = _safe_text(entry.get("familyName"))
+                driver_name = f"{given_name} {family_name}".strip() or driver_code or driver_id
+                team_id = _first(entry.get("constructorIds", entry.get("constructorId", "")))
+                team_name = _first(entry.get("constructorNames", entry.get("constructorName", "")))
                 data.append({
-                    "position": int(entry.get("position", 0)),
-                    "driver": str(entry.get("driverId", "")),
-                    "points": float(entry.get("points", 0.0)),
-                    "wins": int(entry.get("wins", 0)),
-                    "team": str(entry.get("constructorId", ""))
+                    "position": _safe_int(entry.get("position")),
+                    "position_text": str(entry.get("positionText", "") or ""),
+                    # `driver` is the chart/LLM-facing label: prefer the
+                    # 3-letter code, fall back to the full name.
+                    "driver": driver_code or driver_name,
+                    "driver_code": driver_code,
+                    "driver_id": driver_id,
+                    "driver_name": driver_name,
+                    "points": _safe_float(entry.get("points", 0.0)),
+                    "wins": _safe_int(entry.get("wins")) or 0,
+                    "team": team_name or team_id,
+                    "team_id": team_id,
                 })
+
+            # Quote-ready gaps. Compute them on the full table BEFORE any
+            # driver filter so a filtered response still has the correct
+            # distance to the leader and to the next car. Ergast leaves
+            # position/positionText empty for zero-point rows (e.g. 1994);
+            # sort those to the end instead of failing int(NaN).
+            data.sort(
+                key=lambda row: (
+                    row["position"] is None,
+                    row["position"] if row["position"] is not None else 0,
+                )
+            )
+            leader_points = data[0]["points"] if data else 0.0
+            previous_points: Optional[float] = None
+            for row in data:
+                row["points_gap_to_leader"] = round(leader_points - row["points"], 2)
+                row["points_gap_to_next"] = (
+                    0.0 if previous_points is None else round(previous_points - row["points"], 2)
+                )
+                previous_points = row["points"]
+
+            # The request's optional driver filter was previously ignored.
+            if request.driver:
+                needle = request.driver.strip().upper()
+                data = [
+                    row for row in data
+                    if needle in (
+                        str(row.get("driver", "")).upper(),
+                        str(row.get("driver_code", "")).upper(),
+                        str(row.get("driver_id", "")).upper(),
+                        str(row.get("driver_name", "")).upper(),
+                    )
+                ]
         
         if not data:
             raise HTTPException(status_code=404, detail=f"No standings found for year {request.year}")
@@ -572,6 +874,74 @@ async def get_driver_standings(request: DriverStandingsRequest):
 
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
 
+        raise HTTPException(status_code=500, detail="Internal server error") from e
+
+
+@app.post("/f1/standings/constructors", response_model=ConstructorStandingsResponse)
+async def get_constructor_standings(request: ConstructorStandingsRequest):
+    """
+    Get constructor (team) standings for a specific year.
+
+    Driver standings alone cannot answer "who leads the constructors'
+    championship" without aggregation. This endpoint returns the official
+    Ergast team table so the assistant can cite it directly.
+    """
+    try:
+        ergast = Ergast()
+        standings = ergast.get_constructor_standings(season=request.year)
+
+        data = []
+        if standings and standings.content:
+            table = standings.content[0]
+            for _, entry in table.iterrows():
+                team_id = _safe_text(entry.get("constructorId"))
+                team_name = _safe_text(entry.get("constructorName")) or team_id
+                data.append({
+                    "position": _safe_int(entry.get("position")),
+                    "position_text": str(entry.get("positionText", "") or ""),
+                    "team": team_name,
+                    "team_name": team_name,
+                    "team_id": team_id,
+                    "points": _safe_float(entry.get("points", 0.0)),
+                    "wins": _safe_int(entry.get("wins")) or 0,
+                    "nationality": str(entry.get("constructorNationality", "") or ""),
+                })
+
+        if data:
+            data.sort(
+                key=lambda row: (
+                    row["position"] is None,
+                    row["position"] if row["position"] is not None else 0,
+                )
+            )
+            leader_points = data[0]["points"]
+            previous_points: Optional[float] = None
+            for row in data:
+                row["points_gap_to_leader"] = round(leader_points - row["points"], 2)
+                row["points_gap_to_next"] = (
+                    0.0 if previous_points is None else round(previous_points - row["points"], 2)
+                )
+                previous_points = row["points"]
+
+        if request.team:
+            needle = request.team.strip().lower()
+            data = [
+                row for row in data
+                if needle in str(row.get("team", "")).lower()
+                or needle in str(row.get("team_id", "")).lower()
+            ]
+
+        if not data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No constructor standings found for year {request.year}",
+            )
+
+        return {"year": request.year, "standings": data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
@@ -651,6 +1021,16 @@ async def get_events(year: int = Query(..., ge=1950, le=2100)):
         events = []
         
         for _, event in schedule.iterrows():
+            # Pre-season testing rows are RoundNumber 0 and must never be
+            # presented as a Grand Prix (the responder would otherwise be
+            # able to anchor "the last race" on a test).
+            try:
+                round_number = int(event.get("RoundNumber", 0) or 0)
+            except (TypeError, ValueError):
+                round_number = 0
+            if round_number <= 0 or str(event.get("EventFormat", "")).lower() == "testing":
+                continue
+
             # Get session names for this event
             session_names = []
             for i in range(1, 6):
@@ -659,7 +1039,7 @@ async def get_events(year: int = Query(..., ge=1950, le=2100)):
                     session_names.append(str(event[session_key]))
             
             event_info = EventInfo(
-                round_number=int(event.get("RoundNumber", 0)),
+                round_number=round_number,
                 country=str(event.get("Country", "")),
                 location=str(event.get("Location", "")),
                 event_name=str(event.get("EventName", "")),
@@ -693,9 +1073,18 @@ async def get_gp_names(year: int = Query(..., ge=1950, le=2100)):
         grand_prix = []
 
         for _, event in schedule.iterrows():
+            # Skip pre-season testing: it is not a Grand Prix and must not be
+            # offered to the planner as a canonical race name.
+            try:
+                round_number = int(event.get("RoundNumber", 0) or 0)
+            except (TypeError, ValueError):
+                round_number = 0
+            if round_number <= 0 or str(event.get("EventFormat", "")).lower() == "testing":
+                continue
+
             event_name = str(event.get("EventName", ""))
             gp_info = GpNameInfo(
-                round=int(event.get("RoundNumber", 0)),
+                round=round_number,
                 event_name=event_name,
                 location=str(event.get("Location", "")),
                 country=str(event.get("Country", "")),
@@ -814,13 +1203,19 @@ async def load_session(request: SessionRequest):
 async def get_results(request: SessionRequest):
     """
     Get session results with driver information.
+
+    Results use the lightweight results-only loader, so a recently finished
+    session is available without the full telemetry/lap load.
     """
     try:
-        session = await get_session(request.year, request.gp, request.session)
+        session = await get_results_session(request.year, request.gp, request.session)
         results = format_session_results(session.results)
-        
+
         return {
             "session_name": session.name,
+            "year": request.year,
+            "gp": str(session.event.get("EventName", request.gp)) if session.event is not None else request.gp,
+            "session": request.session,
             "results": results
         }
     except HTTPException:
@@ -836,14 +1231,20 @@ async def get_results(request: SessionRequest):
 async def get_qualifying(request: SessionRequest):
     """
     Get qualifying results with Q1, Q2, Q3 times.
+
+    Uses the results-only loader so the latest qualifying is available
+    without loading telemetry/laps.
     """
     try:
         # Force session type to Qualifying
-        session = await get_session(request.year, request.gp, "Q")
+        session = await get_results_session(request.year, request.gp, "Q")
         results = format_session_results(session.results)
 
         return {
             "session_name": session.name,
+            "year": request.year,
+            "gp": str(session.event.get("EventName", request.gp)) if session.event is not None else request.gp,
+            "session": "Q",
             "results": results
         }
     except HTTPException:
@@ -859,14 +1260,20 @@ async def get_qualifying(request: SessionRequest):
 async def get_race(request: SessionRequest):
     """
     Get race results with grid position, status, fastest lap.
+
+    Uses the results-only loader so the latest race is available as soon as
+    its classification is stable, without the 24-hour full-load gate.
     """
     try:
         # Force session type to Race
-        session = await get_session(request.year, request.gp, "R")
+        session = await get_results_session(request.year, request.gp, "R")
         results = format_session_results(session.results)
 
         return {
             "session_name": session.name,
+            "year": request.year,
+            "gp": str(session.event.get("EventName", request.gp)) if session.event is not None else request.gp,
+            "session": "R",
             "results": results
         }
     except HTTPException:
@@ -1057,7 +1464,7 @@ async def get_telemetry(request: TelemetryRequest):
     try:
         session = await get_session(request.year, request.gp, request.session)
         lap = await get_driver_lap(session, request.driver, request.lap)
-        telemetry = lap.get_telemetry()
+        telemetry = _lap_telemetry_or_503(lap)
 
         
         if telemetry is None or telemetry.empty:
@@ -1157,7 +1564,7 @@ async def get_telemetry_summary(request: TelemetryRequest):
     try:
         session = await get_session(request.year, request.gp, request.session)
         lap = await get_driver_lap(session, request.driver, request.lap)
-        telemetry = lap.get_telemetry()
+        telemetry = _lap_telemetry_or_503(lap)
         
         if telemetry is None or telemetry.empty:
             raise HTTPException(status_code=404, detail="No telemetry data available for this lap")
@@ -1268,10 +1675,11 @@ async def get_car_data(request: CarDataRequest):
         driver_number = str(driver_info.get("DriverNumber", request.driver))
         
         # Get car data from session
-        if session.car_data is None or driver_number not in session.car_data:
+        all_car_data = _session_data_or_503(lambda: session.car_data, "Car data")
+        if all_car_data is None or driver_number not in all_car_data:
             raise HTTPException(status_code=404, detail=f"No car data available for driver {request.driver}")
-        
-        car_data = session.car_data[driver_number]
+
+        car_data = all_car_data[driver_number]
         
         # If a specific lap is requested, filter to that lap
         lap_number = None
@@ -1329,14 +1737,15 @@ async def get_weather(request: WeatherRequest):
     """
     try:
         session = await get_session(request.year, request.gp, request.session)
-        
-        if session.weather_data is None or session.weather_data.empty:
+        weather_data = _session_data_or_503(lambda: session.weather_data, "Weather data")
+
+        if weather_data is None or weather_data.empty:
             return {
                 "session_name": session.name,
                 "data": []
             }
-        
-        weather = session.weather_data.copy()
+
+        weather = weather_data.copy()
         
         # Rename columns to more friendly names
         column_map = {
@@ -1381,14 +1790,17 @@ async def get_race_control(request: RaceControlRequest):
     """
     try:
         session = await get_session(request.year, request.gp, request.session)
-        
-        if session.race_control_messages is None or session.race_control_messages.empty:
+        race_control_messages = _session_data_or_503(
+            lambda: session.race_control_messages, "Race-control messages"
+        )
+
+        if race_control_messages is None or race_control_messages.empty:
             return {
                 "session_name": session.name,
                 "messages": []
             }
-        
-        messages = df_to_json(session.race_control_messages)
+
+        messages = df_to_json(race_control_messages)
         
         return {
             "session_name": session.name,
@@ -1410,14 +1822,15 @@ async def get_track_status(request: TrackStatusRequest):
     """
     try:
         session = await get_session(request.year, request.gp, request.session)
-        
-        if session.track_status is None or session.track_status.empty:
+        track_status = _session_data_or_503(lambda: session.track_status, "Track status")
+
+        if track_status is None or track_status.empty:
             return {
                 "session_name": session.name,
                 "status": []
             }
-        
-        status_data = session.track_status.copy()
+
+        status_data = track_status.copy()
         
         # Add human-readable status description
         if "Status" in status_data.columns:

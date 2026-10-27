@@ -9,8 +9,8 @@ export const metadata: Metadata = {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
     return (
         <section className="space-y-2">
-            <h2 className="text-lg font-bold tracking-tight text-white">{title}</h2>
-            <div className="space-y-2 text-sm leading-relaxed text-zinc-300">{children}</div>
+            <h2 className="text-lg font-bold tracking-tight text-foreground">{title}</h2>
+            <div className="space-y-2 text-sm leading-relaxed text-muted-foreground">{children}</div>
         </section>
     );
 }
@@ -19,12 +19,12 @@ export default function PrivacyPage() {
     // Own scroll container: the root layout locks body scroll for the
     // chat shell (see landing-page.tsx).
     return (
-        <main className="flex h-dvh w-full justify-center overflow-y-auto overscroll-contain bg-carbon px-4 py-12 text-white">
+        <main className="flex h-dvh w-full justify-center overflow-y-auto overscroll-contain bg-carbon px-4 py-12 text-foreground">
             <article className="w-full max-w-3xl space-y-8">
                 <header className="space-y-2">
                     <p className="text-xs font-mono uppercase tracking-widest text-f1-red">Dbrief1</p>
                     <h1 className="text-3xl font-bold tracking-tighter">Privacy Policy</h1>
-                    <p className="text-xs text-zinc-500">Last updated: September 2026</p>
+                    <p className="text-xs text-muted-foreground">Last updated: September 2026</p>
                 </header>
 
                 <Section title="What Dbrief1 is">
@@ -38,25 +38,25 @@ export default function PrivacyPage() {
                 <Section title="Data we collect">
                     <ul className="list-disc space-y-1 pl-5">
                         <li>
-                            <strong className="text-white">Account data (via Google sign-in):</strong>{" "}
+                            <strong className="text-foreground">Account data (via Google sign-in):</strong>{" "}
                             your email address, display name, and profile photo. We never see or
                             store your Google password.
                         </li>
                         <li>
-                            <strong className="text-white">Your conversations:</strong> chat messages,
+                            <strong className="text-foreground">Your conversations:</strong> chat messages,
                             tool-call traces (which data sources were queried and their arguments),
                             charts and visualization payloads, research evidence, citations, token
                             usage, and session titles.
                         </li>
                         <li>
-                            <strong className="text-white">Technical identifiers:</strong> a random
+                            <strong className="text-foreground">Technical identifiers:</strong> a random
                             session cookie (<code className="font-mono text-xs">cf_uid</code>) that
                             identifies your browser, and a salted one-way hash of your IP address
                             used only for abuse prevention and usage quotas. Raw IP addresses are
                             never stored.
                         </li>
                         <li>
-                            <strong className="text-white">Usage counters:</strong> daily tallies of
+                            <strong className="text-foreground">Usage counters:</strong> daily tallies of
                             queries, deep-research runs, simulations, and token counts used to
                             enforce the free-tier limits.
                         </li>
@@ -105,7 +105,7 @@ export default function PrivacyPage() {
                         <li>Signing in with Google is required to use the chat; deleting your sessions removes your stored conversations.</li>
                         <li>Bring Your Own Key is optional — your key is stored in a secure httpOnly cookie, never in readable storage.</li>
                         <li>
-                            <strong className="text-white">Sharing:</strong> you can create a
+                            <strong className="text-foreground">Sharing:</strong> you can create a
                             read-only link for any chat. Anyone with the link can read its
                             messages and sources without signing in — charts, usage stats, and
                             other internals are never shared. Revoking the link or deleting the
@@ -121,9 +121,9 @@ export default function PrivacyPage() {
                     </p>
                 </Section>
 
-                <footer className="flex gap-4 border-t border-white/10 pt-4 text-xs text-zinc-500">
-                    <Link href="/" className="hover:text-white">Home</Link>
-                    <Link href="/terms" className="hover:text-white">Terms of Service</Link>
+                <footer className="flex gap-4 border-t border-border pt-4 text-xs text-muted-foreground">
+                    <Link href="/" className="hover:text-foreground">Home</Link>
+                    <Link href="/terms" className="hover:text-foreground">Terms of Service</Link>
                 </footer>
             </article>
         </main>

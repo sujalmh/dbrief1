@@ -44,7 +44,11 @@ export function Sidebar() {
     }, [setSidebarOpen]);
     const prevDesktop = React.useRef<boolean | null>(null);
     React.useEffect(() => {
+        // Shrinking packs the drawer away; growing back to desktop must
+        // restore the rail, otherwise the app stays stuck in a 60px
+        // icon-less strip after a rotation/resize.
         if (prevDesktop.current === true && !isDesktop) setSidebarOpen(false);
+        if (prevDesktop.current === false && isDesktop) setSidebarOpen(true);
         prevDesktop.current = isDesktop;
     }, [isDesktop, setSidebarOpen]);
 
@@ -111,7 +115,7 @@ export function Sidebar() {
             case "comparison": return "bg-[#0090FF]/10 text-[#0066CC] border-[#0090FF]/30 dark:bg-[#0090FF]/10 dark:text-[#0090FF] dark:border-[#0090FF]/30";
             case "strategy": return "bg-[#00D2BE]/10 text-[#00796B] border-[#00D2BE]/30 dark:bg-[#00D2BE]/10 dark:text-[#00D2BE] dark:border-[#00D2BE]/30";
             case "insights": return "bg-[#FF8700]/10 text-[#CC5500] border-[#FF8700]/30 dark:bg-[#FF8700]/10 dark:text-[#FF8700] dark:border-[#FF8700]/30";
-            default: return "bg-gray-500/10 text-gray-400 border-gray-500/20";
+            default: return "bg-muted text-muted-foreground border-border";
         }
     };
 
@@ -131,7 +135,9 @@ export function Sidebar() {
         const sessionMs = getSessionTimeMs(session);
 
         if (isActive) {
-            return sessionMs ? "+0s" : "--";
+            // The active row used to read "+0s", which looks like a
+            // stopwatch bug rather than "this is the open session".
+            return "now";
         }
 
         if (!sessionMs) return "--";
@@ -163,30 +169,28 @@ export function Sidebar() {
                     className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[1px] md:hidden"
                 />
             )}
-        <div
-            // Off-canvas drawer content must not be focusable/tappable.
-            {...(!isDesktop && !isSidebarOpen ? { inert: true } : {})}
-            className={cn(
-                "flex flex-col border-r transition-all duration-300 ease-in-out shadow-2xl backdrop-blur-xl",
-                // Glassmorphism: frosted sidebar over the carbon backdrop.
-                // bg-sidebar at reduced opacity + blur + inner top highlight
-                // so session rows feel layered under glass.
-                "bg-sidebar/70 supports-[backdrop-filter]:bg-sidebar/60 border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]",
-                // Mobile: fixed overlay drawer (never squeezes chat).
-                !isDesktop && "fixed inset-y-0 left-0 z-50 h-dvh w-72",
-                !isDesktop && !isSidebarOpen && "-translate-x-full",
-                !isDesktop && isSidebarOpen && "translate-x-0",
-                // Desktop: collapsible in-flow rail (unchanged).
-                isDesktop && "relative z-30 h-screen",
-                isDesktop && (isSidebarOpen ? "w-64" : "w-[60px]")
-            )}
+            <div
+                // Off-canvas drawer content must not be focusable/tappable.
+                {...(!isDesktop && !isSidebarOpen ? { inert: true } : {})}
+                className={cn(
+                    "flex flex-col border-r transition-all duration-300 ease-in-out shadow-2xl backdrop-blur-xl",
+                    // Glassmorphism: frosted wheel body over the carbon backdrop.
+                    "bg-sidebar/80 supports-[backdrop-filter]:bg-sidebar/70 border-[var(--wheel-line)] shadow-[inset_-1px_0_0_var(--wheel-highlight),0_12px_32px_var(--wheel-shadow)]",
+                    // Mobile: fixed overlay drawer (never squeezes chat).
+                    !isDesktop && "fixed inset-y-0 left-0 z-50 h-dvh w-72",
+                    !isDesktop && !isSidebarOpen && "-translate-x-full",
+                    !isDesktop && isSidebarOpen && "translate-x-0",
+                    // Desktop: collapsible in-flow rail (unchanged).
+                    isDesktop && "relative z-30 h-screen",
+                    isDesktop && (isSidebarOpen ? "w-64" : "w-[60px]")
+                )}
         >
             {/* Header — logo + collapse live here, so the sidebar owns
                 its own open/close control. Open: logo mark, wordmark,
                 and collapse button. Collapsed: logo badge that swaps to
                 an expand button on hover. */}
             <div className={cn(
-                "flex items-center p-3 h-16 shrink-0 transition-all duration-300 border-b border-white/10 bg-white/5 dark:bg-white/5 backdrop-blur-xl",
+                "flex items-center p-3 h-16 shrink-0 transition-all duration-300 border-b border-[var(--wheel-line)] bg-[var(--wheel-face)]/70 backdrop-blur-xl",
                 isSidebarOpen ? "justify-between gap-2" : "justify-center"
             )}>
                 {isSidebarOpen ? (
@@ -221,13 +225,13 @@ export function Sidebar() {
                             <img
                                 src="/logo.svg"
                                 alt="Dbrief1"
-                                className="h-5 w-auto shrink-0 dark:hidden"
+                                className="h-4 w-9 object-contain dark:hidden"
                             />
                             {/* eslint-disable-next-line @next/next/no-img-element -- local static logo */}
                             <img
                                 src="/logo-on-dark.svg"
                                 alt="Dbrief1"
-                                className="hidden h-5 w-auto shrink-0 dark:block"
+                                className="hidden h-4 w-9 object-contain dark:block"
                             />
                         </span>
                         {/* Expand: proper circle, transparent on dark with
@@ -244,7 +248,7 @@ export function Sidebar() {
                 <button
                     onClick={handleNewChat}
                     className={cn(
-                        "flex items-center w-full bg-f1-red hover:bg-f1-red/90 text-white rounded-md p-2 transition-all shadow-sm overflow-hidden",
+                        "btn-wheel btn-wheel-red btn-wheel-rect flex h-9 w-full items-center p-2 text-white transition-all overflow-hidden",
                         !isSidebarOpen && "justify-center px-0"
                     )}
                     title="New Chat"
@@ -276,8 +280,8 @@ export function Sidebar() {
                                 className={cn(
                                     "group relative flex items-center w-full p-2 rounded-md transition-all border border-transparent overflow-hidden",
                                     isSidebarOpen && currentSessionId === session.id
-                                        ? "bg-sidebar-accent border-sidebar-border text-foreground shadow-sm"
-                                        : isSidebarOpen ? "hover:bg-sidebar-accent/50 text-muted-foreground hover:text-foreground cursor-pointer" : "text-transparent pointer-events-none",
+                                        ? "bg-[var(--wheel-face)] border-[var(--wheel-line)] text-foreground shadow-[inset_0_1px_0_var(--wheel-highlight)]"
+                                        : isSidebarOpen ? "hover:bg-sidebar-accent/60 text-muted-foreground hover:text-foreground cursor-pointer" : "text-transparent pointer-events-none",
                                     !isSidebarOpen && "justify-center"
                                 )}
                             >
@@ -334,7 +338,7 @@ export function Sidebar() {
             </div>
 
             {/* Footer / User Profile */}
-            <div className="p-3 border-t border-sidebar-border mt-auto">
+            <div className="p-3 border-t border-[var(--wheel-line)] mt-auto">
                 <div className={cn(
                     "flex items-center rounded-md p-2 hover:bg-sidebar-accent transition-colors cursor-default overflow-hidden",
                     !isSidebarOpen && "justify-center"

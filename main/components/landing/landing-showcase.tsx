@@ -327,7 +327,7 @@ function DemoChartPreview({ title, caption }: { title: string; caption: string }
                 </span>
                 <span
                     className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider"
-                    style={{ backgroundColor: `${ACCENT}26`, color: ACCENT }}
+                    style={{ backgroundColor: ACCENT, color: "#0d0d10" }}
                 >
                     Visualization
                 </span>

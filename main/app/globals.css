@@ -38,6 +38,17 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  /* Brand + status hues. Without these mappings Tailwind never emits
+     `bg-f1-red` / `text-f1-red`, so the primary buttons silently rendered
+     transparent (white text on a light sidebar = invisible). */
+  --color-f1-red: var(--f1-red);
+  --color-f1-green: var(--f1-green);
+  --color-f1-yellow: var(--f1-yellow);
+  --color-f1-purple: var(--f1-purple);
+  --color-f1-cyan: var(--f1-cyan);
+  --color-f1-blue: var(--f1-blue);
+  --color-f1-orange: var(--f1-orange);
+  --color-f1-pink: var(--f1-pink);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -48,85 +59,151 @@
 }
 
 :root {
-  --radius: 0.5rem;
-  --background: #ffffff;
-  --foreground: #09090b;
-  /* Zinc 950 - Higher Contrast */
-  --card: #ffffff;
-  --card-foreground: #09090b;
-  --popover: #ffffff;
-  --popover-foreground: #09090b;
-  --primary: #E10600;
-  /* F1 Red */
-  --primary-foreground: #ffffff;
-  --secondary: #00D26A;
-  /* Fastest Lap Green */
-  --secondary-foreground: #ffffff;
-  --muted: #f4f4f5;
-  --muted-foreground: #52525b;
-  /* Zinc 600 - Darker Gray */
-  --accent: #FFD700;
-  /* Sector Yellow */
-  --accent-foreground: #1a1a1a;
-  --destructive: #ef4444;
-  --border: #d4d4d8;
-  /* Zinc 300 - Visible Border */
-  --input: #e4e4e7;
-  --ring: #E10600;
-  --chart-1: #E10600;
-  --chart-2: #00D26A;
-  --chart-3: #FFD700;
-  --chart-4: #A855F7;
-  --chart-5: #3b82f6;
-  --sidebar: #f4f4f5;
-  --sidebar-foreground: #1a1a1a;
-  --sidebar-primary: #E10600;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e4e4e7;
-  --sidebar-accent-foreground: #1a1a1a;
-  --sidebar-border: #e4e4e7;
-  --sidebar-ring: #E10600;
+  --radius: 0.6rem;
+  color-scheme: light;
 
-  /* Custom F1 Variables */
-  --f1-red: #E10600;
-  --f1-green: #00D26A;
-  --f1-yellow: #FFD700;
-  --f1-purple: #A855F7;
+  /* ---- Steering-wheel aluminium (light) --------------------------
+     Light mode is its own material: brushed aluminium + white rubber,
+     not "dark mode with the lights on". Surfaces are cool greys, text
+     is near-black, and the switchgear stays fully saturated. */
+  --background: #eef0f3;
+  --foreground: #151519;
+  --card: #ffffff;
+  --card-foreground: #151519;
+  --popover: #ffffff;
+  --popover-foreground: #151519;
+  --primary: #e10600;
+  --primary-foreground: #ffffff;
+  --secondary: #00d26a;
+  --secondary-foreground: #04170c;
+  --muted: #e5e8ec;
+  --muted-foreground: #565c66;
+  --accent: #dfe3e9;
+  --accent-foreground: #151519;
+  --destructive: #c81e1e;
+  --border: #d1d5dc;
+  --input: #d6dae1;
+  --ring: #e10600;
+  --chart-1: #e10600;
+  --chart-2: #00875a;
+  --chart-3: #b45309;
+  --chart-4: #7e22ce;
+  --chart-5: #0066cc;
+  --sidebar: #e9ebef;
+  --sidebar-foreground: #151519;
+  --sidebar-primary: #e10600;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #dde1e7;
+  --sidebar-accent-foreground: #151519;
+  --sidebar-border: #cfd4db;
+  --sidebar-ring: #e10600;
+
+  /* Switchgear hues — same vivid colours on both themes. */
+  --f1-red: #e10600;
+  --f1-green: #00d26a;
+  --f1-yellow: #ffd400;
+  --f1-purple: #a855f7;
+  --f1-cyan: #00d2be;
+  --f1-blue: #0090ff;
+  --f1-orange: #ff8700;
+  --f1-pink: #f2059f;
+
+  /* Ink versions for small coloured text sitting on light surfaces. */
+  --f1-red-ink: #b00500;
+  --f1-green-ink: #00713a;
+  --f1-yellow-ink: #7a5c00;
+  --f1-purple-ink: #7e22ce;
+  --f1-cyan-ink: #006f64;
+  --f1-blue-ink: #005fc0;
+  --f1-orange-ink: #a84800;
+
+  /* Wheel hardware surfaces. */
+  --wheel-face: #e7e9ed;
+  --wheel-face-raised: #fbfbfc;
+  --wheel-well: #dfe2e8;
+  --wheel-line: #cbd0d8;
+  --wheel-text: #151519;
+  --wheel-text-dim: #565c66;
+  --wheel-highlight: rgba(255, 255, 255, 0.92);
+  --wheel-shadow: rgba(15, 23, 42, 0.16);
+
+  /* Top bar (same hardware, lighter anodised finish). */
+  --header-bg: #f3f4f6;
+  --header-fg: #151519;
+  --header-dim: #565c66;
+  --header-well: #e5e8ed;
+  --header-line: #cfd4db;
 }
 
 .dark {
-  --background: #0c0c0c;
-  /* Deep Charcoal/Black */
-  --foreground: #ffffff;
-  --card: #151515;
-  --card-foreground: #ffffff;
-  --popover: #151515;
-  --popover-foreground: #ffffff;
-  --primary: #E10600;
+  color-scheme: dark;
+
+  /* ---- Carbon-fibre wheel (dark) -------------------------------- */
+  --background: #0a0a0c;
+  /* Deep carbon */
+  --foreground: #f6f6f7;
+  --card: #141417;
+  --card-foreground: #f6f6f7;
+  --popover: #16161a;
+  --popover-foreground: #f6f6f7;
+  --primary: #e10600;
   --primary-foreground: #ffffff;
-  --secondary: #00D26A;
-  --secondary-foreground: #ffffff;
-  --muted: #1e1e1e;
-  --muted-foreground: #a1a1aa;
-  --accent: #FFD700;
-  --accent-foreground: #1a1a1a;
-  --destructive: #7f1d1d;
-  --border: #222222;
-  --input: #222222;
-  --ring: #E10600;
-  --chart-1: #E10600;
-  --chart-2: #00D26A;
-  --chart-3: #FFD700;
-  --chart-4: #A855F7;
-  --chart-5: #3b82f6;
-  --sidebar: #151515;
-  --sidebar-foreground: #ffffff;
-  --sidebar-primary: #E10600;
+  --secondary: #00d26a;
+  --secondary-foreground: #04170c;
+  --muted: #1d1d22;
+  --muted-foreground: #a4a4ad;
+  --accent: #26262d;
+  --accent-foreground: #f6f6f7;
+  --destructive: #c81e1e;
+  --border: #2b2b33;
+  --input: #2b2b33;
+  --ring: #e10600;
+  --chart-1: #e10600;
+  --chart-2: #00d26a;
+  --chart-3: #ffd400;
+  --chart-4: #a855f7;
+  --chart-5: #0090ff;
+  --sidebar: #111114;
+  --sidebar-foreground: #f6f6f7;
+  --sidebar-primary: #e10600;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #222222;
-  --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: #222222;
-  --sidebar-ring: #E10600;
+  --sidebar-accent: #232329;
+  --sidebar-accent-foreground: #f6f6f7;
+  --sidebar-border: #2b2b33;
+  --sidebar-ring: #e10600;
+
+  --f1-red: #e10600;
+  --f1-green: #00d26a;
+  --f1-yellow: #ffd400;
+  --f1-purple: #a855f7;
+  --f1-cyan: #00d2be;
+  --f1-blue: #0090ff;
+  --f1-orange: #ff8700;
+  --f1-pink: #f2059f;
+
+  /* On dark, ink = the vivid LED itself. */
+  --f1-red-ink: #ff4b45;
+  --f1-green-ink: #34e08b;
+  --f1-yellow-ink: #ffe14d;
+  --f1-purple-ink: #c084fc;
+  --f1-cyan-ink: #22e0cd;
+  --f1-blue-ink: #4dacff;
+  --f1-orange-ink: #ffa64d;
+
+  --wheel-face: #1b1b20;
+  --wheel-face-raised: #24242a;
+  --wheel-well: #0d0d10;
+  --wheel-line: #34343c;
+  --wheel-text: #f6f6f7;
+  --wheel-text-dim: #a4a4ad;
+  --wheel-highlight: rgba(255, 255, 255, 0.08);
+  --wheel-shadow: rgba(0, 0, 0, 0.55);
+
+  --header-bg: #0a0a0c;
+  --header-fg: #f7f7f8;
+  --header-dim: #a4a4ad;
+  --header-well: #15151a;
+  --header-line: #2b2b33;
 }
 
 @layer utilities {
@@ -137,49 +214,96 @@
 
 /* Textured Backgrounds */
 .bg-carbon {
-  /* Light Mode: Machined Composite */
-  background-color: #e4e4e7;
-  /* Warm Graphite Base */
+  /* Light mode: brushed-aluminium wheel body. */
+  background-color: var(--background);
   background-image:
     /* Top-left lighting highlight */
-    radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.8) 0%, transparent 50%),
-    /* Subtle diagonal micro-grain (Composite look) */
-    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.02) 0px, rgba(0, 0, 0, 0.02) 1px, transparent 1px, transparent 4px),
+    radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.9) 0%, transparent 52%),
+    /* Fine diagonal machining grain */
+    repeating-linear-gradient(45deg, rgba(15, 23, 42, 0.022) 0px, rgba(15, 23, 42, 0.022) 1px, transparent 1px, transparent 5px),
     /* Vignette for depth */
-    radial-gradient(circle at 50% 50%, transparent 80%, rgba(0, 0, 0, 0.05) 100%);
-  background-size: 100% 100%, 8px 8px, 100% 100%;
+    radial-gradient(circle at 50% 45%, transparent 60%, rgba(15, 23, 42, 0.055) 100%);
+  background-size: 100% 100%, 9px 9px, 100% 100%;
   background-attachment: fixed;
 }
 
 .dark .bg-carbon {
-  /* Dark Mode: Carbon Fiber Weave */
-  background-color: #0c0c0c;
+  /* Dark mode: carbon-fibre weave with faint switchgear glow. */
+  background-color: #0a0a0c;
   background-image:
-    linear-gradient(45deg, #111 25%, transparent 25%, transparent 75%, #111 75%, #111),
-    linear-gradient(45deg, #111 25%, transparent 25%, transparent 75%, #111 75%, #111);
-  background-size: 8px 8px;
-  /* Smaller pattern for subtlety */
-  background-position: 0 0, 4px 4px;
+    radial-gradient(80% 55% at 12% -8%, rgba(225, 6, 0, 0.1), transparent 62%),
+    radial-gradient(70% 55% at 100% 108%, rgba(0, 144, 255, 0.07), transparent 60%),
+    linear-gradient(45deg, #111115 25%, transparent 25%, transparent 75%, #111115 75%, #111115),
+    linear-gradient(45deg, #111115 25%, transparent 25%, transparent 75%, #111115 75%, #111115);
+  background-size: auto, auto, 9px 9px, 9px 9px;
+  background-position: 0 0, 0 0, 0 0, 4.5px 4.5px;
   background-attachment: scroll;
 }
 
 .bg-carbon-header {
-  background-color: #080808;
+  /* Anodised top bar. A thin LED strip (wheel-led-strip) sits on top. */
+  background-color: var(--header-bg);
   background-image:
-    linear-gradient(45deg, #151515 25%, transparent 25%, transparent 75%, #151515 75%, #151515),
-    linear-gradient(45deg, #151515 25%, transparent 25%, transparent 75%, #151515 75%, #151515);
-  background-size: 6px 6px;
-  background-position: 0 0, 3px 3px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    linear-gradient(180deg, var(--wheel-highlight) 0%, transparent 8%),
+    repeating-linear-gradient(45deg, rgba(15, 23, 42, 0.03) 0px, rgba(15, 23, 42, 0.03) 1px, transparent 1px, transparent 5px);
+  background-size: 100% 100%, 9px 9px;
+  border-bottom: 1px solid var(--header-line);
+  box-shadow: 0 2px 18px var(--wheel-shadow);
+  color: var(--header-fg);
+}
+
+.dark .bg-carbon-header {
+  background-color: var(--header-bg);
+  background-image:
+    linear-gradient(45deg, #151519 25%, transparent 25%, transparent 75%, #151519 75%, #151519),
+    linear-gradient(45deg, #151519 25%, transparent 25%, transparent 75%, #151519 75%, #151519);
+  background-size: 8px 8px;
+  background-position: 0 0, 4px 4px;
+  border-bottom: 1px solid var(--header-line);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
-.light .bg-carbon-header {
-  background-color: #f0f0f0;
-  background-image:
-    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.03) 0px, rgba(0, 0, 0, 0.03) 1px, transparent 1px, transparent 4px);
-  background-size: 8px 8px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+/* Shift-light strip: the LED row across the top of a real F1 wheel.
+   Fades at the corners so it reads as trim, not a rainbow banner. */
+.wheel-led-strip {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    var(--f1-red) 0 16%,
+    var(--f1-orange) 16% 30%,
+    var(--f1-yellow) 30% 46%,
+    var(--f1-green) 46% 64%,
+    var(--f1-cyan) 64% 78%,
+    var(--f1-blue) 78% 90%,
+    var(--f1-purple) 90% 100%
+  );
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  opacity: 0.9;
+}
+
+/* Recessed switchgear well (session badge, mode selector, toggles). */
+.wheel-well {
+  background-color: var(--wheel-well);
+  border: 1px solid var(--wheel-line);
+  box-shadow:
+    inset 0 1px 2px var(--wheel-shadow),
+    0 1px 0 var(--wheel-highlight);
+}
+
+/* Inset panel used inside modals / dialogs (theme-aware alternative to
+   the old `border-white/15 bg-white/60 dark:bg-black/30` chains). */
+.wheel-panel {
+  background-color: color-mix(in srgb, var(--card) 72%, transparent);
+  border: 1px solid var(--border);
+  box-shadow:
+    inset 0 1px 0 var(--wheel-highlight),
+    0 1px 2px var(--wheel-shadow);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
 }
 
 /* Steering Wheel Button Physics */
@@ -190,22 +314,22 @@
   justify-content: center;
   border-radius: 9999px;
   /* Fully rounded */
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.09);
 
   /* Base Hardware Look (Neutral/rubber) */
-  background: linear-gradient(145deg, #2a2a2a, #222);
-  color: #888;
+  background: linear-gradient(145deg, #2c2c31, #202024);
+  color: #d4d4d8;
   font-weight: 700;
 
   /* Physical Elevation (Inactive State) */
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.1) inset,
+    0 1px 0 rgba(255, 255, 255, 0.14) inset,
     /* Top Bevel Highlight */
-    0 -1px 0 rgba(0, 0, 0, 0.2) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.35) inset,
     /* Bottom Bevel Shadow */
-    0 4px 8px rgba(0, 0, 0, 0.5),
+    0 3px 8px var(--wheel-shadow),
     /* Deep Drop Shadow for Elevation */
-    0 2px 4px rgba(0, 0, 0, 0.4);
+    0 1px 3px var(--wheel-shadow);
   /* Ambient Shadow */
 
   /* Snappy Mechanical Transition */
@@ -213,8 +337,13 @@
   transform: translateY(0);
 }
 
+/* Rectangular mount for bars (New Session) — same hardware, not a pill. */
+.btn-wheel-rect {
+  border-radius: 0.55rem;
+}
+
 .btn-wheel:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.12);
   transform: translateY(-0.5px);
   /* Subtle lift on hover */
 }
@@ -251,78 +380,86 @@
   filter: saturate(1.35) brightness(1.05);
 }
 
-/* Color Variants - Colored BY DEFAULT */
+/* Color Variants - Colored BY DEFAULT. Contrast checked per key:
+   bright buttons take black ink, red/purple take white. */
 .btn-wheel-cyan {
-  background: linear-gradient(145deg, #06b6d4, #0891b2);
-  /* Cyan-500 to 600 */
-  color: #000;
+  background: linear-gradient(145deg, #22ddcb, #00b3a1);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #00201c;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .btn-wheel-red {
-  background: linear-gradient(145deg, #E10600, #b90500);
+  background: linear-gradient(145deg, #e80700, #a90000);
+  border-color: rgba(255, 255, 255, 0.18);
   /* F1 Red */
   color: #fff;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
 }
 
 .btn-wheel-purple {
-  background: linear-gradient(145deg, #A855F7, #9333ea);
+  background: linear-gradient(145deg, #9333ea, #6b21a8);
+  border-color: rgba(255, 255, 255, 0.18);
   /* Purple */
   color: #fff;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
 }
 
 .btn-wheel-green {
-  background: linear-gradient(145deg, #00D26A, #00a653);
+  background: linear-gradient(145deg, #22e585, #00b45a);
+  border-color: rgba(255, 255, 255, 0.22);
   /* F1 Green */
-  color: #000;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+  color: #00200f;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .btn-wheel-blue {
-  background: linear-gradient(145deg, #3b82f6, #2563eb);
-  /* Blue */
-  color: #fff;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+  background: linear-gradient(145deg, #2aa5ff, #0080e8);
+  border-color: rgba(255, 255, 255, 0.18);
+  /* Steering-wheel blue */
+  color: #001321;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .btn-wheel-yellow {
-  background: linear-gradient(145deg, #FFD700, #e6c200);
+  background: linear-gradient(145deg, #ffe23d, #f0c400);
+  border-color: rgba(255, 255, 255, 0.28);
   /* F1 Yellow */
-  color: #000;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+  color: #201a00;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .btn-wheel-amber {
-  background: linear-gradient(145deg, #FFC000, #dea700);
-  /* F1 Yellow */
-  color: #000;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+  background: linear-gradient(145deg, #ffcd2e, #eaa800);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #221700;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .btn-wheel-orange {
-  background: linear-gradient(145deg, #FF8700, #cc6c00);
+  background: linear-gradient(145deg, #ff9a2e, #e06a00);
+  border-color: rgba(255, 255, 255, 0.22);
   /* Orange */
-  color: #000;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+  color: #221000;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
-/* Transparent wheel variant for dark surfaces (collapsed-rail expand).
-   No dark fill; the icon draws in white lines for contrast. Plain CSS
-   (unlayered) so it wins over the .btn-wheel gradient fill. */
+/* Transparent wheel variant for the collapsed rail expand control.
+   Inherits the surrounding ink so it works on aluminium and carbon. */
 .btn-wheel-ghost {
   background: transparent;
-  border: 1px solid rgba(128, 128, 128, 0.35);
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
   color: inherit;
   box-shadow: none;
   transition: background-color 100ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 150ms ease;
 }
 .btn-wheel-ghost:hover {
-  background-color: rgba(128, 128, 128, 0.12);
+  background-color: color-mix(in srgb, currentColor 12%, transparent);
+  transform: none;
+  filter: none;
 }
 .dark .btn-wheel-ghost {
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.24);
   color: #fff;
 }
 .dark .btn-wheel-ghost:hover {
@@ -369,9 +506,31 @@
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 .btn-physical-red {
-  background: linear-gradient(145deg, #E10600, #b90500);
+  background: linear-gradient(145deg, #e80700, #a90000);
   color: #fff;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+/* Light theme: anodised aluminium card instead of a black slab. Colored
+   variants below restore their saturated switchgear. */
+html.light .btn-physical {
+  border-color: rgba(15, 23, 42, 0.12);
+  background: linear-gradient(145deg, #fbfbfc, #e7eaef);
+  color: #151519;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 -1px 0 rgba(15, 23, 42, 0.08) inset,
+    0 3px 8px rgba(15, 23, 42, 0.14),
+    0 1px 2px rgba(15, 23, 42, 0.1);
+}
+html.light .btn-physical.btn-physical-green {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: linear-gradient(145deg, #00d26a, #00a653);
+  color: #000;
+}
+html.light .btn-physical.btn-physical-red {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: linear-gradient(145deg, #e80700, #a90000);
+  color: #fff;
 }
 /* Latched tint cards (settings mode selector). Plain CSS, unlayered, so
    the tints win over .btn-physical's neutral gradient — Tailwind bg/border
@@ -454,6 +613,32 @@ html.light .btn-physical[data-active="true"].btn-tint-yellow {
   .dark .modal-glass {
     background-color: rgb(12 12 14 / 0.92);
   }
+}
+
+/* Team-coloured driver names: the hue is kept, but each theme gets a
+   variant that clears WCAG AA (see lib/utils/contrast.ts). */
+.driver-name {
+  color: var(--driver-light, currentColor);
+}
+.dark .driver-name {
+  color: var(--driver-dark, currentColor);
+}
+
+/* Inline table scroller: a visible-but-quiet scrollbar instead of the
+   default OS chrome, so tables read as part of the card. */
+.table-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(148 148 160 / 0.35) transparent;
+}
+.table-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background-color: rgb(148 148 160 / 0.35);
+  border-radius: 9999px;
+}
+.table-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 @keyframes wave {

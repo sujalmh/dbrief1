@@ -19,7 +19,7 @@ export function SignInPage() {
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-f1-red/5 rounded-full blur-[120px] animate-pulse" />
             </div>
 
-            <div className="relative z-10 w-full max-w-md p-8 bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex flex-col items-center text-center space-y-8">
+            <div className="modal-glass relative z-10 w-full max-w-md p-8 rounded-2xl flex flex-col items-center text-center space-y-8">
                 {/* Logo */}
                 <div className="flex items-center gap-4">
                     <div className="flex items-center justify-center h-16 rounded-xl bg-white px-3 shadow-[0_0_30px_rgba(225,6,0,0.4)]">
@@ -29,7 +29,7 @@ export function SignInPage() {
                 </div>
 
                 <div className="space-y-2">
-                    <h1 className="text-3xl font-bold tracking-tighter text-white">
+                    <h1 className="text-3xl font-bold tracking-tighter text-foreground">
                         DBRIEF<span className="text-f1-red">1</span>
                     </h1>
                     <p className="text-muted-foreground text-sm font-medium tracking-wide">
@@ -49,7 +49,7 @@ export function SignInPage() {
                 <div className="w-full space-y-4">
                     <a
                         href="/api/auth/google"
-                        className="flex w-full h-12 items-center justify-center bg-white text-black hover:bg-gray-100 font-bold tracking-wide shadow-lg transition-all active:scale-95 rounded-md"
+                        className="flex w-full h-12 items-center justify-center bg-white text-black hover:bg-gray-100 font-bold tracking-wide shadow-lg transition-all active:scale-95 rounded-md border border-border"
                     >
                         {/* eslint-disable-next-line @next/next/no-img-element -- 20px remote favicon; next/image buys nothing here */}
                         <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5 mr-3" />
@@ -58,7 +58,7 @@ export function SignInPage() {
 
                     <div className="relative">
                         <div className="absolute inset-0 flex items-center">
-                            <span className="w-full border-t border-white/10" />
+                            <span className="w-full border-t border-border" />
                         </div>
                         <div className="relative flex justify-center text-xs uppercase">
                             <span className="bg-transparent px-2 text-muted-foreground">
@@ -68,14 +68,14 @@ export function SignInPage() {
                     </div>
                 </div>
 
-                <div className="text-[10px] text-zinc-500 font-mono space-y-1.5">
+                <div className="text-[10px] text-muted-foreground font-mono space-y-1.5">
                     <div>SECURE ACCESS • END-TO-END ENCRYPTED • PRO TIER</div>
                     <div className="flex items-center justify-center gap-3">
-                        <a href="/privacy" className="hover:text-zinc-300 transition-colors">PRIVACY</a>
-                        <span className="text-zinc-700">•</span>
-                        <a href="/terms" className="hover:text-zinc-300 transition-colors">TERMS</a>
+                        <a href="/privacy" className="hover:text-foreground transition-colors">PRIVACY</a>
+                        <span className="text-border">•</span>
+                        <a href="/terms" className="hover:text-foreground transition-colors">TERMS</a>
                     </div>
-                    <F1Disclaimer className="text-center text-zinc-600" />
+                    <F1Disclaimer className="text-center" />
                 </div>
             </div>
         </div>

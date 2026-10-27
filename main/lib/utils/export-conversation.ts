@@ -55,7 +55,7 @@ export function exportToMarkdown(
         lines.push("");
 
         if (msg.role === "assistant" && msg.isError) {
-            lines.push("> ⚠️ **Error response**");
+            lines.push("> **Error response**");
             lines.push("");
         }
 

@@ -38,25 +38,23 @@ export function LandingComposer() {
                         active AI mode right. */}
                     <div className="flex w-full items-center justify-between px-3 pb-2 pt-2">
                         <div className="flex items-center gap-1" aria-hidden="true">
-                            <span className="relative h-8 w-[76px] rounded-full border border-white/10 bg-black/30 shadow-[inset_0_1px_2px_rgba(0,0,0,0.5)]">
+                            <span className="relative h-8 w-[76px] rounded-full border border-[var(--wheel-line)] bg-[var(--wheel-well)] shadow-[inset_0_1px_2px_var(--wheel-shadow)]">
                                 <span className="absolute left-1 top-1/2 -translate-y-1/2">
                                     <span className="btn-wheel btn-wheel-purple flex h-6 w-6 items-center justify-center rounded-full">
                                         <Brain className="h-3.5 w-3.5" />
                                     </span>
                                 </span>
-                                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/40">
+                                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/70">
                                     Off
                                 </span>
                             </span>
                         </div>
                         <span
                             aria-hidden="true"
-                            className="btn-wheel btn-wheel-orange h-8 gap-2 px-3 text-xs"
+                            className="btn-wheel btn-wheel-green h-8 gap-1.5 px-2.5 text-[11px] font-medium"
                         >
-                            <Server className="h-3.5 w-3.5" />
-                            <span className="hidden font-bold sm:inline-block">
-                                Managed
-                            </span>
+                            <Server className="h-3.5 w-3.5 shrink-0" />
+                            <span className="font-medium">Managed</span>
                         </span>
                     </div>
             </div>

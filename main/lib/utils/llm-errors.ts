@@ -178,7 +178,14 @@ export function classifyLlmError(err: unknown, context?: string): ClassifiedLlmE
     // --- 7. Bad output from the LLM (recoverable: use heuristic) ---
     // These are NOT terminal — the LLM responded, we just couldn't
     // parse/validate the output. Heuristic fallback is appropriate.
+    // A 400 from a structured-output request is also recoverable: the
+    // managed gateway intermittently rejects the response_format payload
+    // while the manual JSON path works. Restrict this to structured
+    // contexts so a real malformed chat request still surfaces.
+    const isStructuredContext = /structured|intent|classif/i.test(context ?? "");
     if (
+        (status === 400 && isStructuredContext) ||
+        lower.includes("does not support this protocol") ||
         lower.includes("output parser") ||
         lower.includes("parse") ||
         lower.includes("json") ||

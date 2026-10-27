@@ -221,11 +221,12 @@ export async function pickUsedSources(
 
 /** Extract [E#] references from report text, in order, deduplicated. */
 export function extractEvidenceIds(text: string): string[] {
-    const refs = text.match(/\[E\d+\]/g) ?? [];
+    // Accept both `[E1]` and trailing-prose variants such as
+    // `[E1 covers the 2024 calendar]`. Only the leading E-number is the id.
+    const refs = [...text.matchAll(/\[E(\d+)\b[^\]]*\]/g)].map((match) => `E${match[1]}`);
     const seen = new Set<string>();
     const out: string[] = [];
-    for (const ref of refs) {
-        const id = ref.slice(1, -1);
+    for (const id of refs) {
         if (!seen.has(id)) {
             seen.add(id);
             out.push(id);

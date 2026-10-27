@@ -60,7 +60,7 @@ describe("production path produces charts", () => {
         ).toEqual(["line"]);
     });
 
-    it("multi-driver lap answers produce line + swarm", () => {
+    it("multi-driver lap answers produce one pace swarm", () => {
         const laps = [
             { lap_number: 1, lap_time: "1:32.8", driver: "VER" },
             { lap_number: 2, lap_time: "1:32.6", driver: "VER" },
@@ -70,12 +70,12 @@ describe("production path produces charts", () => {
         expect(
             producedCharts(
                 [{ tool: "get_laps", args: { year: 2024, gp: "Suzuka" }, success: true, data: { laps } }],
-                "compare VER and NOR"
+                "race pace comparison"
             )
-        ).toEqual(["line", "swarm"]);
+        ).toEqual(["swarm"]);
     });
 
-    it("lap answers with positions produce line + swarm + bump", () => {
+    it("lap answers with positions produce one pace chart, not three", () => {
         const laps = [
             { lap_number: 1, lap_time: "1:32.0", driver: "VER", position: 2 },
             { lap_number: 2, lap_time: "1:31.8", driver: "VER", position: 1 },
@@ -87,10 +87,10 @@ describe("production path produces charts", () => {
                 [{ tool: "get_laps", args: { year: 2024 }, success: true, data: { laps } }],
                 "full race comparison"
             )
-        ).toEqual(["line", "swarm", "bump"]);
+        ).toEqual(["swarm"]);
     });
 
-    it("standings answers produce a horizontal bar chart", () => {
+    it("standings answers produce one points chart", () => {
         expect(
             producedCharts(
                 [{
@@ -99,7 +99,7 @@ describe("production path produces charts", () => {
                 }],
                 "2024 standings"
             )
-        ).toEqual(["horizontal_bar", "pie", "stat_cards"]);
+        ).toEqual(["horizontal_bar"]);
     });
 
     it("qualifying answers produce a qualifying chart", () => {
@@ -126,7 +126,7 @@ describe("production path produces charts", () => {
         ).toEqual(["scatter"]);
     });
 
-    it("plain race results produce a finishing-order bar, not a scatter", () => {
+    it("plain race results produce a classification ladder, not a position bar", () => {
         expect(
             producedCharts(
                 [{
@@ -135,7 +135,19 @@ describe("production path produces charts", () => {
                 }],
                 "Monza results"
             )
-        ).toEqual(["horizontal_bar"]);
+        ).toEqual(["position_ladder"]);
+    });
+
+    it("race results without grid data produce a classification ladder", () => {
+        expect(
+            producedCharts(
+                [{
+                    tool: "get_race", args: ARGS_2024_MONZA, success: true,
+                    data: { results: [{ driver: "VER", finish: 1 }, { driver: "NOR", finish: 2 }] },
+                }],
+                "Monza results"
+            )
+        ).toEqual(["position_ladder"]);
     });
 
     it("schedule and news answers produce no charts", () => {
@@ -169,7 +181,7 @@ describe("production path produces charts", () => {
                     [{ tool, args: { year: 2024, gp: "Bahrain" }, success: true, data: stints }],
                     "tyre strategy"
                 )
-            ).toEqual(["stacked_bar", "pie"]);
+            ).toEqual(["stacked_bar"]);
         }
     });
 

@@ -6,8 +6,9 @@
  *   1. "managed" — configured by the app owner via env vars
  *      (MANAGED_LLM_BASE_URL / MANAGED_LLM_MODEL / MANAGED_LLM_API_KEY,
  *      with LLM_* and legacy OPENCODE_* fallbacks). One fixed model
- *      (OpenCode Go gateway, MiMo V2.5) is used for BOTH planning
- *      and answering.
+ *      (OpenCode Go gateway, DeepSeek V4.1 Flash) is used for BOTH planning
+ *      and answering. Transient managed failures retry once on
+ *      mimo-v2.6-flash; auth, quota, and model-not-found errors surface.
  *   2. "byok" — brought by the user via Settings (base URL + model
  *      identifier + API key in an httpOnly cookie).
  *
@@ -16,11 +17,17 @@
  * (User-Agent + x-opencode-session) are only sent to opencode.ai URLs.
  */
 
+import type { CallbackManagerForLLMRun } from "@langchain/core/callbacks/manager";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import type { BaseMessage } from "@langchain/core/messages";
+import type { ChatGenerationChunk, ChatResult } from "@langchain/core/outputs";
+import { ChatOpenAI } from "@langchain/openai";
+import type { ChatOpenAICallOptions, ChatOpenAIFields } from "@langchain/openai";
 import {
     getManagedApiKey,
     getManagedBaseUrl,
     getManagedModelId,
+    MANAGED_DEFAULT_MODEL,
     normalizeBaseUrl,
     type AiMode,
 } from "./providers";
@@ -45,8 +52,8 @@ export interface ModelConfig {
     sessionId?: string;
 }
 
-// Re-exported gateway URLs (managed default + legacy fallback).
-export { GO_BASE_URL, ZEN_BASE_URL } from "./providers";
+// Re-exported provider helpers and gateway URLs (managed default + legacy).
+export { getManagedModelId, GO_BASE_URL, ZEN_BASE_URL } from "./providers";
 
 /**
  * Client identification required by the OpenCode gateways.
@@ -91,6 +98,7 @@ export const LLM_TIMEOUT_MS = {
  * array of content blocks like {type: "text", text: "..."}.
  */
 export function chatContentToText(content: unknown): string {
+    if (content == null) return "";
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
         return content
@@ -104,7 +112,11 @@ export function chatContentToText(content: unknown): string {
             })
             .join("");
     }
-    return JSON.stringify(content);
+    try {
+        return JSON.stringify(content) ?? "";
+    } catch {
+        return "";
+    }
 }
 
 /**
@@ -121,6 +133,232 @@ export function buildOpenCodeHeaders(sessionId?: string): Record<string, string>
 }
 
 // =============================================================================
+// Managed-model fallback
+// =============================================================================
+//
+// The managed plan is limited to flash models. If the primary managed model
+// fails for a transient reason (network, timeout, 5xx, overloaded), retry once
+// on mimo-v2.6-flash. Auth, quota, rate-limit, and model-not-found failures are
+// never retried: those need a configuration or billing fix, and hiding them
+// would send the user down the wrong path. BYOK never falls back.
+//
+// Streaming only falls back when the primary fails before its first chunk.
+// Once tokens have reached the client, retrying would duplicate output.
+
+export const MANAGED_FALLBACK_MODEL = "mimo-v2.6-flash";
+
+const TRANSIENT_HTTP_STATUS = new Set([408, 500, 502, 503, 504, 529]);
+
+const NON_RETRYABLE_PATTERNS = [
+    /\b(?:400|401|402|403|404|410|422|429)\b/,
+    /\brate[ _-]?limit(?:ed|ing)?\b/,
+    /\btoo[ _-]?many[ _-]?requests\b/,
+    /\bquota\b/,
+    /\binsufficient[ _-]?quota\b/,
+    /\binsufficient[ _-]?credits?\b/,
+    /\b(?:daily|usage)[ _-]?limit\b/,
+    /\bfree[ _-]models[ _-]per[ _-]day\b/,
+    /\bapi[ _-]?key\b/,
+    /\bunauthori[sz]ed\b/,
+    /\bforbidden\b/,
+    /\bauthentication\b/,
+    /\bmodel[ _-]?not[ _-]?found\b/,
+    /\bno endpoints found\b/,
+    /\binvalid model\b/,
+    /\bis not a valid model\b/,
+    /\bbad[ _-]?request\b/,
+    /\binvalid[ _-]?request\b/,
+    /\bcontext[ _-]?length\b/,
+    /\bcontent[ _-]?policy\b/,
+];
+
+const TRANSIENT_MESSAGE_PATTERNS = [
+    /\btimeout\b/,
+    /\btimed out\b/,
+    /\betimedout\b/,
+    /\beconnreset\b/,
+    /\beconnrefused\b/,
+    /\benotfound\b/,
+    /\beai_again\b/,
+    /\bfetch failed\b/,
+    /\bsocket hang up\b/,
+    /\bnetwork\b/,
+    /\boverloaded\b/,
+    /\bservice unavailable\b/,
+    /\bbad gateway\b/,
+    /\bgateway timeout\b/,
+    /\binternal server error\b/,
+    /\b5\d\d\b/,
+    /\baborterror\b/,
+    /\baborted\b/,
+];
+
+export interface ManagedFallbackContext {
+    mode: AiMode;
+    /** Model id used for the primary attempt. */
+    primaryModel: string;
+    /** True when the caller's signal has already fired (timeout or cancel). */
+    signalAborted?: boolean;
+}
+
+/** Read an HTTP status from the error shapes used by provider SDKs. */
+function errorStatus(err: unknown, depth = 0): number | undefined {
+    if (!err || typeof err !== "object" || depth > 3) return undefined;
+    const e = err as Record<string, unknown>;
+
+    for (const candidate of [e.status, e.statusCode, e.code]) {
+        if (typeof candidate === "number") return candidate;
+    }
+
+    if (e.response && typeof e.response === "object") {
+        const response = e.response as Record<string, unknown>;
+        if (typeof response.status === "number") return response.status;
+    }
+
+    if (e.error && typeof e.error === "object") {
+        const inner = e.error as Record<string, unknown>;
+        for (const candidate of [inner.status, inner.code]) {
+            if (typeof candidate === "number") return candidate;
+        }
+    }
+
+    return errorStatus(e.cause, depth + 1);
+}
+
+function errorMessage(err: unknown): string {
+    if (typeof err === "string") return err;
+    if (err && typeof err === "object") {
+        const message = (err as Record<string, unknown>).message;
+        if (typeof message === "string") return message;
+    }
+    try {
+        return JSON.stringify(err) ?? "";
+    } catch {
+        return "";
+    }
+}
+
+/**
+ * Decide whether a failed managed-model call may be retried on
+ * mimo-v2.6-flash. Only the allowed default pair is eligible; BYOK and any
+ * other model configuration are left untouched. Errors that need an operator
+ * or user fix (auth, quota, rate limit, model not found, invalid request) are
+ * surfaced unchanged.
+ */
+export function shouldUseManagedFallback(
+    error: unknown,
+    context: ManagedFallbackContext
+): boolean {
+    if (context.mode !== "managed") return false;
+    if (context.signalAborted) return false;
+    if (context.primaryModel === MANAGED_FALLBACK_MODEL) return false;
+    if (context.primaryModel !== MANAGED_DEFAULT_MODEL) return false;
+
+    const message = errorMessage(error).toLowerCase();
+
+    // Non-retryable classifications win over any transient-looking text.
+    if (NON_RETRYABLE_PATTERNS.some((pattern) => pattern.test(message))) {
+        return false;
+    }
+
+    const status = errorStatus(error);
+    if (status !== undefined) return TRANSIENT_HTTP_STATUS.has(status);
+
+    if (error instanceof Error) {
+        const name = error.name.toLowerCase();
+        if (name === "timeouterror" || name === "aborterror") return true;
+    }
+
+    return TRANSIENT_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+/**
+ * ChatOpenAI wrapper that retries a transient managed-model failure on the
+ * allowed fallback model. All other model methods (bindTools,
+ * withStructuredOutput, streamEvents) stay on the original model because this
+ * class extends ChatOpenAI rather than wrapping it in a Runnable.
+ */
+class ManagedFallbackChatModel extends ChatOpenAI {
+    private readonly fallbackModel: ChatOpenAI;
+
+    constructor(fields: ChatOpenAIFields, fallbackModel: ChatOpenAI) {
+        super(fields);
+        this.fallbackModel = fallbackModel;
+    }
+
+    private canFallBack(error: unknown, signal?: AbortSignal): boolean {
+        return shouldUseManagedFallback(error, {
+            mode: "managed",
+            primaryModel: this.model,
+            signalAborted: signal?.aborted ?? false,
+        });
+    }
+
+    private logFallback(): void {
+        console.warn(
+            `[llm] ${this.model} failed with a transient error; retrying with ${MANAGED_FALLBACK_MODEL}.`
+        );
+    }
+
+    /**
+     * `withStructuredOutput` rebuilds the model via `withConfig`. Preserve the
+     * fallback on the rebuilt instance instead of silently dropping it.
+     */
+    override withConfig(config: Partial<ChatOpenAICallOptions>) {
+        const next = new ManagedFallbackChatModel(
+            { ...(this.fields ?? {}) },
+            this.fallbackModel
+        );
+        next.defaultOptions = { ...this.defaultOptions, ...config };
+        return next;
+    }
+
+    override async _generate(
+        messages: BaseMessage[],
+        options: this["ParsedCallOptions"],
+        runManager?: CallbackManagerForLLMRun
+    ): Promise<ChatResult> {
+        try {
+            return await super._generate(messages, options, runManager);
+        } catch (error) {
+            if (!this.canFallBack(error, options.signal)) throw error;
+            this.logFallback();
+            return this.fallbackModel._generate(messages, options, runManager);
+        }
+    }
+
+    override async *_streamResponseChunks(
+        messages: BaseMessage[],
+        options: this["ParsedCallOptions"],
+        runManager?: CallbackManagerForLLMRun
+    ): AsyncGenerator<ChatGenerationChunk> {
+        const primaryStream = super._streamResponseChunks(
+            messages,
+            options,
+            runManager
+        );
+
+        let first: IteratorResult<ChatGenerationChunk>;
+        try {
+            first = await primaryStream.next();
+        } catch (error) {
+            if (!this.canFallBack(error, options.signal)) throw error;
+            this.logFallback();
+            yield* this.fallbackModel._streamResponseChunks(
+                messages,
+                options,
+                runManager
+            );
+            return;
+        }
+
+        if (first.done) return;
+        yield first.value;
+        yield* primaryStream;
+    }
+}
+
+// =============================================================================
 // Model Factory (single OpenAI-compatible code path)
 // =============================================================================
 
@@ -129,14 +367,14 @@ function isOpenCodeUrl(baseUrl: string): boolean {
     return baseUrl.toLowerCase().includes("opencode.ai");
 }
 
-async function createOpenAICompatibleModel(
+function buildOpenAICompatibleFields(
     baseUrl: string,
     model: string,
     apiKey: string,
     temperature: number = 0.7,
     maxTokens: number = 4096,
     sessionId?: string
-): Promise<BaseChatModel> {
+): ChatOpenAIFields {
     if (!apiKey) {
         throw new Error("API key is required. Check Settings (Managed / BYOK).");
     }
@@ -147,9 +385,7 @@ async function createOpenAICompatibleModel(
         throw new Error("Model URL is not configured. Check Settings (Managed / BYOK).");
     }
 
-    const { ChatOpenAI } = await import("@langchain/openai");
-
-    return new ChatOpenAI({
+    return {
         model,
         apiKey,
         temperature,
@@ -163,7 +399,44 @@ async function createOpenAICompatibleModel(
                 ? { defaultHeaders: buildOpenCodeHeaders(sessionId) }
                 : {}),
         },
-    });
+    };
+}
+
+function createOpenAICompatibleModel(
+    baseUrl: string,
+    model: string,
+    apiKey: string,
+    temperature: number = 0.7,
+    maxTokens: number = 4096,
+    sessionId?: string,
+    fallbackModelId?: string
+): BaseChatModel {
+    const fields = buildOpenAICompatibleFields(
+        baseUrl,
+        model,
+        apiKey,
+        temperature,
+        maxTokens,
+        sessionId
+    );
+
+    if (!fallbackModelId || fallbackModelId === model) {
+        return new ChatOpenAI(fields);
+    }
+
+    const fallbackFields = buildOpenAICompatibleFields(
+        baseUrl,
+        fallbackModelId,
+        apiKey,
+        temperature,
+        maxTokens,
+        sessionId
+    );
+
+    return new ManagedFallbackChatModel(
+        fields,
+        new ChatOpenAI(fallbackFields)
+    );
 }
 
 interface ResolvedLlm {
@@ -228,20 +501,29 @@ export async function getChatModel(config: ModelConfig): Promise<BaseChatModel> 
     const { temperature = 0.7, maxTokens = 4096, sessionId } = config;
     const resolved = resolveLlmConfig(config);
 
+    // Only the managed default gets a fallback. BYOK, a managed model set to
+    // something else, and the fallback model itself are left untouched.
+    const fallbackModelId =
+        config.mode === "managed" && resolved.model === MANAGED_DEFAULT_MODEL
+            ? MANAGED_FALLBACK_MODEL
+            : undefined;
+
     return createOpenAICompatibleModel(
         resolved.baseUrl,
         resolved.model,
         resolved.apiKey,
         temperature,
         maxTokens,
-        sessionId
+        sessionId,
+        fallbackModelId
     );
 }
 
 /**
  * Get the planner model. Always the SAME model as the responder —
  * there is no separate planner picker anymore. Deterministic settings
- * (temp 0) for planning.
+ * (temp 0) for planning. The token cap covers both the 5-step quick plan
+ * and the deep-research 25-step plan, whose JSON can exceed 2K tokens.
  */
 export async function getPlannerModel(
     mode: AiMode,
@@ -254,28 +536,33 @@ export async function getPlannerModel(
         byokModel: byok?.model,
         byokApiKey: byok?.apiKey,
         temperature: 0,
-        maxTokens: 2048,
+        maxTokens: 4096,
         sessionId,
     });
 }
 
 /**
  * Get the responder model — same underlying model as the planner,
- * with answer-friendly sampling settings. The `reasoning` flag only
- * adjusts temperature, never the model id.
+ * with answer-friendly sampling settings. `_reasoning` is retained in the
+ * signature for callers that pass it, but factual answers now always use a
+ * low temperature (0.1) regardless of mode.
  */
 export async function getResponderModel(
     mode: AiMode,
     byok?: { baseUrl?: string; model?: string; apiKey?: string },
-    reasoning: boolean = false,
+    _reasoning: boolean = false,
     sessionId?: string
 ): Promise<BaseChatModel> {
+    // Kept for API compatibility; factual answers always use low temperature.
+    void _reasoning;
     return getChatModel({
         mode,
         byokBaseUrl: byok?.baseUrl,
         byokModel: byok?.model,
         byokApiKey: byok?.apiKey,
-        temperature: reasoning ? 0.3 : 0.7,
+        // Factual F1 answers: very low temperature. Creative sampling was the
+        // single largest source of paraphrased/wrong numbers in prod.
+        temperature: 0.1,
         maxTokens: 8192,
         sessionId,
     });

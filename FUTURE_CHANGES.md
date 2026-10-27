@@ -160,9 +160,9 @@ Tracking file for pending / planned work. Checked items are synced to `origin/ma
   (`getQuotaState` in quotas.ts); hidden entirely when cloud sync is off;
   refreshes after each completed turn. Tests:
   `__tests__/unit/usage-indicator.test.ts` (7 green).
-- [x] **Two-mode AI restored (managed Go/mimo-v2.5 + BYOK), 5-provider picker removed:**
+- [x] **Two-mode AI restored (managed Go/deepseek-v4.1-flash + BYOK), 5-provider picker removed:**
   reverted the e1168f2 provider sprawl to the 85228b3 two-mode design —
-  managed runs OpenCode Go `mimo-v2.5` (env-overridable) for planning and
+  managed runs OpenCode Go `deepseek-v4.1-flash` (env-overridable) for planning and
   answering over one OpenAI-compatible path; BYOK takes any endpoint + key
   in an httpOnly cookie. Deleted `add-models-dialog` + `/api/models/
   openrouter`; settings/control-panel show mode only. Quota tiers now key

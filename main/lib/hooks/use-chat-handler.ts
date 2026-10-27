@@ -665,8 +665,8 @@ export function useChatHandler() {
                 const partial = useChatStore.getState().messages
                     .find(m => m.id === assistantMsgId)?.content ?? ""
                 const cancelledNote = partial
-                    ? `${partial}\n\n_⏹ Generation stopped._`
-                    : "_⏹ Generation stopped._"
+                    ? `${partial}\n\n_Generation stopped._`
+                    : "_Generation stopped._"
                 useChatStore.getState().updateMessage(assistantMsgId, cancelledNote)
                 return;
             }

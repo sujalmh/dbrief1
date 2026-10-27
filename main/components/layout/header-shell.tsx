@@ -29,10 +29,11 @@ export function AppHeaderShell({
     return (
         <header
             className={cn(
-                "sticky top-0 z-50 w-full border-b border-white/10 bg-carbon-header text-white shadow-md transition-all duration-500",
+                "sticky top-0 z-50 w-full border-b border-[var(--header-line)] bg-carbon-header text-[var(--header-fg)] shadow-md transition-all duration-500",
                 className
             )}
         >
+            <span aria-hidden className="wheel-led-strip" />
             <div className="mx-auto flex h-14 w-full max-w-screen-2xl items-center justify-between gap-2 px-3 md:h-16 md:px-6">
                 {children}
             </div>
@@ -93,11 +94,16 @@ export function SessionBadge({ label, className }: { label: string; className?: 
     return (
         <div
             className={cn(
-                "flex min-w-0 items-center gap-3 rounded-full border border-white/5 bg-black/40 px-3 py-1.5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.5)] transition-all duration-500 md:px-4",
+                "wheel-well flex min-w-0 items-center gap-2.5 rounded-full px-3 py-1.5 transition-all duration-500 md:px-4",
                 className
             )}
         >
-            <span className="max-w-[110px] truncate font-mono text-xs font-medium tracking-wide text-zinc-300 sm:max-w-[200px] md:max-w-[300px]">
+            {/* Live-session LED — the one status light on the wheel. */}
+            <span
+                aria-hidden
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--f1-red)] shadow-[0_0_8px_var(--f1-red)]"
+            />
+            <span className="max-w-[150px] truncate font-mono text-[11px] font-medium tracking-wide text-[var(--wheel-text-dim)] sm:max-w-[220px] sm:text-xs md:max-w-[300px]">
                 {label}
             </span>
         </div>
@@ -121,7 +127,7 @@ export function ModePill({
     return (
         <div
             className={cn(
-                "hidden items-center rounded-full border border-white/5 bg-black/30 p-1 shadow-inner lg:flex",
+                "wheel-well hidden items-center rounded-full p-1 lg:flex",
                 className
             )}
         >
@@ -137,17 +143,25 @@ export function ModePill({
                         style={
                             isActive
                                 ? {
-                                      backgroundColor: `${color}26`,
-                                      color,
-                                      boxShadow: `0 0 10px ${color}33`,
+                                      backgroundColor: color,
+                                      color: "#0d0d10",
+                                      boxShadow: `0 0 0 1px ${color}66, 0 0 14px ${color}59`,
                                   }
                                 : undefined
                         }
                         className={cn(
-                            "px-4 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all duration-500",
-                            !isActive && "text-zinc-500 hover:text-zinc-300"
+                            "flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide transition-all duration-300",
+                            !isActive &&
+                                "text-[var(--wheel-text-dim)] hover:bg-[var(--wheel-face)] hover:text-[var(--wheel-text)]"
                         )}
                     >
+                        {!isActive && (
+                            <span
+                                aria-hidden
+                                className="h-1.5 w-1.5 rounded-full opacity-80"
+                                style={{ backgroundColor: color }}
+                            />
+                        )}
                         {m}
                     </button>
                 );

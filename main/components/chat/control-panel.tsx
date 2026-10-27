@@ -67,10 +67,10 @@ export function ControlPanel() {
                             aria-pressed={deepOn}
                             aria-label={deepOn ? "Deep research on - turn off" : "Deep research off - turn on"}
                             className={cn(
-                                "relative h-8 w-[76px] shrink-0 rounded-full border bg-black/30 shadow-[inset_0_1px_2px_rgba(0,0,0,0.5)] outline-1 transition-colors duration-200",
+                                "relative h-8 w-[76px] shrink-0 rounded-full border shadow-[inset_0_1px_2px_var(--wheel-shadow)] outline-1 transition-colors duration-200",
                                 deepOn
-                                    ? "border-purple-400/70 bg-purple-500/15 outline outline-purple-300/60 hover:outline-purple-200"
-                                    : "border-white/10 hover:outline hover:outline-white/30"
+                                    ? "border-purple-500/70 bg-purple-500/15 outline outline-purple-500/60 dark:outline-purple-300/60 hover:outline-purple-400"
+                                    : "border-[var(--wheel-line)] bg-[var(--wheel-well)] hover:outline hover:outline-[var(--wheel-line)]"
                             )}
                         >
                             {/* Outer span owns position + slide (plain classes:
@@ -92,8 +92,8 @@ export function ControlPanel() {
                                 className={cn(
                                     "absolute top-1/2 -translate-y-1/2 text-[11px] font-bold uppercase tracking-wider transition-all duration-200",
                                     deepOn
-                                        ? "left-2.5 text-purple-300"
-                                        : "right-2.5 text-muted-foreground/40"
+                                        ? "left-2.5 text-purple-700 dark:text-purple-300"
+                                        : "right-2.5 text-muted-foreground/80"
                                 )}
                             >
                                 {deepOn ? "On" : "Off"}
@@ -109,19 +109,21 @@ export function ControlPanel() {
             {/* Right side: inline usage (hover for details) + AI mode badge. */}
             <div className="flex min-w-0 items-center gap-1">
                 <QuotaStrip />
-                {/* AI mode badge — opens Settings. No provider/model dropdowns. */}
+                {/* AI mode badge — opens Settings. Colored like the wheel's
+                    confirm/mode switches: green = Managed, yellow = BYOK. */}
                 <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => setSettingsOpen(true)}
-                    className="btn-wheel btn-wheel-orange h-8 shrink-0 gap-2 text-xs px-3"
-                title={isByok ? "BYOK — open AI Setup" : "Managed — open AI Setup"}
-            >
-                <ModeIcon className="h-3.5 w-3.5" />
-                <span className="max-w-[120px] truncate hidden sm:inline-block font-bold">
-                    {modeLabel}
-                </span>
-            </Button>
+                    className={cn(
+                        "btn-wheel h-8 shrink-0 gap-1.5 px-2.5 text-[11px] font-medium",
+                        isByok ? "btn-wheel-yellow" : "btn-wheel-green"
+                    )}
+                    title={isByok ? "BYOK — open AI Setup" : "Managed — open AI Setup"}
+                >
+                    <ModeIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="max-w-[84px] truncate font-medium">{modeLabel}</span>
+                </Button>
             </div>
         </div>
     )
